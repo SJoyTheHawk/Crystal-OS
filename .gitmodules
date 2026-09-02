@@ -1,0 +1,4 @@
+[submodule "reference"]
+	path = reference/ESP32-S3-Touch-LCD-4B
+	url = https://github.com/waveshareteam/ESP32-S3-Touch-LCD-4B.git
+	branch = chore/initial-resource-import

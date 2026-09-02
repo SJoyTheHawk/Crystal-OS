@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=5.3.0"
+  espressif/esp-brookesia: "0.4.2"
+  espressif/esp_lvgl_port: "^2"
+  lvgl/lvgl: "8.4.0"
+  waveshare/esp32_s3_touch_lcd_4b: "*"
