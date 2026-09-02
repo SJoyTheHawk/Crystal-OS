@@ -13,11 +13,21 @@
 #include "esp_brookesia.hpp"
 #include "hello_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_core.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
+
+static void update_status_clock(void *context, int hour, int minute, bool is_pm)
+{
+    auto *phone = static_cast<ESP_Brookesia_Phone *>(context);
+    auto *status_bar = phone->getHome().getStatusBar();
+    if (status_bar != nullptr) {
+        (void)status_bar->setClock(hour, minute, is_pm);
+    }
+}
 
 static void require_boot_step(bool succeeded, const char *message)
 {
@@ -48,6 +58,7 @@ extern "C" void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    crystal_time_init();
     ESP_ERROR_CHECK(bsp_spiffs_mount());
 
     lv_display_t *display = bsp_display_start();
@@ -70,6 +81,7 @@ extern "C" void app_main(void)
     delete stylesheet;
 
     require_boot_step(phone->setTouchDevice(bsp_display_get_input_dev()), "Failed to set touch device");
+    crystal_hal_bind_touch(bsp_display_get_input_dev());
     phone->registerLvLockCallback(
         reinterpret_cast<ESP_Brookesia_LvLockCallback_t>(bsp_display_lock), 0
     );
@@ -77,6 +89,10 @@ extern "C" void app_main(void)
         reinterpret_cast<ESP_Brookesia_LvUnlockCallback_t>(bsp_display_unlock)
     );
     require_boot_step(phone->begin(), "Failed to start Brookesia phone");
+    require_boot_step(
+        crystal_core_init(display, update_status_clock, phone),
+        "Failed to start Crystal core services"
+    );
 
     auto *hello_app = new HelloApp();
     require_boot_step(hello_app != nullptr, "Failed to create Hello app");

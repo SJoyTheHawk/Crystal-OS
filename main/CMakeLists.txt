@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
-    REQUIRES hello_app crystal_hal esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer
+    REQUIRES hello_app crystal_hal crystal_core esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)

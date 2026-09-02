@@ -126,6 +126,14 @@ Every hardware touch goes behind an interface: `IBrightness`, `IWifi`, `IRtc`,
 `IStorage`, `ITouchRaw`. Device implementations wrap the BSP; desktop mocks back
 an LVGL SDL build.
 
+**Progress (2026-09-02):** Added the device brightness adapter and an NVS-backed
+`IStorage` implementation and a lazy Wi-Fi station adapter in `crystal_hal`.
+The Wi-Fi adapter was verified on hardware by connecting to a WPA2 network and
+obtaining an IP address. The PCF85063 adapter now uses the board's shared I2C
+bus at address `0x51`, and raw touch is exposed through the bound LVGL input
+device. A standalone mock backend is available under `sim/` for host tests.
+The full SDL UI target remains a follow-up.
+
 Worth the effort because the hardest remaining work — card drag feel, pull-down
 feel, keyboard field-centering — needs dozens of tuning passes. On hardware
 that is a week; on desktop, an afternoon.
@@ -138,6 +146,18 @@ only Crystal's own layers and leave Brookesia on-device.
 Exit: the same UI code builds and runs on macOS and on the board.
 
 ### Phase 3 — Core services
+
+**Progress (2026-09-03):** Added `crystal_core`, including a bounded
+cross-task UI event queue, an LVGL-timer drain point, and a low-priority service
+task pinned to core 0. A non-interactive toast overlay now handles queued toast
+events, with a one-time core-0 startup toast serving as the hardware proof.
+System time is loaded from the PCF85063 before display startup, the Brookesia
+clock is refreshed every second, and SNTP corrections are written back to the
+RTC. An unset or invalid RTC displays `--:--` until RTC or SNTP establishes a
+valid time. `crystal_time_set()` provides the shared manual/system-to-RTC write path. The
+service also implements a 30-second dim and 60-second backlight-off
+policy with ramped brightness and touch activity restoration. Swallowing the
+first wake touch remains assigned to the Phase 6 gesture arbiter.
 
 - UI event queue: `crystal_ui_post()` from any task, drained by an `lv_timer` on
   the LVGL task so handlers already hold the lock
@@ -308,7 +328,8 @@ Categories: Network (WiFi, DHCP vs static, IP/gateway/netmask/DNS), System
 timeout, screen off timeout, dim level, power saving), General (timezone).
 
 Timezone is not optional — without it SNTP yields UTC and the bar shows the
-wrong hour.
+wrong hour. The first-boot default is Hong Kong (`HKT-8`, UTC+08:00); Phase 11
+will expose this as a General setting stored as a POSIX timezone string.
 
 `CONFIG_PM_ENABLE=y` with DFS 240/80MHz. **Do not enable automatic light
 sleep in v1**: the RGB panel is a continuous DMA scan-out and will blank or

@@ -17,9 +17,13 @@ LVGL and Espressif's `esp-brookesia` phone UI.
 
 - Phase 0: complete. The launcher, Hello app, touch input, and return-to-launcher flow were verified on hardware.
 - Phase 1: complete. The performance gate measured approximately 7-8 visible FPS while dragging. Double buffering did not improve the result, so the future switcher will use a simplified animation.
-- Phase 2: in progress. The hardware abstraction layer is present, with the device brightness adapter implemented and the remaining interfaces reserved for later services and simulator support.
+- Phase 2: in progress. The hardware abstraction layer includes device brightness, NVS storage, a lazy Wi-Fi station adapter, a PCF85063 RTC adapter, and a raw-touch adapter. A standalone host mock is available under `sim/`; the full SDL UI target remains.
+- Phase 3: implemented; final physical-device validation is pending. `crystal_core` provides the UI event queue, toast overlay, RTC-first clock, SNTP correction, and ramped dim/off inactivity states.
 
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for phase exit criteria and decisions.
+The current desktop mock workflow is documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
+Phase 3 hardware checks are documented in [`docs/PHASE_3_SERVICES.md`](docs/PHASE_3_SERVICES.md).
+The consolidated regression checklist is in [`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md).
 
 ## Build and flash
 

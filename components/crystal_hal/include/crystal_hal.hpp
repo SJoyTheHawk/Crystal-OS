@@ -37,6 +37,8 @@ struct IStorage {
 
 struct ITouchRaw {
     virtual ~ITouchRaw() = default;
+    struct Point { int16_t x; int16_t y; bool pressed; };
+    virtual bool read(Point *out) = 0;
 };
 
 struct CrystalHal {
@@ -51,3 +53,4 @@ CrystalHal &hal();
 
 // Must be called after the board display has initialized its backlight.
 void crystal_hal_init();
+void crystal_hal_bind_touch(void *lvgl_input_device);

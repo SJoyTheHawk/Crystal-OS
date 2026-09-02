@@ -1,0 +1,102 @@
+# Crystal OS Validation Checklist
+
+Use this checklist after a clean build, after changing hardware services, and
+before marking a phase complete.
+
+## Build and flash
+
+- [ ] `idf.py build` completes without errors.
+- [ ] Firmware size fits the smallest OTA application partition.
+- [ ] Flash write and hash verification complete successfully.
+- [ ] The monitor uses the correct USB port and `2000000` baud.
+- [ ] The application starts without a panic, watchdog reset, or reboot loop.
+- [ ] The PSRAM memory test passes.
+
+The existing `Incorrect size of core dump image` message is caused by stale or
+uninitialized coredump partition contents. It is not a crash unless a panic or
+reset follows it.
+
+## Phase 0: bring-up
+
+- [ ] The 480x480 panel initializes and displays the launcher.
+- [ ] GT911 is detected and reports its ID and configuration version.
+- [ ] Touch coordinates correspond to visible controls.
+- [ ] The Hello app displays a readable `HELLO WORLD` icon.
+- [ ] Tapping the Hello app opens it.
+- [ ] `Return to launcher` returns to the launcher.
+- [ ] First-frame time remains close to the recorded 1.9-second baseline.
+
+Completion gate: basic display, touch, app launch, and app return all work on
+physical hardware.
+
+## Phase 1: performance gate
+
+- [ ] `CONFIG_BSP_LCD_RGB_BUFFER_NUMS=1` remains selected.
+- [ ] The benchmark app can be restored or built when a performance regression
+  needs investigation.
+- [ ] Visible drag performance remains consistent with the recorded 7-8 FPS.
+- [ ] Phase 6 continues to avoid a live full-screen tracking card, dynamic blur,
+  and shadow during drag.
+- [ ] Future switcher transitions use a short cross-fade or snap and receive a
+  new physical-panel measurement.
+
+Completion gate: the measured result and single-buffer animation decision are
+recorded in `IMPLEMENTATION_PLAN.md`.
+
+## Phase 2: HAL
+
+- [ ] `hal().brightness` changes and reports backlight brightness.
+- [ ] Brightness is clamped to the supported maximum of 95 percent.
+- [ ] `hal().storage` can write, read, and erase a test blob in NVS.
+- [ ] `hal().wifi` starts in station mode.
+- [ ] Saved Wi-Fi configuration reconnects without credentials in source code.
+- [ ] Wi-Fi obtains an IP address.
+- [ ] PCF85063 responds on the shared I2C bus at address `0x51`.
+- [ ] A valid PCF85063 time can be read.
+- [ ] Time can be written to PCF85063 and read back.
+- [ ] `hal().touch_raw` returns coordinates and pressed/released state.
+- [ ] The host mock compiles:
+
+```bash
+clang++ -std=c++17 \
+  -Icomponents/crystal_hal/include \
+  -fsyntax-only sim/crystal_hal_mock.cpp
+```
+
+- [ ] A full LVGL SDL window builds and runs on macOS.
+
+Completion gate: the same Crystal-owned UI code runs with the device HAL and
+desktop mock. Until the SDL item passes, Phase 2 remains technically open.
+
+## Phase 3: core services
+
+- [ ] `Core services ready` appears after boot and fades out.
+- [ ] The toast does not intercept touch.
+- [ ] The log contains `toast displayed: Core services ready`.
+- [ ] An unset, invalid, or stopped RTC displays `--:--`.
+- [ ] Saved valid RTC time appears before network synchronization.
+- [ ] Wi-Fi/SNTP synchronization produces the `Time synchronized` toast.
+- [ ] Synchronized time appears in the status bar.
+- [ ] Displayed time uses Hong Kong time (`HKT-8`, UTC+08:00).
+- [ ] After SNTP, reboot without Wi-Fi and confirm the RTC supplies time.
+- [ ] Leave the device untouched for 30 seconds and confirm a gradual dim to 20
+  percent.
+- [ ] Continue to 60 seconds and confirm the backlight turns off.
+- [ ] Touch the dark screen and confirm brightness returns to 95 percent.
+- [ ] The launcher and Hello app remain responsive after waking.
+- [ ] No queue, LVGL, I2C, watchdog, or task errors appear during the test.
+
+Completion gate: offline RTC boot, queued toast, and dim/off/wake behavior all
+pass on physical hardware. Wake-touch suppression remains a Phase 6 gesture
+ownership requirement.
+
+## Regression command sequence
+
+```bash
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
+idf.py -p /dev/cu.usbmodem101 flash monitor -b 2000000
+```
+
+Use `idf.py fullclean` only after configuration or dependency changes, or when
+investigating stale build output.
