@@ -32,6 +32,7 @@ bool StateTestApp::onCreate()
     count_label_ = lv_label_create(root);
     lv_obj_set_style_text_font(count_label_, &lv_font_montserrat_20, 0);
     lv_obj_align(count_label_, LV_ALIGN_CENTER, 0, -30);
+    (void)state().get_u32("counter", &counter_);
     refresh_count();
 
     lv_obj_t *increment = lv_btn_create(root);
@@ -58,24 +59,25 @@ bool StateTestApp::onResume()
     return true;
 }
 
+bool StateTestApp::onPause()
+{
+    return state().set_u32("counter", counter_);
+}
+
 void StateTestApp::refresh_count()
 {
     if (count_label_ == nullptr) {
         return;
     }
-    uint32_t count = 0;
-    (void)state().get_u32("counter", &count);
     char text[48];
-    snprintf(text, sizeof(text), "Saved counter: %lu", static_cast<unsigned long>(count));
+    snprintf(text, sizeof(text), "Saved counter: %lu", static_cast<unsigned long>(counter_));
     lv_label_set_text(count_label_, text);
 }
 
 void StateTestApp::increment_cb(lv_event_t *event)
 {
     auto *app = static_cast<StateTestApp *>(lv_event_get_user_data(event));
-    uint32_t count = 0;
-    (void)app->state().get_u32("counter", &count);
-    (void)app->state().set_u32("counter", ++count);
+    ++app->counter_;
     app->refresh_count();
 }
 

@@ -77,6 +77,7 @@ extern "C" void app_main(void)
     auto *stylesheet = new ESP_Brookesia_PhoneStylesheet_t
         ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
+    stylesheet->core.manager.app.max_running_num = 1;
     require_boot_step(phone->addStylesheet(stylesheet), "Failed to add phone stylesheet");
     require_boot_step(phone->activateStylesheet(stylesheet), "Failed to activate phone stylesheet");
     delete stylesheet;

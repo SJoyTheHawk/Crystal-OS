@@ -274,7 +274,8 @@ wrong hour.
 
 The current checkpoint is implemented in `components/crystal_app`. `CrystalApp`
 seals Brookesia's lifecycle entry points and forwards them to
-`onCreate()`/`onPause()`/`onResume()`/`onDestroy()`/`onBack()`. Because
+`onInstall()`/`onCreate()`/`onStart()`/`onResume()`/`onPause()`/`onStop()`/
+`onDestroy()`/`onBack()`. Because
 Brookesia owns screen creation and recycling, `onCreate()` builds the active
 screen tree whenever `run()` creates a screen; app data belongs in
 `CrystalState`, not in LVGL objects. `StateTestApp` is the reference conversion
@@ -459,7 +460,7 @@ there is no useful recovery from a failed teardown.
 `addStylesheet()`:
 
 ```cpp
-stylesheet->core.app.max_running_num = 1;   // destroy-on-switch, per PLAN §2
+stylesheet->core.manager.app.max_running_num = 1;   // destroy-on-switch, per PLAN §2
 ```
 
 Keep `enable_app_save_snapshot = 1` — Phase 6 needs the snapshot. With this,

@@ -10,6 +10,7 @@ public:
 protected:
     bool onCreate() override;
     bool onResume() override;
+    bool onPause() override;
 
 private:
     static void increment_cb(lv_event_t *event);
@@ -17,4 +18,5 @@ private:
     void refresh_count();
 
     lv_obj_t *count_label_ = nullptr;
+    uint32_t counter_ = 0;
 };

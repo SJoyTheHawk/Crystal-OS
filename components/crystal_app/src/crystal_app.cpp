@@ -2,6 +2,7 @@
 
 #include "crystal_app.hpp"
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -80,42 +81,106 @@ bool CrystalState::set_u32(const char *key, uint32_t value)
 }
 
 CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
-    : ESP_Brookesia_PhoneApp(name, launcher_icon, true), state_(name)
+    : ESP_Brookesia_PhoneApp(name, launcher_icon, true),
+      app_name_(name != nullptr ? name : "<unnamed>"), state_(name)
 {
+}
+
+bool CrystalApp::init()
+{
+    assert(lifecycle_state_ == LifecycleState::Destroyed);
+    ESP_LOGI(TAG, "%s lifecycle: onInstall", app_name_.c_str());
+    const bool ok = onInstall();
+    if (ok) {
+        lifecycle_state_ = LifecycleState::Installed;
+    }
+    return ok;
+}
+
+bool CrystalApp::deinit()
+{
+    ESP_LOGI(TAG, "%s lifecycle: onUninstall", app_name_.c_str());
+    if (!onUninstall()) {
+        ESP_LOGW(TAG, "%s onUninstall reported failure; uninstall continues", app_name_.c_str());
+    }
+    lifecycle_state_ = LifecycleState::Destroyed;
+    return true;
 }
 
 bool CrystalApp::run()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onCreate", getName());
-    return onCreate();
+    assert(lifecycle_state_ == LifecycleState::Installed ||
+           lifecycle_state_ == LifecycleState::Destroyed);
+    ESP_LOGI(TAG, "%s lifecycle: onCreate", app_name_.c_str());
+    const uint32_t start = lv_tick_get();
+    const bool ok = onCreate();
+    const uint32_t elapsed = lv_tick_elaps(start);
+    if (elapsed > 80) {
+        ESP_LOGW(TAG, "%s onCreate took %lu ms (budget 80 ms)",
+                 app_name_.c_str(), static_cast<unsigned long>(elapsed));
+    }
+    if (ok) {
+        lifecycle_state_ = LifecycleState::Created;
+    }
+    return ok;
 }
 
 bool CrystalApp::pause()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onPause", getName());
-    return onPause();
+    if (lifecycle_state_ == LifecycleState::Paused) {
+        return true;
+    }
+    assert(is_active());
+    ESP_LOGI(TAG, "%s lifecycle: onPause", app_name_.c_str());
+    if (!onPause()) {
+        ESP_LOGW(TAG, "%s onPause reported failure; continuing teardown", app_name_.c_str());
+    }
+    lifecycle_state_ = LifecycleState::Paused;
+    return true;
 }
 
 bool CrystalApp::resume()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onResume", getName());
+    assert(lifecycle_state_ == LifecycleState::Paused);
+    ESP_LOGI(TAG, "%s lifecycle: onResume", app_name_.c_str());
     const uint32_t start = lv_tick_get();
     const bool ok = onResume();
     const uint32_t elapsed = lv_tick_elaps(start);
     if (elapsed > 80) {
         ESP_LOGW(TAG, "%s onResume took %lu ms (budget 80 ms)",
-                 getName(), static_cast<unsigned long>(elapsed));
+                 app_name_.c_str(), static_cast<unsigned long>(elapsed));
+    }
+    if (ok) {
+        lifecycle_state_ = LifecycleState::Resumed;
     }
     return ok;
 }
 bool CrystalApp::close()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onDestroy", getName());
-    return onDestroy();
+    if (lifecycle_state_ == LifecycleState::Destroyed) {
+        return true;
+    }
+    if (is_active() && lifecycle_state_ != LifecycleState::Paused) {
+        (void)pause();
+    }
+    ESP_LOGI(TAG, "%s lifecycle: onDestroy", app_name_.c_str());
+    if (!onDestroy()) {
+        ESP_LOGW(TAG, "%s onDestroy reported failure; continuing teardown", app_name_.c_str());
+    }
+    lifecycle_state_ = LifecycleState::Destroyed;
+    return true;
 }
 
 bool CrystalApp::back()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onBack", getName());
+    assert(is_active());
+    ESP_LOGI(TAG, "%s lifecycle: onBack", app_name_.c_str());
     return onBack();
+}
+
+bool CrystalApp::is_active() const
+{
+    return lifecycle_state_ == LifecycleState::Created ||
+           lifecycle_state_ == LifecycleState::Started ||
+           lifecycle_state_ == LifecycleState::Resumed;
 }

@@ -103,20 +103,15 @@ ownership requirement.
 Completion gate: both apps use `CrystalApp`; State Test state survives
 switch-away/switch-back and reboot, and resume-time diagnostics are active.
 
-Caveat found in review: State Test writes NVS inside its click handler, so this
-section passes without ever exercising `onPause()`. The "state survives a switch"
-criterion is therefore not yet demonstrated through the documented save path.
-Phase 4.5 covers it.
-
 ## Phase 4.5: lifecycle correctness checkpoint
 
-State Test must be changed first: move the NVS write out of `increment_cb` and
-into `onPause()`, keeping the counter in a member during the session. Without
-that change this section tests nothing new.
+State Test keeps its counter in memory and writes it to NVS only from
+`onPause()`, so the following sequence exercises the documented save path.
 
 - [ ] Open State Test, tap `Increment` three times, return to the launcher,
   reopen: the counter reads 3. Proves `onPause()` ran on the close path.
-- [ ] Repeat, but reboot instead of reopening: the counter still reads 3.
+- [ ] Increment again, return to the launcher, then reboot: the saved counter
+  remains. A hard reset while the app is open does not invoke `onPause()`.
 - [ ] The serial log shows `onPause` then `onDestroy`, in that order, on every
   return to the launcher.
 - [ ] `onPause` appears exactly once per close — not twice.

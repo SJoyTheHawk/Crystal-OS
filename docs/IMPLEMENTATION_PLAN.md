@@ -204,9 +204,12 @@ lifetime, start/stop the visible lifetime, resume/pause the foreground lifetime.
 Crystal's five hooks do not nest, and two of them fire on events other than the
 ones their names imply. This phase closes the gaps that matter before any real
 app is built on the framework. It is small and entirely inside
-`components/crystal_app` plus one stylesheet value.
+`components/crystal_app` plus one stylesheet value. The install hooks,
+pause-before-destroy ordering, advisory teardown results, and one-resident-app
+policy land here. `onStart()`/`onStop()` are defined as dormant API hooks; their
+dispatch belongs to Phase 7 when the gesture arbiter owns occluding overlays.
 
-Keep five hooks. Importing all six Android callbacks adds ceremony a 480px
+Keep the five active app hooks. Importing all six Android callbacks adds ceremony a 480px
 single-window device does not need — there is no multi-window mode, so
 "visible but not foreground" only ever means "occluded by an OS overlay".
 
@@ -270,6 +273,11 @@ A `LifecycleState` enum member (`INSTALLED`/`CREATED`/`STARTED`/`RESUMED`/
 `PAUSED`/`DESTROYED`) backs items 1 and 5, asserts legal transitions in debug
 builds, and covers Brookesia's error paths, which call `processClose()` from
 inside a failed `pause()` and would otherwise re-enter the hooks.
+
+**Progress (2026-09-03):** Implemented the lifecycle state guard, ordered
+pause/destroy teardown, install/uninstall hooks, advisory teardown returns,
+80 ms `onCreate()` timing, and `max_running_num = 1`. State Test now writes its
+counter only in `onPause()`. `onStart()`/`onStop()` remain dormant until Phase 7.
 
 Exit: an app whose only state write is in `onPause()` survives return-to-launcher
 and reopen. Opening a fourth app produces the same `onCreate()` path as the

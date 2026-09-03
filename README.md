@@ -20,6 +20,7 @@ LVGL and Espressif's `esp-brookesia` phone UI.
 - Phase 2: in progress. The hardware abstraction layer includes device brightness, NVS storage, a lazy Wi-Fi station adapter, a PCF85063 RTC adapter, and a raw-touch adapter. A standalone host mock is available under `sim/`; the full SDL UI target remains.
 - Phase 3: implemented; final physical-device validation is pending. `crystal_core` provides the UI event queue, toast overlay, RTC-first clock, SNTP correction, and ramped dim/off inactivity states.
 - Phase 4: framework checkpoint implemented. `CrystalApp` provides lifecycle hooks and bounded per-app NVS state; Hello and State Test are installed for lifecycle validation.
+- Phase 4.5: lifecycle corrections implemented; hardware validation is pending. App teardown now guarantees pause before destroy, install hooks are sealed, and Brookesia is limited to one resident app.
 
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for phase exit criteria and decisions.
 The current desktop mock workflow is documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
