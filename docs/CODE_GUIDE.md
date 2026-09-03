@@ -272,113 +272,199 @@ wrong hour.
 
 ## Phase 4 — CrystalApp
 
+The current checkpoint is implemented in `components/crystal_app`. `CrystalApp`
+seals Brookesia's lifecycle entry points and forwards them to
+`onCreate()`/`onPause()`/`onResume()`/`onDestroy()`/`onBack()`. Because
+Brookesia owns screen creation and recycling, `onCreate()` builds the active
+screen tree whenever `run()` creates a screen; app data belongs in
+`CrystalState`, not in LVGL objects. `StateTestApp` is the reference conversion
+used to verify that a counter survives app switching and reboot. Each lifecycle
+entry is logged with the app name under the `crystal_app` tag; resumes over
+80 ms also emit a warning.
+
 `run()` and `close()` are sealed `final` so no app can bypass the lifecycle. The
 reference's apps call `getVisualArea()` themselves and one of them hardcodes a
 40px status-bar offset (`Drawpanel::touch_event_cb`); the base class removes the
 need by handing over a pre-translated content root.
 
 ```cpp
-// crystal_app/include/crystal_app.hpp
+// crystal_app/include/crystal_app.hpp — as shipped in Phase 4
 class CrystalApp : public ESP_Brookesia_PhoneApp {
 public:
-    CrystalApp(const char *name, const lv_img_dsc_t *icon)
-        : ESP_Brookesia_PhoneApp(name, icon, true) {}
+    CrystalApp(const char *name, const void *launcher_icon = nullptr);
+
+    CrystalState &state() { return state_; }
 
 protected:
-    virtual bool onCreate()  { return true; }   // once, at install
-    virtual bool onResume() = 0;                // build UI from state()
-    virtual void onPause()   {}                 // serialize state out
-    virtual void onDestroy() {}                 // release non-UI resources
+    bool run()    final;    // -> onCreate()
+    bool pause()  final;    // -> onPause()
+    bool resume() final;    // -> onResume(), with the 80 ms budget check
+    bool close()  final;    // -> onDestroy()
+    bool back()   final;    // -> onBack()
 
-    lv_obj_t     *content();    // sized to the visual area, origin already at (0,0)
-    CrystalState &state();
+    virtual bool onCreate()  { return true; }   // every launch: build the UI
+    virtual bool onPause()   { return true; }   // serialize state out
+    virtual bool onResume()  { return true; }   // re-select of a still-live app
+    virtual bool onDestroy() { return true; }
+    virtual bool onBack()    { return notifyCoreClosed(); }
 
 private:
-    bool init()  override final { return onCreate(); }
-    bool run()   override final;
-    bool close() override final;
-    bool back()  override final { notifyCoreClosed(); return true; }
-
-    lv_obj_t *_content = nullptr;
+    CrystalState state_;
 };
 ```
 
-```cpp
-bool CrystalApp::run(void)
-{
-    uint32_t t0 = lv_tick_get();
+`onCreate()` fires on **every** launch, not once at install — it is Android's
+`onCreate` + `onStart` + `onResume` collapsed into one event, because Brookesia
+recreates the screen tree each time `run()` is called. `onResume()` is a
+different event: it only fires when a still-resident, paused app is re-selected.
+Phase 4.5 closes the gaps this mapping leaves.
 
-    lv_area_t a = getVisualArea();
-    _content = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(_content, a.x2 - a.x1, a.y2 - a.y1);
-    lv_obj_align(_content, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_pad_all(_content, 0, 0);
-    lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
-
-    bool ok = onResume();
-
-    uint32_t dt = lv_tick_elaps(t0);
-    if (dt > 80) {
-        ESP_LOGW(TAG, "%s onResume took %lums (budget 80ms)", getName(), dt);
-    }
-    return ok;
-}
-
-bool CrystalApp::close(void)
-{
-    onPause();          // write state before anything is torn down
-    _state.flush();
-    onDestroy();
-    _content = nullptr; // Brookesia destroys the screen tree itself
-    return true;
-}
-```
-
-Rebuild speed is why destroy-on-switch works. An `onResume()` that cannot hold
-80ms is an app that needs its heavy work moved off the UI path — and the
-`ESP_TASK_WDT_TIMEOUT_S=5` watchdog is the failure mode if it is ignored, since
-`run()` holds the LVGL lock.
+Rebuild speed is why destroy-on-switch works. An `onCreate()` or `onResume()`
+that cannot hold 80ms is an app that needs its heavy work moved off the UI path —
+and the `ESP_TASK_WDT_TIMEOUT_S=5` watchdog is the failure mode if it is ignored,
+since both run under the LVGL lock.
 
 ## Phase 4 — CrystalState
 
 Per-app namespace, hard cap. Scroll offsets and draft strings, never pixels.
 
 ```cpp
-class CrystalState {
+// as shipped: a blob store plus u32 helpers, keyed by an FNV-1a hash of the name
+class CrystalState final {
 public:
-    static constexpr size_t kMaxBytes = 2048;
-
-    void        set_i32(const char *k, int32_t v);
-    int32_t     get_i32(const char *k, int32_t def = 0);
-    void        set_str(const char *k, const char *v);
-    const char *get_str(const char *k, const char *def = "");
-    void        clear();          // backs "clear app data" in Phase 13
-    void        flush();
+    bool get(const char *key, void *value, size_t *length) const;   // <= 2048 bytes
+    bool set(const char *key, const void *value, size_t length);
+    bool erase(const char *key);
+    bool get_u32(const char *key, uint32_t *value) const;
+    bool set_u32(const char *key, uint32_t value);
 private:
-    char _ns[16];                 // "app.<name>" — the sandbox boundary
+    std::string prefix_;          // "a<hash6>." — the sandbox boundary
 };
 ```
+
+Still owed, and needed by Phase 13's clear-data row: `clear()` over the whole
+prefix. String helpers (`set_str`/`get_str`) are worth adding when the first app
+stores draft text — Notes and the Wi-Fi credential flow both will.
 
 The namespace is not cosmetic. It is what makes a future script sandbox
 possible: an app that can read arbitrary NVS can read WiFi credentials.
 
-A converted app then reads:
+A converted app builds from state in `onCreate()` and writes back in `onPause()`:
 
 ```cpp
-bool Notes::onResume()
+bool Notes::onCreate()
 {
-    _ta = lv_textarea_create(content());
-    lv_textarea_set_text(_ta, state().get_str("draft"));
-    lv_obj_scroll_to_y(content(), state().get_i32("scroll"), LV_ANIM_OFF);
+    ta_ = lv_textarea_create(root_);
+    lv_textarea_set_text(ta_, load_draft().c_str());
+    uint32_t scroll = 0;
+    (void)state().get_u32("scroll", &scroll);
+    lv_obj_scroll_to_y(root_, scroll, LV_ANIM_OFF);
     return true;
 }
+```
 
-void Notes::onPause()
+The `onPause()` half is in the Phase 4.5 section — it only runs reliably once
+that phase lands.
+
+## Phase 4.5 — Lifecycle correctness
+
+Five changes, all inside `crystal_app` except the `max_running_num` override.
+`IMPLEMENTATION_PLAN.md` §"Phase 4.5" carries the reasoning; this is the shape.
+
+A state member makes the ordering enforceable rather than assumed:
+
+```cpp
+enum class LifecycleState { INSTALLED, CREATED, STARTED, RESUMED, PAUSED, DESTROYED };
+```
+
+**`onPause()` before `onDestroy()`.** The guarantee Android gives and Phase 4
+does not. `close()` becomes:
+
+```cpp
+bool CrystalApp::close()
 {
-    state().set_str("draft", lv_textarea_get_text(_ta));
-    state().set_i32("scroll", lv_obj_get_scroll_y(content()));
+    if (state_machine_ != LifecycleState::PAUSED) {
+        // Not already paused by Brookesia: this is the common path (return to
+        // launcher, or destroy-on-switch). Give the app its chance to write.
+        dispatch_pause();
+    }
+    ESP_LOGI(TAG, "%s lifecycle: onDestroy", getName());
+    (void)onDestroy();                      // see "return values" below
+    state_machine_ = LifecycleState::DESTROYED;
+    return true;
 }
 ```
+
+The LVGL tree is **still alive** inside both hooks — Brookesia's `processClose()`
+calls `close()` before `enableAutoClean()`/`cleanResource()`. So this is legal
+and is the intended way to save:
+
+```cpp
+bool Notes::onPause()
+{
+    state().set_str("draft",  lv_textarea_get_text(ta_));
+    state().set_u32("scroll", lv_obj_get_scroll_y(root_));
+    return true;
+}
+```
+
+Do not carry the Android habit of caching widget values earlier "because the
+views are gone by `onDestroy`". Here they are not.
+
+**Install hooks.** `init()`/`deinit()` are unsealed and unused in Phase 4; an app
+can override them and step outside the framework. Seal them:
+
+```cpp
+bool init()   final { state_machine_ = LifecycleState::INSTALLED; return onInstall(); }
+bool deinit() final { return onUninstall(); }
+
+virtual bool onInstall()   { return true; }  // once, at installApp()
+virtual bool onUninstall() { return true; }  // once, at uninstallApp()
+```
+
+`onInstall()` is where Clock registers its expiry with `crystal_service`, so the
+timer exists whether or not the app is open. It is also the hook Phase 5's
+registry and Phase 13's clear-data need.
+
+**Occlusion hooks.** Defined here, fired by the Phase 7 arbiter — it is the only
+component that knows what covers what. Until Phase 7 they are never called.
+
+```cpp
+virtual bool onStart() { return true; }  // becoming visible again
+virtual bool onStop()  { return true; }  // fully occluded: stop timers, drop work
+```
+
+Clock's 1s `lv_timer` is the motivating case: redrawing behind an opaque
+quick-settings panel costs bandwidth on a panel that measured 7-8 FPS at G1.
+
+**Return values are advisory.** Brookesia force-closes an app whose `pause()`
+returns `false` (`core_manager.cpp:279`), which punishes an app for honestly
+reporting a failed save. Crystal logs and continues:
+
+```cpp
+void CrystalApp::dispatch_pause()
+{
+    ESP_LOGI(TAG, "%s lifecycle: onPause", getName());
+    if (!onPause()) {
+        ESP_LOGW(TAG, "%s onPause reported failure; continuing teardown", getName());
+    }
+    state_machine_ = LifecycleState::PAUSED;
+}
+```
+
+`pause()` therefore returns `true` unconditionally. Same for `onDestroy()` —
+there is no useful recovery from a failed teardown.
+
+**One resident app.** In `main.cpp`, after the stylesheet is created and before
+`addStylesheet()`:
+
+```cpp
+stylesheet->core.app.max_running_num = 1;   // destroy-on-switch, per PLAN §2
+```
+
+Keep `enable_app_save_snapshot = 1` — Phase 6 needs the snapshot. With this,
+every launch is `onCreate()` and every switch away is `onPause()` then
+`onDestroy()`, so an app never has to ask which path it is on.
 
 ## Phase 5 — registry
 

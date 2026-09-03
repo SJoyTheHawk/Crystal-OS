@@ -12,6 +12,7 @@
 #include "bsp/esp-bsp.h"
 #include "esp_brookesia.hpp"
 #include "hello_app.hpp"
+#include "state_test_app.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
 #include "lvgl.h"
@@ -100,6 +101,10 @@ extern "C" void app_main(void)
              hello_icon.header.w, hello_icon.header.h,
              static_cast<unsigned>(hello_icon.data_size), hello_icon.data);
     require_boot_step(phone->installApp(hello_app) >= 0, "Failed to install Hello app");
+
+    auto *state_test_app = new StateTestApp();
+    require_boot_step(state_test_app != nullptr, "Failed to create State Test app");
+    require_boot_step(phone->installApp(state_test_app) >= 0, "Failed to install State Test app");
 
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;

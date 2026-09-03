@@ -11,17 +11,12 @@ LV_IMG_DECLARE(hello_icon);
 static const char *TAG = "hello_app";
 
 HelloApp::HelloApp()
-    : ESP_Brookesia_PhoneApp("Hello", &hello_icon, true)
+    : CrystalApp("Hello", &hello_icon)
 {
     hello_icon_prepare();
 }
 
-bool HelloApp::init()
-{
-    return true;
-}
-
-bool HelloApp::run()
+bool HelloApp::onCreate()
 {
     const lv_area_t area = getVisualArea();
     const lv_coord_t width = area.x2 - area.x1 + 1;
@@ -63,13 +58,7 @@ bool HelloApp::run()
     return true;
 }
 
-bool HelloApp::back()
-{
-    notifyCoreClosed();
-    return true;
-}
-
-bool HelloApp::close()
+bool HelloApp::onDestroy()
 {
     return true;
 }

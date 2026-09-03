@@ -173,6 +173,16 @@ core-0 task without touching LVGL directly.
 
 ### Phase 4 — App framework
 
+**Progress (2026-09-03):** Added `CrystalApp`, a Crystal-owned lifecycle
+wrapper over `ESP_Brookesia_PhoneApp`, with sealed `run()`/`pause()`/`resume()`/
+`close()`/`back()` entry points and `onCreate()`/`onPause()`/`onResume()`/
+`onDestroy()`/`onBack()` hooks, including an 80 ms `onResume()` diagnostic.
+Added `CrystalState`, a bounded (2 KiB per
+value) NVS-backed store with app-specific key prefixes. Hello now uses the
+new lifecycle, and the State Test app demonstrates a counter surviving an app
+switch and reboot. The Phase 4 hardware checkpoint passed; the framework is
+ready for Phase 5 registry work.
+
 `CrystalApp` over `ESP_Brookesia_PhoneApp`, with `run()`/`close()` sealed
 `final` and redirected to the lifecycle hooks. `CrystalState` as a per-app
 namespaced NVS-backed store, hard-capped ~2KB.
@@ -184,6 +194,88 @@ credentials.
 Exit: two apps convert to the lifecycle and survive switch-away/switch-back with
 scroll position and draft text intact. `onResume()` under 80ms, warned in debug
 builds when exceeded.
+
+### Phase 4.5 — Lifecycle correctness
+
+A review of the Phase 4 hooks against Android's six-callback model
+(`onCreate`/`onStart`/`onResume`/`onPause`/`onStop`/`onDestroy`) found four gaps.
+Android's callbacks are three nested pairs — create/destroy bounds the object
+lifetime, start/stop the visible lifetime, resume/pause the foreground lifetime.
+Crystal's five hooks do not nest, and two of them fire on events other than the
+ones their names imply. This phase closes the gaps that matter before any real
+app is built on the framework. It is small and entirely inside
+`components/crystal_app` plus one stylesheet value.
+
+Keep five hooks. Importing all six Android callbacks adds ceremony a 480px
+single-window device does not need — there is no multi-window mode, so
+"visible but not foreground" only ever means "occluded by an OS overlay".
+
+**1. `onPause()` before `onDestroy()`.** The shipped `close()` calls
+`onDestroy()` alone, so the documented contract "serialize state out in
+`onPause()`" silently loses data on the most common path — return to launcher,
+and destroy-on-switch. Android guarantees `onPause` precedes `onDestroy`; Crystal
+must too. Guard with a lifecycle state enum so an app Brookesia already paused
+does not receive `onPause()` twice.
+
+Brookesia's `processClose()` calls `close()` *before* `enableAutoClean()` and
+`cleanResource()`, so the LVGL tree is still alive inside `onPause()`/
+`onDestroy()`. Widget state can be read there. That is a real difference from
+Android, where the view hierarchy is gone by `onDestroy`, and it is what makes
+this fix a two-line change rather than a redesign. Document it — an app author
+will otherwise assume the Android rule and cache values defensively.
+
+**2. Seal `init()`/`deinit()` as `onInstall()`/`onUninstall()`.** `onCreate()`
+fires on every launch, so there is currently no once-ever hook, and
+`ESP_Brookesia_CoreApp::init()`/`deinit()` sit unsealed and unused — an app can
+override them today and bypass the framework. Phase 5's registry and Phase 13's
+clear-data both need an install-time hook, and Clock's service-owned timer needs
+somewhere to register that does not depend on the app being open. Note that
+`CODE_GUIDE.md` already described `onCreate()` as mapping to `init()` "once, at
+install"; the code never did that. This phase makes one of the two true.
+
+**3. `onStart()`/`onStop()` for occlusion.** Quick settings (Phase 8) and the
+keyboard overlay (Phase 10) cover the app opaquely with no callback at all, so a
+1s `lv_timer` keeps redrawing behind a fully occluding panel. On a single-buffer
+RGB panel that already measured 7-8 FPS at gate G1, that is wasted bandwidth in
+exactly the moment an animation needs it. `onStop()` is the hook Clock, Weather,
+and the Phase 1 benchmark all want. Fired by the Phase 7 arbiter, which is the
+only component that knows what is covering what — so the hooks land here and the
+call sites land in Phase 7. Until then they are defined and never fired.
+
+**4. Decide `max_running_num`.** §2 calls destroy-on-switch settled and
+`DESIGN.md` §5 justifies the snapshot design by stating resident apps are not
+paid for, but the active `ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET()` ships
+`max_running_num = 3` with `enable_app_save_snapshot = 1`. Apps 1-3 therefore
+stay resident and paused; nothing is destroyed until a fourth launches. An app
+cannot predict whether it gets `onCreate()` on a fresh tree or `onResume()` on a
+live one, which is Android's "configuration change versus process death" trap and
+fails on the fourth app rather than the first.
+
+**Decision: override to `max_running_num = 1`.** The memory argument in
+`DESIGN.md` §5 holds, Phase 6's 50% crossover already assumes a rebuild behind
+the card, and one resident app makes the lifecycle deterministic — every launch
+is `onCreate()`, every switch away is `onPause()` then `onDestroy()`. Keep
+`enable_app_save_snapshot = 1`; Phase 6 needs the snapshot. Set it in the
+stylesheet override in `main.cpp` rather than editing `managed_components/`.
+
+**5. Ignore `onPause()`'s return value.** Brookesia treats `false` from `pause()`
+as a failure and force-closes the app (`core_manager.cpp:279`). Android's
+callbacks are `void`. An app that returns `false` to signal "state did not save"
+currently gets killed for it, which is the opposite of useful. `CrystalApp::pause()`
+logs a warning and returns `true` unconditionally. The same argument applies to
+`onDestroy()` — there is nothing productive Brookesia can do with a failed
+teardown.
+
+A `LifecycleState` enum member (`INSTALLED`/`CREATED`/`STARTED`/`RESUMED`/
+`PAUSED`/`DESTROYED`) backs items 1 and 5, asserts legal transitions in debug
+builds, and covers Brookesia's error paths, which call `processClose()` from
+inside a failed `pause()` and would otherwise re-enter the hooks.
+
+Exit: an app whose only state write is in `onPause()` survives return-to-launcher
+and reopen. Opening a fourth app produces the same `onCreate()` path as the
+first. `onInstall()` fires once per boot regardless of how many times the app is
+opened. Illegal transitions assert in debug builds. `CODE_GUIDE.md` §"Phase 4 —
+CrystalApp" matches the shipped code.
 
 ### Phase 5 — Registry and launcher
 
@@ -415,7 +507,10 @@ large, plus the indicator bar size). Each unused size is dead flash. Drop
 
 ## 7. Sequencing notes
 
-Phases 0-3 are prerequisites for everything. 4-5 unlock app work. 6 waits on G1.
-7 should precede 8 and 10, since both depend on the arbiter existing. 12 can
+Phases 0-3 are prerequisites for everything. 4-5 unlock app work. 4.5 should land
+before 5.5, since Clock is the first app to depend on `onPause()` actually being
+called and on an install-time hook. 6 waits on G1. 7 should precede 8 and 10,
+since both depend on the arbiter existing, and it is where Phase 4.5's
+`onStart()`/`onStop()` get their call sites. 12 can
 start any time after 0 and should not be left to the end — coredumps are most
 valuable while the system is least stable.

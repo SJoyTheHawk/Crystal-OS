@@ -19,6 +19,7 @@ LVGL and Espressif's `esp-brookesia` phone UI.
 - Phase 1: complete. The performance gate measured approximately 7-8 visible FPS while dragging. Double buffering did not improve the result, so the future switcher will use a simplified animation.
 - Phase 2: in progress. The hardware abstraction layer includes device brightness, NVS storage, a lazy Wi-Fi station adapter, a PCF85063 RTC adapter, and a raw-touch adapter. A standalone host mock is available under `sim/`; the full SDL UI target remains.
 - Phase 3: implemented; final physical-device validation is pending. `crystal_core` provides the UI event queue, toast overlay, RTC-first clock, SNTP correction, and ramped dim/off inactivity states.
+- Phase 4: framework checkpoint implemented. `CrystalApp` provides lifecycle hooks and bounded per-app NVS state; Hello and State Test are installed for lifecycle validation.
 
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for phase exit criteria and decisions.
 The current desktop mock workflow is documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
@@ -65,6 +66,8 @@ idf.py build
 ```text
 main/                  Application entry point
 components/crystal_hal/ Hardware abstraction interfaces and device adapters
+components/crystal_app/ CrystalApp lifecycle and bounded per-app state
+components/state_test_app/ Phase 4 state persistence validation app
 components/hello_app/   Hello World launcher application and icon
 components/perf_spike/  Phase 1 temporary performance benchmark
 docs/                   Design, implementation, and bring-up notes

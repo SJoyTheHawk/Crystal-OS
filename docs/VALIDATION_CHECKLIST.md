@@ -90,6 +90,50 @@ Completion gate: offline RTC boot, queued toast, and dim/off/wake behavior all
 pass on physical hardware. Wake-touch suppression remains a Phase 6 gesture
 ownership requirement.
 
+## Phase 4: app framework checkpoint
+
+- [x] The launcher shows both `Hello` and `State Test` apps.
+- [x] Hello opens and returns to the launcher using the Crystal lifecycle.
+- [x] Open State Test, tap `Increment`, and confirm the saved counter changes.
+- [x] Return to the launcher, reopen State Test, and confirm the counter remains.
+- [x] Reboot, reopen State Test, and confirm the counter survives the reboot.
+- [x] Switching apps produces no LVGL or NVS errors.
+- [x] `onResume()` logs a warning when it exceeds the 80 ms budget.
+
+Completion gate: both apps use `CrystalApp`; State Test state survives
+switch-away/switch-back and reboot, and resume-time diagnostics are active.
+
+Caveat found in review: State Test writes NVS inside its click handler, so this
+section passes without ever exercising `onPause()`. The "state survives a switch"
+criterion is therefore not yet demonstrated through the documented save path.
+Phase 4.5 covers it.
+
+## Phase 4.5: lifecycle correctness checkpoint
+
+State Test must be changed first: move the NVS write out of `increment_cb` and
+into `onPause()`, keeping the counter in a member during the session. Without
+that change this section tests nothing new.
+
+- [ ] Open State Test, tap `Increment` three times, return to the launcher,
+  reopen: the counter reads 3. Proves `onPause()` ran on the close path.
+- [ ] Repeat, but reboot instead of reopening: the counter still reads 3.
+- [ ] The serial log shows `onPause` then `onDestroy`, in that order, on every
+  return to the launcher.
+- [ ] `onPause` appears exactly once per close — not twice.
+- [ ] Open Hello, then State Test, then Hello, then State Test: every launch logs
+  `onCreate`, never `onResume`. Confirms `max_running_num = 1`.
+- [ ] Steady-state PSRAM after ten alternating launches matches the free heap
+  after the first, within noise. Nothing is accumulating.
+- [ ] `onInstall` logs once per app at boot, and does not log again on launch.
+- [ ] An app whose `onPause()` deliberately returns `false` is **not** killed:
+  the warning is logged and teardown continues normally.
+- [ ] `onStart`/`onStop` compile and are overridable, and no path fires them yet.
+- [ ] No LVGL, NVS, or watchdog errors across the whole sequence.
+
+Completion gate: the documented save path (`onPause()`) is the one actually
+demonstrated, every launch takes the same `onCreate()` route, and a failed
+`onPause()` no longer destroys the app.
+
 ## Regression command sequence
 
 ```bash

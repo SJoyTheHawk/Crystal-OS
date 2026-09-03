@@ -144,12 +144,17 @@ Behaviour:
   follows the finger. Cheap, and it hides the fact that nothing is loaded yet.
 - The **outgoing** app stays centred and live underneath. It does not move.
 - **Crossover at 50%.** Past that point the incoming app is really instantiated
-  (`onResume()`), the card is replaced by live content, and new touch input goes
-  to the incoming app.
+  (`onCreate()` — nothing is resident to resume, see below), the card is replaced
+  by live content, and new touch input goes to the incoming app.
 - **Release before 50%** → card animates out, no switch, outgoing app never
   paused.
 - **Release after 50%** → card completes, outgoing app gets `onPause()` then
   `onDestroy()`.
+
+The incoming app is built, not resumed, because only one app is ever resident
+(`max_running_num = 1`). That makes the switch path the same every time, which is
+the point: an app never has to ask whether it is being created or restored. The
+hook contract lives in `IMPLEMENTATION_PLAN.md` §Phase 4.5.
 
 Animation: 250ms, ease-out, on release. During drag the card tracks the finger
 1:1 with no easing — anything else feels laggy at this size.
@@ -460,8 +465,10 @@ Easy to forget until they appear on a device:
 - Only one app installed → edge drags must no-op cleanly, not wrap to self.
 - All apps uninstalled → launcher needs an empty state pointing at Manage Apps.
 - Recovered from a crash → quiet notice, once, then the flag clears.
-- `onResume()` exceeds its 80ms budget → warn in debug builds; the 5s task
-  watchdog is the real failure mode since `run()` holds the LVGL lock.
+- `onCreate()` exceeds its 80ms budget → warn in debug builds; the 5s task
+  watchdog is the real failure mode, since it runs under the LVGL lock. This is
+  the launch path, so it is the one that matters — `onResume()` only fires for a
+  still-resident app, which one-app residency makes rare.
 - Static IP misconfigured → device must stay reachable enough to fix itself.
 
 ## 12. Open design questions

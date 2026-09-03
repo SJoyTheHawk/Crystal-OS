@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "esp_brookesia.hpp"
+#include "crystal_app.hpp"
 
 LV_IMG_DECLARE(hello_icon);
 #ifdef __cplusplus
@@ -15,14 +15,13 @@ void hello_icon_prepare(void);
 }
 #endif
 
-class HelloApp final : public ESP_Brookesia_PhoneApp {
+class HelloApp final : public CrystalApp {
 public:
     HelloApp();
 
-    bool init() override;
-    bool run() override;
-    bool back() override;
-    bool close() override;
+protected:
+    bool onCreate() override;
+    bool onDestroy() override;
 
 private:
     static void return_button_cb(lv_event_t *event);
