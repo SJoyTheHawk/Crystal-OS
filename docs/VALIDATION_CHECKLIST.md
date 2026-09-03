@@ -129,6 +129,41 @@ Completion gate: the documented save path (`onPause()`) is the one actually
 demonstrated, every launch takes the same `onCreate()` route, and a failed
 `onPause()` no longer destroys the app.
 
+## Phase 5: registry and launcher checkpoint
+
+- [x] Boot logs show `hello` and `state_test` installed in slots 0 and 1.
+- [x] In State Test, choose `Disable Hello next boot`, then return to the
+  launcher and reboot.
+- [x] Hello is absent after reboot and the log reports `disabled: hello`.
+- [x] Choose `Enable Hello next boot`, return to the launcher, and reboot.
+- [x] Hello returns after reboot.
+- [x] Choose `State Test first next boot`, return to the launcher, and reboot.
+- [x] State Test precedes Hello in launcher order and the install logs show its
+  lower saved slot.
+- [x] Restore `Hello first next boot` and reboot to return to the default order.
+- [x] No disabled app is constructed and no NVS or launcher errors occur.
+
+Checkpoint gate: enabled state and launcher order both persist across reboot.
+The final Manage Apps interface and immediate launcher updates remain Phase 13.
+
+## Phase 5.5: Clock app
+
+- [ ] Clock shows local time, date, and Hong Kong timezone.
+- [ ] Timer presets select 30 seconds through 30 minutes and update the ring.
+- [ ] Start, pause, resume, and reset update the timer state correctly.
+- [ ] Start a 3-minute timer, leave Clock, reopen it, and confirm the remaining
+  time continues from the saved absolute end instant.
+- [ ] Leave Clock entirely and confirm expiry produces the `Timer finished` toast
+  and the timer indicator clears.
+- [ ] Confirm timer expiry also plays the short three-tone alert through the board
+  speaker.
+- [ ] Stopwatch start/pause/resume/reset work and laps are listed newest first.
+- [ ] Stopwatch elapsed time and laps survive leaving and reopening Clock.
+- [ ] Reboot clears a running timer, as defined for v1.
+
+Checkpoint gate: timer expiry is service-owned and visible outside Clock; Clock
+state survives app destruction without requiring a resident app.
+
 ## Regression command sequence
 
 ```bash

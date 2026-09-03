@@ -471,6 +471,12 @@ every launch is `onCreate()` and every switch away is `onPause()` then
 
 One table of everything compiled in; NVS decides what installs.
 
+The logical settings are `app.<id>.enabled` and `app.<id>.slot`, but those names
+exceed NVS's 15-character key limit. `crystal_registry` hashes the stable app ID
+and stores the values as `r<8-hex-hash>.e` and `r<8-hex-hash>.s` inside the
+existing `crystal` namespace. App IDs therefore must remain stable across
+firmware updates.
+
 ```cpp
 // components/apps/app_table.cpp
 struct AppEntry {

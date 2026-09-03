@@ -10,6 +10,7 @@
 
 #include "esp_err.h"
 #include "esp_event.h"
+#include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "bsp/display.h"
@@ -18,11 +19,16 @@
 #include "lvgl.h"
 #include "nvs.h"
 
+#include <math.h>
+
 namespace {
 
 constexpr uint8_t kBrightnessMax = 95;
 constexpr const char *kStorageNamespace = "crystal";
 constexpr uint8_t kRtcAddress = 0x51;
+constexpr uint32_t kAlarmSampleRate = 22050;
+constexpr float kPi = 3.14159265358979323846f;
+static const char *TAG = "crystal_hal";
 
 static uint8_t bcd_to_bin(uint8_t value) { return static_cast<uint8_t>((value >> 4) * 10 + (value & 0x0f)); }
 static uint8_t bin_to_bcd(uint8_t value) { return static_cast<uint8_t>((value / 10) << 4 | (value % 10)); }
@@ -258,6 +264,30 @@ private:
 DeviceBrightness s_brightness;
 DeviceStorage s_storage;
 Pcf85063Rtc s_rtc;
+esp_codec_dev_handle_t s_speaker = nullptr;
+
+bool write_alarm_tone(uint32_t frequency_hz, uint32_t duration_ms)
+{
+    int16_t samples[256] = {};
+    const size_t total = kAlarmSampleRate * duration_ms / 1000;
+    size_t written = 0;
+    while (written < total) {
+        const size_t count = (total - written) < 256 ? total - written : 256;
+        for (size_t i = 0; i < count; ++i) {
+            const size_t sample_index = written + i;
+            const float phase = 2.0f * kPi * static_cast<float>(frequency_hz) *
+                                static_cast<float>(sample_index) / static_cast<float>(kAlarmSampleRate);
+            const size_t edge = sample_index < (total - sample_index) ? sample_index : total - sample_index;
+            const float envelope = edge < 180 ? static_cast<float>(edge) / 180.0f : 1.0f;
+            samples[i] = frequency_hz == 0 ? 0 : static_cast<int16_t>(14000.0f * envelope * sinf(phase));
+        }
+        if (esp_codec_dev_write(s_speaker, samples, static_cast<int>(count * sizeof(samples[0]))) != ESP_CODEC_DEV_OK) {
+            return false;
+        }
+        written += count;
+    }
+    return true;
+}
 DeviceWifi s_wifi;
 DeviceTouch s_touch;
 CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch};
@@ -278,4 +308,33 @@ void crystal_hal_init()
 void crystal_hal_bind_touch(void *lvgl_input_device)
 {
     s_touch.bind(lvgl_input_device);
+}
+
+void crystal_hal_timer_alarm()
+{
+    if (s_speaker == nullptr) {
+        s_speaker = bsp_audio_codec_speaker_init();
+        if (s_speaker == nullptr) {
+            ESP_LOGE(TAG, "speaker initialization failed");
+            return;
+        }
+        esp_codec_dev_sample_info_t format = {};
+        format.bits_per_sample = 16;
+        format.channel = 1;
+        format.sample_rate = kAlarmSampleRate;
+        if (esp_codec_dev_open(s_speaker, &format) != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "speaker open failed");
+            s_speaker = nullptr;
+            return;
+        }
+        (void)esp_codec_dev_set_out_vol(s_speaker, 85);
+    }
+
+    (void)bsp_audio_poweramp_enable(true);
+    const bool played = write_alarm_tone(880, 120) && write_alarm_tone(0, 55) &&
+                        write_alarm_tone(1175, 120) && write_alarm_tone(0, 55) &&
+                        write_alarm_tone(880, 180) && write_alarm_tone(0, 40);
+    (void)bsp_audio_poweramp_enable(false);
+    if (played) ESP_LOGI(TAG, "timer alarm played");
+    else ESP_LOGE(TAG, "timer alarm playback failed");
 }

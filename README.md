@@ -21,6 +21,8 @@ LVGL and Espressif's `esp-brookesia` phone UI.
 - Phase 3: implemented; final physical-device validation is pending. `crystal_core` provides the UI event queue, toast overlay, RTC-first clock, SNTP correction, and ramped dim/off inactivity states.
 - Phase 4: framework checkpoint implemented. `CrystalApp` provides lifecycle hooks and bounded per-app NVS state; Hello and State Test are installed for lifecycle validation.
 - Phase 4.5: lifecycle corrections implemented; hardware validation is pending. App teardown now guarantees pause before destroy, install hooks are sealed, and Brookesia is limited to one resident app.
+- Phase 5: complete. Enabled state and launcher slot order persist in NVS, apply during boot, and were verified on hardware.
+- Phase 5.5: implemented for hardware validation. Clock includes Clock, Timer, and Stopwatch tabs, service-owned timer expiry with an ES8311 speaker chime, and persisted stopwatch state.
 
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for phase exit criteria and decisions.
 The current desktop mock workflow is documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
@@ -68,7 +70,9 @@ idf.py build
 main/                  Application entry point
 components/crystal_hal/ Hardware abstraction interfaces and device adapters
 components/crystal_app/ CrystalApp lifecycle and bounded per-app state
+components/crystal_registry/ Persistent app enable and launcher slot registry
 components/state_test_app/ Phase 4 state persistence validation app
+components/clock_app/     Phase 5.5 clock, timer, and stopwatch app
 components/hello_app/   Hello World launcher application and icon
 components/perf_spike/  Phase 1 temporary performance benchmark
 docs/                   Design, implementation, and bring-up notes

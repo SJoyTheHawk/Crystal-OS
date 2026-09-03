@@ -11,8 +11,17 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_WIFI_SCAN_DONE,
     UI_EVT_WIFI_CONNECT_FAILED,
     UI_EVT_TIME_SYNCED,
+    UI_EVT_TIMER_EXPIRED,
     UI_EVT_BATTERY,
     UI_EVT_TOAST,
+};
+
+struct CrystalTimerState {
+    bool running;
+    bool paused;
+    uint32_t duration_seconds;
+    uint32_t remaining_seconds;
+    time_t end_at;
 };
 
 bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len = 0);
@@ -22,6 +31,14 @@ void crystal_time_init();
 
 // Applies local time to both the system clock and the PCF85063 RTC.
 bool crystal_time_set(const struct tm *local_time);
+
+bool crystal_timer_start(uint32_t duration_seconds);
+bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t duration_seconds);
+bool crystal_timer_pause();
+bool crystal_timer_resume();
+void crystal_timer_reset();
+CrystalTimerState crystal_timer_state();
+void crystal_stopwatch_set_running(bool running);
 
 using crystal_clock_update_cb_t = void (*)(void *context, int hour, int minute, bool is_pm);
 

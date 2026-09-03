@@ -38,6 +38,7 @@ QueueHandle_t s_queue = nullptr;
 lv_obj_t *s_toast = nullptr;
 lv_obj_t *s_toast_label = nullptr;
 lv_obj_t *s_clock_placeholder = nullptr;
+lv_obj_t *s_timer_indicator = nullptr;
 lv_timer_t *s_toast_hide_timer = nullptr;
 TaskHandle_t s_service_task = nullptr;
 lv_disp_t *s_display = nullptr;
@@ -45,6 +46,10 @@ crystal_clock_update_cb_t s_clock_update = nullptr;
 void *s_clock_context = nullptr;
 PowerState s_power_state = PowerState::Full;
 std::atomic_bool s_time_valid{false};
+std::atomic<int64_t> s_timer_end_at{0};
+std::atomic<uint32_t> s_timer_duration{0};
+std::atomic<uint32_t> s_timer_paused_remaining{0};
+std::atomic_bool s_stopwatch_running{false};
 
 void hide_toast(lv_timer_t *)
 {
@@ -117,6 +122,19 @@ bool init_clock_placeholder()
     return true;
 }
 
+bool init_timer_indicator()
+{
+    s_timer_indicator = lv_label_create(lv_layer_top());
+    if (s_timer_indicator == nullptr) return false;
+    lv_label_set_text(s_timer_indicator, "T");
+    lv_obj_set_style_text_font(s_timer_indicator, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_timer_indicator, lv_color_white(), 0);
+    lv_obj_clear_flag(s_timer_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_timer_indicator, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(s_timer_indicator, LV_ALIGN_TOP_MID, 0, 10);
+    return true;
+}
+
 void drain_event_queue(lv_timer_t *)
 {
     if (s_queue == nullptr) return;
@@ -129,6 +147,8 @@ void drain_event_queue(lv_timer_t *)
             ESP_LOGI(TAG, "toast displayed: %s", text);
         } else if (message.type == UI_EVT_TIME_SYNCED) {
             show_toast("Time synchronized");
+        } else if (message.type == UI_EVT_TIMER_EXPIRED) {
+            show_toast("Timer finished");
         }
     }
 }
@@ -146,6 +166,17 @@ void update_clock(lv_timer_t *)
     if (epoch < 1577836800 || localtime_r(&epoch, &now) == nullptr) return;
     const int hour_12 = now.tm_hour % 12 == 0 ? 12 : now.tm_hour % 12;
     s_clock_update(s_clock_context, hour_12, now.tm_min, now.tm_hour >= 12);
+}
+
+void update_timer_indicator(lv_timer_t *)
+{
+    if (s_timer_indicator == nullptr) return;
+    const CrystalTimerState timer = crystal_timer_state();
+    if (timer.running || timer.paused || s_stopwatch_running.load()) {
+        lv_obj_clear_flag(s_timer_indicator, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_timer_indicator, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void check_power_state(lv_timer_t *)
@@ -215,6 +246,15 @@ void service_task(void *)
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
         }
         const TickType_t now_ticks = xTaskGetTickCount();
+        const int64_t timer_end = s_timer_end_at.load();
+        if (timer_end > 0 && static_cast<int64_t>(time(nullptr)) >= timer_end) {
+            s_timer_end_at.store(0);
+            s_timer_duration.store(0);
+            s_timer_paused_remaining.store(0);
+            ESP_LOGI(TAG, "timer expired");
+            crystal_hal_timer_alarm();
+            (void)crystal_ui_post(UI_EVT_TIMER_EXPIRED);
+        }
         if (now_ticks - last_rtc_log >= pdMS_TO_TICKS(60000)) {
             last_rtc_log = now_ticks;
             struct tm now = {};
@@ -273,6 +313,105 @@ bool crystal_time_set(const struct tm *local_time)
     return true;
 }
 
+bool crystal_timer_start(uint32_t duration_seconds)
+{
+    if (duration_seconds == 0 || duration_seconds > 24U * 60U * 60U) return false;
+    const time_t now = time(nullptr);
+    if (now < 1577836800) {
+        ESP_LOGW(TAG, "timer requires valid system time");
+        return false;
+    }
+    s_timer_paused_remaining.store(0);
+    s_timer_duration.store(duration_seconds);
+    s_timer_end_at.store(static_cast<int64_t>(now) + duration_seconds);
+    ESP_LOGI(TAG, "timer started: %lu seconds", static_cast<unsigned long>(duration_seconds));
+    return true;
+}
+
+bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t duration_seconds)
+{
+    const time_t now = time(nullptr);
+    if (duration_seconds == 0 || duration_seconds > 24U * 60U * 60U) {
+        crystal_timer_reset();
+        return false;
+    }
+    if (now >= 1577836800 && end_at > now) {
+        s_timer_duration.store(duration_seconds);
+        s_timer_paused_remaining.store(0);
+        s_timer_end_at.store(static_cast<int64_t>(end_at));
+        return true;
+    }
+    if (paused_remaining > 0 && paused_remaining <= 24U * 60U * 60U) {
+        s_timer_duration.store(duration_seconds);
+        s_timer_end_at.store(0);
+        s_timer_paused_remaining.store(paused_remaining);
+        return true;
+    }
+    s_timer_end_at.store(0);
+    s_timer_duration.store(0);
+    s_timer_paused_remaining.store(0);
+    return false;
+}
+
+bool crystal_timer_pause()
+{
+    const int64_t end_at = s_timer_end_at.exchange(0);
+    const int64_t now = static_cast<int64_t>(time(nullptr));
+    if (end_at <= now) {
+        s_timer_paused_remaining.store(0);
+        return false;
+    }
+    s_timer_paused_remaining.store(static_cast<uint32_t>(end_at - now));
+    ESP_LOGI(TAG, "timer paused");
+    return true;
+}
+
+bool crystal_timer_resume()
+{
+    const uint32_t remaining = s_timer_paused_remaining.exchange(0);
+    if (remaining == 0) return false;
+    const time_t now = time(nullptr);
+    if (now < 1577836800) {
+        s_timer_paused_remaining.store(remaining);
+        ESP_LOGW(TAG, "timer resume requires valid system time");
+        return false;
+    }
+    s_timer_end_at.store(static_cast<int64_t>(now) + remaining);
+    ESP_LOGI(TAG, "timer resumed");
+    return true;
+}
+
+void crystal_timer_reset()
+{
+    s_timer_end_at.store(0);
+    s_timer_duration.store(0);
+    s_timer_paused_remaining.store(0);
+    ESP_LOGI(TAG, "timer reset");
+}
+
+CrystalTimerState crystal_timer_state()
+{
+    CrystalTimerState result = {};
+    const int64_t now = static_cast<int64_t>(time(nullptr));
+    const int64_t end_at = s_timer_end_at.load();
+    result.duration_seconds = s_timer_duration.load();
+    const uint32_t paused = s_timer_paused_remaining.load();
+    if (end_at > now) {
+        result.running = true;
+        result.remaining_seconds = static_cast<uint32_t>(end_at - now);
+        result.end_at = static_cast<time_t>(end_at);
+    } else if (paused > 0) {
+        result.paused = true;
+        result.remaining_seconds = paused;
+    }
+    return result;
+}
+
+void crystal_stopwatch_set_running(bool running)
+{
+    s_stopwatch_running.store(running);
+}
+
 bool crystal_ui_post(crystal_evt_t type, const void *data, size_t len)
 {
     if (s_queue == nullptr || len > kEventDataMax || (len != 0 && data == nullptr)) {
@@ -296,8 +435,10 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update, vo
     if (s_queue == nullptr) return false;
     if (!init_toast()) return false;
     if (!init_clock_placeholder()) return false;
+    if (!init_timer_indicator()) return false;
     if (lv_timer_create(drain_event_queue, 50, nullptr) == nullptr) return false;
     if (lv_timer_create(update_clock, 1000, nullptr) == nullptr) return false;
+    if (lv_timer_create(update_timer_indicator, 250, nullptr) == nullptr) return false;
     if (lv_timer_create(check_power_state, 250, nullptr) == nullptr) return false;
     update_clock(nullptr);
     return xTaskCreatePinnedToCore(service_task, "crystal_service", 4096, nullptr, 2, &s_service_task, 0) == pdPASS;

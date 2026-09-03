@@ -13,13 +13,25 @@
 #include "esp_brookesia.hpp"
 #include "hello_app.hpp"
 #include "state_test_app.hpp"
+#include "clock_app.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
+#include "crystal_registry.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
+
+static CrystalApp *make_hello_app() { return new HelloApp(); }
+static CrystalApp *make_state_test_app() { return new StateTestApp(); }
+static CrystalApp *make_clock_app() { return new ClockApp(); }
+
+static const CrystalAppEntry kApps[] = {
+    {"hello", make_hello_app, true, 0},
+    {"state_test", make_state_test_app, true, 1},
+    {"clock", make_clock_app, true, 2},
+};
 
 static void update_status_clock(void *context, int hour, int minute, bool is_pm)
 {
@@ -96,16 +108,13 @@ extern "C" void app_main(void)
         "Failed to start Crystal core services"
     );
 
-    auto *hello_app = new HelloApp();
-    require_boot_step(hello_app != nullptr, "Failed to create Hello app");
     ESP_LOGI(TAG, "Hello icon: %ux%u, data=%u bytes, ptr=%p",
              hello_icon.header.w, hello_icon.header.h,
              static_cast<unsigned>(hello_icon.data_size), hello_icon.data);
-    require_boot_step(phone->installApp(hello_app) >= 0, "Failed to install Hello app");
-
-    auto *state_test_app = new StateTestApp();
-    require_boot_step(state_test_app != nullptr, "Failed to create State Test app");
-    require_boot_step(phone->installApp(state_test_app) >= 0, "Failed to install State Test app");
+    require_boot_step(
+        crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0])),
+        "Failed to install app registry"
+    );
 
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;

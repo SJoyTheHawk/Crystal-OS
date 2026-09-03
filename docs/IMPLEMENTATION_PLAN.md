@@ -287,13 +287,30 @@ CrystalApp" matches the shipped code.
 
 ### Phase 5 — Registry and launcher
 
-NVS registry (`app.<name>.enabled`, `app.<name>.slot`). `main.cpp` walks the
-compiled-in table and installs only enabled apps, in slot order.
+NVS registry (conceptually `app.<name>.enabled` and `app.<name>.slot`). The
+device backend hashes the stable app ID into keys such as `r1234abcd.e` and
+`r1234abcd.s`, because ESP-IDF NVS keys are limited to 15 characters. `main.cpp`
+walks the compiled-in table and installs only enabled apps, in slot order.
+
+**Progress (2026-09-03):** Added `crystal_registry`, a compiled app table in
+`main.cpp`, persistent enabled/slot accessors, stable slot sorting, and boot logs
+for installed and disabled apps. State Test provides temporary Phase 5 hardware
+controls to toggle Hello and swap the two launcher slots for the next boot.
+Hardware validation confirmed that disabling and restoring Hello persists across
+reboots and that saved slot changes reorder the launcher. Phase 5 is complete;
+immediate launcher mutation remains Phase 13 UI work.
 
 Exit: disabling an app removes it from the launcher across a reboot; reordering
 persists.
 
 ### Phase 5.5 — Clock app
+
+**Progress (2026-09-03):** Added the Clock app with Clock, Timer, and
+Stopwatch tabs. Timer countdown ownership lives in `crystal_core`, using an
+absolute end instant with pause/resume/reset controls, expiry toast, and a
+status indicator. Stopwatch state and up to 50 laps persist through the app
+lifecycle. The app is registered at launcher slot 2. Timer expiry plays a short
+three-tone chime through the board's ES8311 speaker and shows a visual toast.
 
 The first real app, and deliberately placed here: it is the strongest available
 test of the Phase 4 lifecycle, because a running timer must survive the app being
