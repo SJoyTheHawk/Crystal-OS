@@ -119,7 +119,8 @@ State Test keeps its counter in memory and writes it to NVS only from
   `onCreate`, never `onResume`. Confirms `max_running_num = 1`.
 - [ ] Steady-state PSRAM after ten alternating launches matches the free heap
   after the first, within noise. Nothing is accumulating.
-- [ ] `onInstall` logs once per app at boot, and does not log again on launch.
+- [ ] Clock's boot reconciliation runs once on its first `onCreate`, and does
+  not clear timer state on later launches in the same boot.
 - [ ] An app whose `onPause()` deliberately returns `false` is **not** killed:
   the warning is logged and teardown continues normally.
 - [ ] `onStart`/`onStop` compile and are overridable, and no path fires them yet.

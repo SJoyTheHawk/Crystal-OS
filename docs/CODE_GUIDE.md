@@ -274,8 +274,9 @@ wrong hour.
 
 The current checkpoint is implemented in `components/crystal_app`. `CrystalApp`
 seals Brookesia's lifecycle entry points and forwards them to
-`onInstall()`/`onCreate()`/`onStart()`/`onResume()`/`onPause()`/`onStop()`/
-`onDestroy()`/`onBack()`. Because
+`onCreate()`/`onStart()`/`onResume()`/`onPause()`/`onStop()`/`onDestroy()`, plus
+`onBack()`. `init()` and `deinit()` are sealed bookkeeping entry points and do
+not dispatch app hooks. Because
 Brookesia owns screen creation and recycling, `onCreate()` builds the active
 screen tree whenever `run()` creates a screen; app data belongs in
 `CrystalState`, not in LVGL objects. `StateTestApp` is the reference conversion
@@ -297,6 +298,8 @@ public:
     CrystalState &state() { return state_; }
 
 protected:
+    bool init()   final;    // lifecycle bookkeeping only
+    bool deinit() final;    // lifecycle bookkeeping only
     bool run()    final;    // -> onCreate()
     bool pause()  final;    // -> onPause()
     bool resume() final;    // -> onResume(), with the 80 ms budget check
@@ -304,8 +307,10 @@ protected:
     bool back()   final;    // -> onBack()
 
     virtual bool onCreate()  { return true; }   // every launch: build the UI
+    virtual bool onStart()   { return true; }   // reserved in v1
     virtual bool onPause()   { return true; }   // serialize state out
     virtual bool onResume()  { return true; }   // re-select of a still-live app
+    virtual bool onStop()    { return true; }   // reserved in v1
     virtual bool onDestroy() { return true; }
     virtual bool onBack()    { return notifyCoreClosed(); }
 
@@ -412,20 +417,20 @@ bool Notes::onPause()
 Do not carry the Android habit of caching widget values earlier "because the
 views are gone by `onDestroy`". Here they are not.
 
-**Install hooks.** `init()`/`deinit()` are unsealed and unused in Phase 4; an app
-can override them and step outside the framework. Seal them:
+**Install bookkeeping.** `init()`/`deinit()` were unsealed in Phase 4, so an app
+could override them and step outside the framework. They are sealed and only
+update the framework state:
 
 ```cpp
-bool init()   final { state_machine_ = LifecycleState::INSTALLED; return onInstall(); }
-bool deinit() final { return onUninstall(); }
-
-virtual bool onInstall()   { return true; }  // once, at installApp()
-virtual bool onUninstall() { return true; }  // once, at uninstallApp()
+bool init()   final { state_machine_ = LifecycleState::INSTALLED; return true; }
+bool deinit() final { state_machine_ = LifecycleState::DESTROYED; return true; }
 ```
 
-`onInstall()` is where Clock registers its expiry with `crystal_service`, so the
-timer exists whether or not the app is open. It is also the hook Phase 5's
-registry and Phase 13's clear-data need.
+There are no `onInstall()`/`onUninstall()` app hooks. Once-per-boot work belongs
+in `onCreate()` behind an instance member guard. Clock uses that pattern to
+reconcile its service and app-owned timer keys without repeating the reset on
+every launch. Registry installation and Phase 13 clear-data are platform
+operations, not app lifecycle callbacks.
 
 **Occlusion hooks.** Defined here, fired by the Phase 7 arbiter — it is the only
 component that knows what covers what. Until Phase 7 they are never called.

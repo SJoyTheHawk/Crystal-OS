@@ -49,8 +49,15 @@ protected:
     bool close() final;
     bool back() final;
 
-    virtual bool onInstall() { return true; }
-    virtual bool onUninstall() { return true; }
+    // No onInstall()/onUninstall(): Android has no such hook, and the name
+    // misdescribed what it did. Once-per-boot setup now belongs in onCreate(),
+    // guarded by the app if it must not repeat on every launch.
+    //
+    // Six Android lifecycle hooks are declared. v1 dispatches onCreate, onPause,
+    // onResume, and onDestroy (plus onBack). onStart/onStop are reserved: cards are
+    // opened and closed by swipes with nothing in between, so there is no event
+    // to map them to yet. They stay wired so adding one later is additive
+    // rather than an ABI break.
     virtual bool onCreate() { return true; }
     virtual bool onStart() { return true; }
     virtual bool onPause() { return true; }

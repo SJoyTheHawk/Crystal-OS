@@ -86,23 +86,18 @@ CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
 {
 }
 
+// Brookesia's init()/deinit() are lifecycle bookkeeping only. They forward to no
+// app hook: setup belongs in onCreate(), and boot-time reconciliation of service
+// state belongs to the owning service.
 bool CrystalApp::init()
 {
     assert(lifecycle_state_ == LifecycleState::Destroyed);
-    ESP_LOGI(TAG, "%s lifecycle: onInstall", app_name_.c_str());
-    const bool ok = onInstall();
-    if (ok) {
-        lifecycle_state_ = LifecycleState::Installed;
-    }
-    return ok;
+    lifecycle_state_ = LifecycleState::Installed;
+    return true;
 }
 
 bool CrystalApp::deinit()
 {
-    ESP_LOGI(TAG, "%s lifecycle: onUninstall", app_name_.c_str());
-    if (!onUninstall()) {
-        ESP_LOGW(TAG, "%s onUninstall reported failure; uninstall continues", app_name_.c_str());
-    }
     lifecycle_state_ = LifecycleState::Destroyed;
     return true;
 }

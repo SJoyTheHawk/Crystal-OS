@@ -38,21 +38,20 @@ ClockApp::ClockApp()
     clock_icon_prepare();
 }
 
-bool ClockApp::onInstall()
-{
-    crystal_timer_reset();
-    (void)state().erase("tm_end");
-    (void)state().erase("tm_ps");
-    (void)state().erase("tm_dur");
-
-    uint32_t stopwatch_started = 0;
-    (void)state().get_u32("sw_st", &stopwatch_started);
-    crystal_stopwatch_set_running(stopwatch_started != 0);
-    return true;
-}
-
 bool ClockApp::onCreate()
 {
+    if (!boot_setup_done_) {
+        boot_setup_done_ = true;
+        crystal_timer_reset();
+        (void)state().erase("tm_end");
+        (void)state().erase("tm_ps");
+        (void)state().erase("tm_dur");
+
+        uint32_t stopwatch_started = 0;
+        (void)state().get_u32("sw_st", &stopwatch_started);
+        crystal_stopwatch_set_running(stopwatch_started != 0);
+    }
+
     const lv_area_t area = getVisualArea();
     const lv_coord_t width = area.x2 - area.x1 + 1;
     const lv_coord_t height = area.y2 - area.y1 + 1;

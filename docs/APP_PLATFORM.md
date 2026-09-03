@@ -237,8 +237,10 @@ absolute paths, no access to another app's folder, no access to `/spiffs`.
 ### 6.6 Lifecycle
 
 The app module returns a table of hooks mapping one-to-one onto `CrystalApp`:
-`onInstall`, `onUninstall`, `onCreate`, `onStart`, `onPause`, `onResume`,
-`onStop`, `onDestroy`, `onBack`. All optional.
+`onCreate`, `onStart`, `onPause`, `onResume`, `onStop`, `onDestroy`, `onBack`.
+All are optional. There are no install/uninstall callbacks; installation and
+clear-data are platform operations. Once-per-boot setup, when unavoidable, runs
+from `onCreate` behind module-local or instance-local guard state.
 
 The contract authors must be told, because guessing wrong is silent data loss:
 
@@ -439,4 +441,3 @@ the script still fires after the app is destroyed.
    supported at once? Answer before Phase 16 ships, not after.
 4. **Declarative and script in one package.** Allowing `ui.json` for layout plus
    `main.lua` for behaviour is attractive and doubles the loader's surface. Not v2.
-

@@ -13,7 +13,6 @@ public:
     ClockApp();
 
 protected:
-    bool onInstall() override;
     bool onCreate() override;
     bool onPause() override;
     bool onResume() override;
@@ -45,5 +44,6 @@ private:
     bool stopwatch_paused_ = false;
     uint32_t stopwatch_elapsed_ = 0;
     uint32_t stopwatch_started_ = 0;
+    bool boot_setup_done_ = false;
     std::vector<uint32_t> laps_;
 };

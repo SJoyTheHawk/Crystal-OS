@@ -16,6 +16,7 @@ local PRESETS = { 30, 60, 180, 300, 600, 1200, 1800 }
 local M = {}
 local v = {}          -- widget handles, rebuilt every onCreate
 local tick            -- 1s ui.timer handle
+local boot_setup_done = false
 
 -- helpers -------------------------------------------------------------------
 
@@ -119,11 +120,11 @@ end
 -- Mirrors CrystalApp's hooks one-to-one. onCreate runs on every launch, on a
 -- fresh widget tree (max_running_num = 1), and must finish inside 80ms.
 
-function M.onInstall()
-  st.set("laps", st.get("laps") or {})
-end
-
 function M.onCreate()
+  if not boot_setup_done then
+    boot_setup_done = true
+    st.set("laps", st.get("laps") or {})
+  end
   local tabs = ui.tabview(ui.screen(), { tabs = { "Clock", "Timer", "Stopwatch" } })
   build_clock(ui.tab(tabs, 1))
   build_timer(ui.tab(tabs, 2))

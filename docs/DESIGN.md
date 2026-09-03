@@ -4,6 +4,47 @@ What the system looks like and how it behaves. `IMPLEMENTATION_PLAN.md` covers
 sequencing; `CODE_GUIDE.md` covers the skeletons. This document is the reference
 those two defer to.
 
+## 0. What this device is
+
+Crystal OS is a general app platform. Its **primary target** is an IoT data
+display with editable settings: a deployment typically carries 3-5 apps, each a
+**card** showing information the user came to read, and switching cards is the
+main interaction. That is what v1 optimises for and what the defaults assume.
+
+It is not a ceiling. The app framework, lifecycle, and ABI are deliberately
+general — `APP_PLATFORM.md` extends them to third-party apps with their own
+runtimes, and nothing in v1 forecloses a deployment with more apps, richer
+interaction, or purposes not anticipated here. "Primary target" means the design
+resolves ties in favour of the data-display case, not that other cases are
+rejected.
+
+Where a phone pattern and an appliance pattern conflict, the appliance wins: the
+goal is a user learning the whole interaction model in seconds and then never
+thinking about it. Concretely, that is why horizontal is reserved for the OS,
+card order is fixed rather than recency-based, and there is no recents chooser.
+
+The one place this matters permanently is the **ABI**. Reserving the horizontal
+axis in ABI v1 is forward-compatible — a later version can grant apps access to
+it. Granting it now and revoking later breaks every app that used it. So the
+restriction goes in while it is still free, and generality is preserved by
+loosening later rather than tightening.
+
+Confirmed hardware (board README + `01_AXP2101` example):
+
+| | |
+| --- | --- |
+| Display | 4-inch IPS, 480×480, 65K colours, ST7701, RGB interface |
+| Touch | GT911, I2C, 5-point |
+| Power | AXP2101 PMIC, USB-C, 3.7V Li-ion header with charging |
+| Timekeeping | PCF85063 RTC |
+| Motion | QMI8658 6-axis IMU (unused in v1) |
+| Memory | 16MB flash, 8MB PSRAM |
+
+**One I2C bus is shared** by GT911, PCF85063, AXP2101, QMI8658, ES8311 and
+ES7210. Touch latency rides on that bus, so background polling must stay sparse:
+battery no more than every 30s, RTC only at boot and after SNTP. A chatty poll
+loop shows up as drag jitter, which is the one thing this UI cannot afford.
+
 Screen: 480x480, ~86mm square, ~5.6 px/mm. That density is unusually low for a
 touch UI — a 44px control is ~7.9mm, comfortably tappable. It also means text
 below ~16px is coarse rather than small. Minimum touch target: **44x44px**.
@@ -29,7 +70,8 @@ Rules that follow from the ordering:
   but is **covered** by quick settings, which is what makes the pull-down read as
   coming from above.
 - Keyboard sits below quick settings: pulling down over an open keyboard covers
-  it rather than dismissing it. On close, the keyboard is still there.
+  it rather than dismissing it. On close, the keyboard is still there. Card
+  switching is suppressed while the keyboard is open.
 - Dialogs are modal and block the arbiter entirely — no app switching, no
   pull-down while one is open.
 - Toasts are above dialogs so a dialog can produce one, and are always
@@ -61,8 +103,9 @@ guarantee; confirm against the stylesheet).
 - **WiFi icon:** white/black when connected, **grey** when disconnected — grey is
   the one colour exempt from the contrast rule, since it must read as "inactive"
   in both themes.
-- **Battery:** hidden entirely in v1 unless a sense pin is confirmed (gate G4).
-  Reserve the space so enabling it later does not reflow the bar.
+- **Battery:** percentage comes from the AXP2101 fuel gauge (gate G4 is closed).
+  Show a distinct charging state when `isCharging()` is true. Poll no more than
+  once every 30 seconds because the PMIC shares the touch controller's I2C bus.
 
 ## 3. Page inventory
 
@@ -70,7 +113,7 @@ Every screen in the system.
 
 | Page | Reached from | Type |
 | --- | --- | --- |
-| Launcher | home gesture / app close | Brookesia |
+| Launcher | Settings / automatic overflow | Brookesia |
 | App content | launcher, app switch | per-app |
 | App switcher cards | edge drag | transient overlay |
 | Quick settings | top-edge pull | overlay |
@@ -106,10 +149,15 @@ Precedence, in order:
 1. **A modal dialog blocks everything.** No switching, no pull-down.
 2. **Quick settings open** suppresses app switching. Only dismiss-up is
    available.
-3. **Mid-app-switch** suppresses the pull-down.
-4. **OS beats app.** Once the OS owns a gesture, `lv_indev` events do not reach
+3. **Keyboard open** suppresses app switching. Text entry remains committed
+   until the keyboard closes.
+4. **Mid-app-switch** suppresses the pull-down.
+5. **OS beats app.** Once the OS owns a gesture, `lv_indev` events do not reach
    the app at all.
-5. Anything unclaimed goes to the app.
+6. Anything unclaimed goes to the app.
+
+Horizontal edge gestures are unconditionally reserved for the OS in ABI v1.
+There is no per-app opt-out such as `claimsEdgeGestures()`.
 
 The `kTopBand` restriction is the deliberate exception to rule 4. Without it, a
 swipe-down inside a scrolled app view opens quick settings when the user meant to
@@ -172,6 +220,130 @@ of v1 and the switcher exists in this shape to serve it.
 measures under ~20 FPS on one RGB buffer, the fallbacks in order are: enable
 double buffering (+460KB PSRAM), drop the leading-edge shadow, then replace the
 tracking card with a straight 200ms cross-fade.
+
+## 5.5 Navigation model — cards are home
+
+**There is no home screen.** The card ring is home. The device boots into a card
+and the user is always already somewhere useful.
+
+This follows from §0: on a data display, a grid of icons is the one screen showing
+no data. Removing it deletes a concept rather than just a page — there is no
+"return to home", because you never left.
+
+- **Boot destination:** the last-viewed card. The ring index persists in NVS.
+  Fallback if that card was uninstalled or fails to build: slot 0. Never an empty
+  screen.
+- **Order:** launcher slot, fixed. Card 2 is always card 2. Recency ordering
+  would put the same swipe in a different place each time, which destroys the one
+  property this UI is for — knowing where your data lives.
+- **No wrap.** First and last are not adjacent.
+- **No recents preview.** Fixed position and page dots are the navigation model;
+  a second chooser for the same 3-5 cards adds no useful information.
+- **Page dots** in the indicator bar show position and total count. With 3-5 cards
+  this is sufficient discoverability; no overview screen is needed.
+- **Card order is now a primary feature**, not a convenience. Settings › Manage
+  Apps reordering is how a user tunes their instrument.
+
+### Launcher as overflow
+
+Brookesia's launcher still exists and is not removed — Crystal simply does not
+route through it. It is reachable from Settings, and **surfaces automatically past
+~6 installed apps**, where a ring stops being navigable.
+
+That threshold is what keeps §0's generality honest: appliance by default,
+scaling when a deployment outgrows the ring. `APP_PLATFORM.md` makes app count
+unbounded, so the ring cannot be the only answer forever.
+
+Implementation note: how load-bearing Brookesia's launcher is has not been
+verified — `installApp()` presumably registers an icon and `notifyCoreClosed()`
+presumably returns there. If it is wired into the lifecycle, do **not** patch
+upstream. Leave it intact and never navigate to it. Same result, no fight.
+
+### Settings is an override, not a card
+
+- Not in the ring: no page dot, unreachable by swiping
+- Opens full-screen above the current card, from the quick-settings gear
+- Dismisses back to **the card you were on**; the ring does not move underneath
+- Card switching is suppressed while it is open, same precedence as a dialog
+- Lives at layer 5 (§1), with dialogs — not at layer 0 with card content
+
+**Back is two-level.** Pop the sub-page if inside one (Network, Power, General,
+System, Manage Apps); dismiss the override only from the Settings root. A single
+level would drop the user to a card from inside Network and lose their place.
+
+### Lifecycle and memory
+
+Stated explicitly because the card model invites the assumption that swiping
+leaves cards parked in memory. It does not.
+
+```
+swipe A → B:
+   A: onPause()     save state to CrystalState; stop timers
+   A: onDestroy()   release resources; Brookesia tears down the LVGL tree
+   B: onCreate()    rebuild UI from state
+```
+
+**Six hooks are declared; v1 dispatches four** — `onCreate`,
+`onPause`, `onResume`, `onDestroy`, plus `onBack`. `onStart`/`onStop` are the
+reserved pair: cards are opened and closed by swipes with nothing in between, so
+there is no event to map them to yet.
+
+They stay wired as base-class no-ops rather than being absent, so adding one
+later is a framework change plus an optional override — no ABI break.
+
+| Hook | When | Instance | v1 |
+| --- | --- | --- | --- |
+| `onCreate()` | **every launch** — build the UI | alive | override |
+| `onStart()` | — | alive | reserved |
+| `onResume()` | re-select of a still-live paused app | alive | override |
+| `onPause()` | leaving — **save state** | alive | override |
+| `onStop()` | — | alive | reserved |
+| `onDestroy()` | switch away — release resources | alive | override |
+| `onBack()` | back gesture | alive | override |
+
+**`onCreate()` fires on every launch, not once at install.** Brookesia recreates
+the screen tree each time `run()` is called, so `onCreate()` is Android's
+`onCreate` + `onStart` + `onResume` collapsed into one event. An app needing
+once-per-boot setup guards it itself.
+
+**`onDestroy()` does not free the instance.** The LVGL tree is torn down but the
+C++ object stays alive in Brookesia's app list, which is why the next launch is
+`onCreate()` and not construction. There is no `onDestroy()` → `onResume()`
+transition: return from a torn-down card is always `onCreate()`.
+
+`onInstall()`/`onUninstall()` were removed — Android has no such hook, and the
+name misdescribed what the one use of it actually did (a service reconciling its
+own state at boot).
+
+Clock performs that reconciliation once from its first `onCreate()` in each
+boot. Countdown timers are cleared after a reboot; a running stopwatch survives
+using its persisted absolute start instant and updates the system indicator when
+Clock first opens.
+
+The reserved pair is for **screen-off**, the case the current set cannot express.
+Backlight off means the card is not visible, but tearing down its UI would make
+wake slow, so screen-off wants a pause without a teardown. Declared now, unused
+in v1.
+
+Steady-state cost is **one live card's LVGL tree plus two ~7KB snapshots**, and
+that figure does not change whether the device carries 3 cards or 30. Peak is
+briefly two trees, because the incoming card is built before the outgoing one is
+destroyed at the 50% crossover — bounded and momentary, not accumulating.
+
+This works because **data lives in services, not in card instances** (the timer
+and Weather patterns). A card is a view over service-owned state, so rebuilding it
+is cheap. If cards owned their data, destroy-on-switch would be painful.
+
+The real cost is not memory but **rebuild latency**, and the card model raises the
+stakes: swiping is constant here, where phone app-switching is occasional. The
+80ms `onResume()` budget stops being advisory — it is the number that decides
+whether swiping feels instant or sticky. The rebuild is hidden inside the 250ms
+drag animation only as long as it holds.
+
+Fallback if measurement says otherwise: keep the **two adjacent neighbours**
+resident, bounded at three trees regardless of card count, since those are the
+only ones a single swipe can reach. Held in reserve — build destroy-on-switch
+first, measure, add the cache only if the feel demands it.
 
 ## 6. Quick settings
 
@@ -475,13 +647,20 @@ Easy to forget until they appear on a device:
 
 Not blockers, but undecided:
 
-1. **Launcher gesture.** Brookesia provides a home affordance; whether Crystal
-   adds a bottom-edge swipe is unsettled, and it would need an arbiter entry.
-2. **App switch ring wrap.** Does next-from-last wrap to first, or stop? Stopping
-   is more predictable; wrapping is faster to cycle. Leaning stop.
-3. **Indicator bar interactivity.** Non-interactive in v1. Tapping the clock or
-   WiFi icon as a settings shortcut is an obvious later addition.
+1. ~~**Launcher gesture.**~~ **Closed** — cards are home (§5.5). There is no
+   launcher to reach in the common case, so no gesture is needed and no arbiter
+   entry is added.
+2. ~~**App switch ring wrap.**~~ **Closed: no wrap.** Page dots already show
+   position, and hitting the end is useful feedback. Wrapping would make the
+   first and last cards adjacent, which breaks the spatial model that the card
+   design exists to provide.
+3. **Indicator bar interactivity.** Non-interactive in v1 apart from the page
+   dots and the counting-timer glyph. Tapping the clock or WiFi icon as a
+   settings shortcut is an obvious later addition.
+5. **Dashboard card (`summary()` ABI hook).** A glance card showing the key
+   reading from each app, tapping a tile to jump to that card — strictly more
+   useful than an icon grid on a data display. Not built in v1. The open part is
+   whether to *reserve* the optional hook in ABI v1, since adding it to a shipped
+   ABI is the expensive direction (see §0).
 4. **Per-app bar style declaration.** `barStyle()` is proposed as a static
    per-app value. An app with a light header and dark body may want it dynamic.
-
-

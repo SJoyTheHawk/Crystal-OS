@@ -52,8 +52,8 @@ sequenced as gates because later work depends on the answer.
 | --- | --- | --- | --- |
 | G1 | Full-screen animation FPS with `BSP_LCD_RGB_BUFFER_NUMS=1` | Phase 1 spike | Phase 6 (card switcher) |
 | G2 | Does Brookesia compile against LVGL's SDL port? | Phase 2 | How much of Phase 5-10 can be built off-device |
-| G3 | Actual panel size — `bsp_extra` describes itself as "AMOLED-1.8" but depends on `esp32_s3_touch_lcd_4b`, and the active stylesheet is `480_480` | Inspect hardware | Stylesheet choice, asset dimensions |
-| G4 | Is there a usable battery sense pin? | Board schematic | Whether the battery icon ships at all |
+| ~~G3~~ | ~~Actual panel size~~ | **Closed** — board README: 4-inch IPS, 480×480, 65K colours, ST7701, RGB interface. The `480_480` stylesheet is correct; "AMOLED-1.8" in `bsp_extra` was copy-paste. | — |
+| ~~G4~~ | ~~Is there a usable battery sense pin?~~ | **Closed, better than hoped** — AXP2101 PMIC. `XPowersLib` gives `getBatteryPercent()`, `getBattVoltage()`, `isCharging()`, `getVbusVoltage()`. A real fuel gauge over I2C: no divider, no discharge-curve modelling, charging state free. | — |
 
 G1 is the important one. If a full-screen drag with a blurred backdrop lands
 under ~20 FPS, the choices are: enable double buffering (+460KB PSRAM and more
@@ -204,14 +204,15 @@ lifetime, start/stop the visible lifetime, resume/pause the foreground lifetime.
 Crystal's five hooks do not nest, and two of them fire on events other than the
 ones their names imply. This phase closes the gaps that matter before any real
 app is built on the framework. It is small and entirely inside
-`components/crystal_app` plus one stylesheet value. The install hooks,
-pause-before-destroy ordering, advisory teardown results, and one-resident-app
-policy land here. `onStart()`/`onStop()` are defined as dormant API hooks; their
+`components/crystal_app` plus one stylesheet value. The pause-before-destroy
+ordering, advisory teardown results, sealed install bookkeeping, and
+one-resident-app policy land here. `onStart()`/`onStop()` are defined as dormant API hooks; their
 dispatch belongs to Phase 7 when the gesture arbiter owns occluding overlays.
 
-Keep the five active app hooks. Importing all six Android callbacks adds ceremony a 480px
-single-window device does not need — there is no multi-window mode, so
-"visible but not foreground" only ever means "occluded by an OS overlay".
+Keep the six Android lifecycle hooks declared, with `onStart()`/`onStop()`
+reserved until the shell has a real visibility transition to dispatch. The
+single-window device does not currently have a distinct visible-but-not-
+foreground state.
 
 **1. `onPause()` before `onDestroy()`.** The shipped `close()` calls
 `onDestroy()` alone, so the documented contract "serialize state out in
@@ -227,14 +228,14 @@ Android, where the view hierarchy is gone by `onDestroy`, and it is what makes
 this fix a two-line change rather than a redesign. Document it — an app author
 will otherwise assume the Android rule and cache values defensively.
 
-**2. Seal `init()`/`deinit()` as `onInstall()`/`onUninstall()`.** `onCreate()`
-fires on every launch, so there is currently no once-ever hook, and
-`ESP_Brookesia_CoreApp::init()`/`deinit()` sit unsealed and unused — an app can
-override them today and bypass the framework. Phase 5's registry and Phase 13's
-clear-data both need an install-time hook, and Clock's service-owned timer needs
-somewhere to register that does not depend on the app being open. Note that
-`CODE_GUIDE.md` already described `onCreate()` as mapping to `init()` "once, at
-install"; the code never did that. This phase makes one of the two true.
+**2. Seal `init()`/`deinit()` as bookkeeping.**
+`ESP_Brookesia_CoreApp::init()`/`deinit()` sat unsealed and unused, so an app
+could override them and bypass the framework. They are now final, update only
+the lifecycle state, and call no app hook. There is no Android install callback,
+and the former name encouraged apps to put boot reconciliation in the wrong
+place. An app that needs once-per-boot setup performs it from `onCreate()` behind
+an instance member guard. Registry installation and Phase 13 clear-data remain
+explicit platform operations.
 
 **3. `onStart()`/`onStop()` for occlusion.** Quick settings (Phase 8) and the
 keyboard overlay (Phase 10) cover the app opaquely with no callback at all, so a
@@ -274,15 +275,15 @@ A `LifecycleState` enum member (`INSTALLED`/`CREATED`/`STARTED`/`RESUMED`/
 builds, and covers Brookesia's error paths, which call `processClose()` from
 inside a failed `pause()` and would otherwise re-enter the hooks.
 
-**Progress (2026-09-03):** Implemented the lifecycle state guard, ordered
-pause/destroy teardown, install/uninstall hooks, advisory teardown returns,
+**Progress (2026-09-04):** Implemented the lifecycle state guard, ordered
+pause/destroy teardown, sealed install bookkeeping, advisory teardown returns,
 80 ms `onCreate()` timing, and `max_running_num = 1`. State Test now writes its
 counter only in `onPause()`. `onStart()`/`onStop()` remain dormant until Phase 7.
 
 Exit: an app whose only state write is in `onPause()` survives return-to-launcher
 and reopen. Opening a fourth app produces the same `onCreate()` path as the
-first. `onInstall()` fires once per boot regardless of how many times the app is
-opened. Illegal transitions assert in debug builds. `CODE_GUIDE.md` §"Phase 4 —
+first. Clock's guarded reconciliation runs once per boot regardless of how many
+times the app is opened. Illegal transitions assert in debug builds. `CODE_GUIDE.md` §"Phase 4 —
 CrystalApp" matches the shipped code.
 
 ### Phase 5 — Registry and launcher
@@ -309,7 +310,8 @@ persists.
 Stopwatch tabs. Timer countdown ownership lives in `crystal_core`, using an
 absolute end instant with pause/resume/reset controls, expiry toast, and a
 status indicator. Stopwatch state and up to 50 laps persist through the app
-lifecycle. The app is registered at launcher slot 2. Timer expiry plays a short
+lifecycle and across reboot. Countdown timers are deliberately cleared after a
+reboot. The app is registered at launcher slot 2. Timer expiry plays a short
 three-tone chime through the board's ES8311 speaker and shows a visual toast.
 
 The first real app, and deliberately placed here: it is the strongest available
@@ -358,9 +360,15 @@ Quick-settings arms only from the top ~20px band. Without that, a swipe-down in
 a scrolled app view opens settings when the user meant to scroll up — the one
 case where OS priority feels broken.
 
-Indicator bar: logo, time (no date), WiFi state, battery (G4). Icon colour black
-or white chosen from the foreground app's background; bar background inherits
-it.
+Horizontal edge gestures belong to the OS without an app opt-out. Suppress card
+switching while the keyboard is open, as well as while quick settings, Settings,
+or a modal dialog owns the interaction.
+
+Indicator bar: logo, time (no date), WiFi state, battery percentage and charging
+state from the AXP2101, plus page dots. Icon colour is black or white chosen from
+the foreground app's background; bar background inherits it. Poll the PMIC no
+more than every 30 seconds on the shared I2C bus; read RTC only at boot and after
+SNTP synchronization.
 
 Exit: no gesture reaches an app while the OS owns it; scrolled app views still
 scroll up.
@@ -534,7 +542,7 @@ large, plus the indicator bar size). Each unused size is dead flash. Drop
 
 Phases 0-3 are prerequisites for everything. 4-5 unlock app work. 4.5 should land
 before 5.5, since Clock is the first app to depend on `onPause()` actually being
-called and on an install-time hook. 6 waits on G1. 7 should precede 8 and 10,
+called and guarded once-per-boot reconciliation. 6 waits on G1. 7 should precede 8 and 10,
 since both depend on the arbiter existing, and it is where Phase 4.5's
 `onStart()`/`onStop()` get their call sites. 12 can
 start any time after 0 and should not be left to the end — coredumps are most
