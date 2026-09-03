@@ -21,6 +21,13 @@ struct RegistryRow {
     size_t table_index;
 };
 
+struct InstalledRow {
+    const char *id;
+    CrystalApp *app;
+};
+
+std::vector<InstalledRow> s_installed;
+
 bool make_key(const char *id, char suffix, char *out, size_t out_size)
 {
     if (id == nullptr || id[0] == '\0' || out == nullptr || out_size < 12) {
@@ -52,6 +59,21 @@ bool write_value(const char *id, char suffix, const T &value)
     return make_key(id, suffix, key, sizeof(key)) && hal().storage != nullptr &&
            hal().storage->set(key, &value, sizeof(value));
 }
+}
+
+size_t crystal_registry_installed_count()
+{
+    return s_installed.size();
+}
+
+CrystalApp *crystal_registry_installed_app(size_t index)
+{
+    return index < s_installed.size() ? s_installed[index].app : nullptr;
+}
+
+const char *crystal_registry_installed_id(size_t index)
+{
+    return index < s_installed.size() ? s_installed[index].id : nullptr;
 }
 
 bool crystal_registry_enabled(const char *id, bool default_value)
@@ -96,6 +118,7 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
         return false;
     }
 
+    s_installed.clear();
     std::vector<RegistryRow> enabled;
     enabled.reserve(count);
     for (size_t i = 0; i < count; ++i) {
@@ -127,6 +150,7 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
             ok = false;
             continue;
         }
+        s_installed.push_back({row.entry->id, app});
         ESP_LOGI(TAG, "installed: %s (slot %u)", row.entry->id,
                  static_cast<unsigned>(row.slot));
     }

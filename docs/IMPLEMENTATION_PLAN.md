@@ -280,11 +280,22 @@ pause/destroy teardown, sealed install bookkeeping, advisory teardown returns,
 80 ms `onCreate()` timing, and `max_running_num = 1`. State Test now writes its
 counter only in `onPause()`. `onStart()`/`onStop()` remain dormant until Phase 7.
 
+**Documentation and verification record (2026-09-04):** The handoff is closed.
+`git diff --check` passes, and active ABI, example, validation, design, and
+handoff references now agree that install/uninstall are not app lifecycle hooks.
+After the initial sandboxed attempt was denied access to macOS `sysctl()`, an
+approved unsandboxed ESP-IDF 6.1 build and flash completed. Boot and the
+pause/destroy/create switch sequence were verified on hardware.
+
 Exit: an app whose only state write is in `onPause()` survives return-to-launcher
 and reopen. Opening a fourth app produces the same `onCreate()` path as the
 first. Clock's guarded reconciliation runs once per boot regardless of how many
 times the app is opened. Illegal transitions assert in debug builds. `CODE_GUIDE.md` §"Phase 4 —
 CrystalApp" matches the shipped code.
+
+**Hardware verification (2026-09-04):** ESP-IDF 6.1 build and flash completed.
+The monitor showed `onPause` -> `onDestroy` -> next `onCreate` while switching
+through `Hello -> State Test -> Clock -> State Test -> Hello`; no crash occurred.
 
 ### Phase 5 — Registry and launcher
 
@@ -338,17 +349,32 @@ mid-flight and correct. Start a timer, leave Clock entirely, and the expiry toas
 still fires. Reboot mid-timer and the behaviour is defined (v1: cleared, and the
 user is not lied to about it).
 
-### Phase 6 — App switcher
+### Phase 6 — App switcher (minimal shell implemented; visual switcher remains)
 
 Gated on G1. 1/8-downscale snapshot (480x480 RGB565 is 460KB; a 60x60 buffer is
 ~7KB), box blur on the small buffer, LVGL upscales on draw — visually
 equivalent at this size and roughly 60x cheaper.
 
+**Progress (2026-09-04):** Added `crystal_shell`, which exposes the registry's
+slot-sorted installed cards, persists the active card by stable app ID, boots
+directly to the saved card with slot-0 fallback, and switches between cards on
+left/right edge releases. Switching is non-wrapping and uses the G1-approved
+snap behavior: one resident app, `onPause()`/`onDestroy()` followed by the next
+card's `onCreate()`. The firmware builds, flashes, and was verified on hardware
+with the sequence `Hello -> State Test -> Clock -> State Test -> Hello`.
+
+The snapshot-backed tracking card and visual 50% crossover are intentionally
+deferred: G1 measured only 7--8 visible FPS, so Phase 6 uses a direct snap until
+the low-resolution snapshot path is implemented and measured. Full gesture
+ownership, app-input suppression, quick-settings/keyboard exclusions, and page
+dots remain Phase 7.
+
 Card overlay follows the drag; past 50% the incoming app renders and receives
 touch. Left edge dragged right = previous, right edge dragged left = next.
 
-Exit: switching feels continuous, steady-state PSRAM does not grow with the
-number of apps ever opened.
+Exit: the current shell switches deterministically without wrapping and keeps
+steady-state PSRAM bounded to one live app. The visual snapshot/crossover exit
+criteria remain open for the next Phase 6 increment.
 
 ### Phase 7 — Gesture arbiter and indicator bar
 

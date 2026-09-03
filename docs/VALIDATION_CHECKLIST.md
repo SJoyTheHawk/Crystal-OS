@@ -112,14 +112,14 @@ State Test keeps its counter in memory and writes it to NVS only from
   reopen: the counter reads 3. Proves `onPause()` ran on the close path.
 - [ ] Increment again, return to the launcher, then reboot: the saved counter
   remains. A hard reset while the app is open does not invoke `onPause()`.
-- [ ] The serial log shows `onPause` then `onDestroy`, in that order, on every
+- [x] The serial log shows `onPause` then `onDestroy`, in that order, on every
   return to the launcher.
-- [ ] `onPause` appears exactly once per close — not twice.
-- [ ] Open Hello, then State Test, then Hello, then State Test: every launch logs
+- [x] `onPause` appears exactly once per close — not twice.
+- [x] Open Hello, then State Test, then Hello, then State Test: every launch logs
   `onCreate`, never `onResume`. Confirms `max_running_num = 1`.
 - [ ] Steady-state PSRAM after ten alternating launches matches the free heap
   after the first, within noise. Nothing is accumulating.
-- [ ] Clock's boot reconciliation runs once on its first `onCreate`, and does
+- [x] Clock's boot reconciliation runs once on its first `onCreate`, and does
   not clear timer state on later launches in the same boot.
 - [ ] An app whose `onPause()` deliberately returns `false` is **not** killed:
   the warning is logged and teardown continues normally.
@@ -164,6 +164,22 @@ The final Manage Apps interface and immediate launcher updates remain Phase 13.
 
 Checkpoint gate: timer expiry is service-owned and visible outside Clock; Clock
 state survives app destruction without requiring a resident app.
+
+## Phase 6: card shell
+
+- [x] Firmware builds with the `crystal_shell` component.
+- [x] Boot opens the saved card by stable app ID, falling back to slot 0.
+- [x] Reboot restores the last-viewed card.
+- [x] Left/right card order follows launcher slots and does not wrap.
+- [x] A card switch performs `onPause()` then `onDestroy()` before the next
+  card's `onCreate()`.
+- [x] Hardware log confirms `Hello -> State Test -> Clock -> State Test -> Hello`.
+- [ ] Low-resolution snapshots and the 50% visual crossover are implemented.
+- [ ] Physical-panel measurement confirms the simplified snap transition.
+
+Completion gate for the current shell increment: direct card boot and
+deterministic switching pass on hardware. Snapshot visuals and the full gesture
+arbiter remain separate exit criteria in Phase 6/7.
 
 ## Regression command sequence
 

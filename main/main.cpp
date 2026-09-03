@@ -17,6 +17,7 @@
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
+#include "crystal_shell.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
 
@@ -90,6 +91,8 @@ extern "C" void app_main(void)
         ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
     stylesheet->core.manager.app.max_running_num = 1;
+    stylesheet->manager.gesture.threshold.direction_horizon = 12;
+    stylesheet->manager.gesture.threshold.horizontal_edge = 24;
     require_boot_step(phone->addStylesheet(stylesheet), "Failed to add phone stylesheet");
     require_boot_step(phone->activateStylesheet(stylesheet), "Failed to activate phone stylesheet");
     delete stylesheet;
@@ -115,6 +118,7 @@ extern "C" void app_main(void)
         crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0])),
         "Failed to install app registry"
     );
+    require_boot_step(crystal_shell_init(phone), "Failed to start card shell");
 
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;
