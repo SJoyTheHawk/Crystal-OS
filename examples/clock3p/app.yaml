@@ -1,0 +1,25 @@
+# Third-party Clock for Crystal OS.
+# Authored by the developer, never rewritten by the OS. Installs to
+# /apps/com.example.clock3p/ ; enabled + launcher slot live in the NVS registry.
+
+abi: 1                          # host API major version this app was written against
+id: com.example.clock3p         # also the folder name; must be unique + fs-safe
+name: Clock                     # display name, launcher + Manage Apps
+version: 1.0.0
+min_os: 1.0.0
+author: Example Co.
+license: MIT
+
+runtime: lua
+entry: main.lua
+icon: assets/icon.bin           # LVGL binary image, loaded from flash on demand
+bar_style: dark                 # indicator bar contrast: dark bg -> white glyphs
+
+memory_kb: 160                  # hard ceiling; OOM kills this app, not the OS
+
+permissions:
+  storage_kb: 32                # quota for data/
+  notify: true                  # may raise toasts
+  audio: true                   # may play the expiry chime
+  system_timer: true            # may drive the OS-owned countdown service
+  # no `network_hosts` key -> http.fetch is not reachable at all
