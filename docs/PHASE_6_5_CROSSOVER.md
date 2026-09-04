@@ -228,9 +228,10 @@ CrystalApp::close()  →  pause()  →  onPause()   ← capture here, tree alive
 ```
 
 `crystal_app.cpp:153-167` guarantees that ordering, so the tree is valid at
-`onPause()`. Cards never visited this boot have no pane — use a flat fill in the
-card's background colour. That is a real first-swipe difference and it is
-acceptable; do not build a tree to avoid it.
+`onPause()`. Cards never visited this boot have no pane. Use a shell-rendered
+identity card with the launcher icon and app name until the real capture is
+available; never show a blank black pane. That is a real first-swipe difference
+and it is acceptable. Do not build a tree ahead of the crossover to avoid it.
 
 Snapshot the **app's own screen**, not `lv_scr_act()`. Follow Brookesia's existing
 pattern at `esp_brookesia_core_manager.cpp:329-381`: temporarily overwrite

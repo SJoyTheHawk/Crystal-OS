@@ -26,6 +26,10 @@ struct CrystalTimerState {
 
 bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len = 0);
 
+// Called by the gesture arbiter on touch-down. Returns true exactly when that
+// touch must wake the display without being delivered as an app interaction.
+bool crystal_core_consume_wake_touch();
+
 // Loads timezone and initializes system time from the hardware RTC before UI startup.
 void crystal_time_init();
 
@@ -41,6 +45,10 @@ CrystalTimerState crystal_timer_state();
 void crystal_stopwatch_set_running(bool running);
 
 using crystal_clock_update_cb_t = void (*)(void *context, int hour, int minute, bool is_pm);
+using crystal_connectivity_update_cb_t = void (*)(void *context, bool wifi_connected);
+using crystal_battery_update_cb_t = void (*)(void *context, int percent, bool charging);
 
 // Must be called while the LVGL lock is held, after the phone has begun.
-bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update, void *clock_context);
+bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
+                       crystal_connectivity_update_cb_t connectivity_update,
+                       crystal_battery_update_cb_t battery_update, void *status_context);

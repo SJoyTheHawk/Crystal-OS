@@ -41,12 +41,18 @@ struct ITouchRaw {
     virtual bool read(Point *out) = 0;
 };
 
+struct IPower {
+    virtual ~IPower() = default;
+    virtual bool readBattery(int *percent, bool *charging) = 0;
+};
+
 struct CrystalHal {
     IBrightness *brightness;
     IRtc *rtc;
     IWifi *wifi;
     IStorage *storage;
     ITouchRaw *touch_raw;
+    IPower *power;
 };
 
 CrystalHal &hal();

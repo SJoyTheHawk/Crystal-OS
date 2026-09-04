@@ -26,6 +26,7 @@ namespace {
 constexpr uint8_t kBrightnessMax = 95;
 constexpr const char *kStorageNamespace = "crystal";
 constexpr uint8_t kRtcAddress = 0x51;
+constexpr uint8_t kAxp2101Address = 0x34;
 constexpr uint32_t kAlarmSampleRate = 22050;
 constexpr float kPi = 3.14159265358979323846f;
 static const char *TAG = "crystal_hal";
@@ -261,6 +262,46 @@ private:
     bool started_ = false;
 };
 
+class Axp2101Power final : public IPower {
+public:
+    bool readBattery(int *percent, bool *charging) override
+    {
+        if (percent == nullptr || charging == nullptr || !ensureDevice()) {
+            return false;
+        }
+        uint8_t status1 = 0;
+        uint8_t status2 = 0;
+        uint8_t capacity = 0;
+        if (!readRegister(0x00, &status1) || !readRegister(0x01, &status2) ||
+                !readRegister(0xA4, &capacity) || (status1 & (1U << 3)) == 0 || capacity > 100) {
+            return false;
+        }
+        *percent = capacity;
+        *charging = (status2 >> 5) == 0x01;
+        return true;
+    }
+
+private:
+    bool ensureDevice()
+    {
+        if (device_ != nullptr) {
+            return true;
+        }
+        i2c_device_config_t config = {};
+        config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        config.device_address = kAxp2101Address;
+        config.scl_speed_hz = 100000;
+        return i2c_master_bus_add_device(bsp_i2c_get_handle(), &config, &device_) == ESP_OK;
+    }
+
+    bool readRegister(uint8_t reg, uint8_t *value)
+    {
+        return i2c_master_transmit_receive(device_, &reg, 1, value, 1, 50) == ESP_OK;
+    }
+
+    i2c_master_dev_handle_t device_ = nullptr;
+};
+
 DeviceBrightness s_brightness;
 DeviceStorage s_storage;
 Pcf85063Rtc s_rtc;
@@ -290,7 +331,8 @@ bool write_alarm_tone(uint32_t frequency_hz, uint32_t duration_ms)
 }
 DeviceWifi s_wifi;
 DeviceTouch s_touch;
-CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch};
+Axp2101Power s_power;
+CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch, &s_power};
 
 } // namespace
 

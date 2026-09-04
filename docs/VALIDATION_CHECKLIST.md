@@ -213,9 +213,43 @@ Completion gate for the current shell increment: direct card boot, deterministic
 switching, and the app-area-sized snapshot transition pass on hardware. Full
 gesture arbitration remains Phase 7.
 
+## Phase 7: gesture arbiter and indicator bar
+
+- [x] The firmware contains one explicit `NONE`/`APP_SWITCH`/`QUICK_SETTINGS`/`APP`
+  owner, claimed at the 12px direction lock and reset only on release.
+- [x] Brookesia's eager edge mask is disabled; Crystal raises the full-screen input
+  mask only for an OS-owned gesture.
+- [x] Left/right edge bands are 24px and the quick-settings arm band is 20px.
+- [x] Quick-settings, keyboard, Settings, and modal lock APIs are present for their
+  owning phases to drive.
+- [x] The off-screen wake touch is masked until release.
+- [x] The status path updates Wi-Fi, AXP2101 percentage/charging at no less than a
+  30-second interval, and fixed-order page dots.
+- [x] The legacy once-per-minute RTC diagnostic poll is removed.
+- [x] ESP-IDF 6.1 compilation succeeds.
+- [x] With RTC unset and Wi-Fi disconnected, start a countdown, switch away and
+  back, and confirm the monotonic fallback keeps counting and expires normally.
+- [x] On hardware, dragging horizontally in the middle of an app still reaches the
+  app, while an outward edge drag does not leak a click or scroll event.
+- [x] On hardware, a vertical drag in a scrolled app remains app-owned unless it
+  starts in the top 20px band.
+- [x] On hardware, first/last-card boundary swipes are swallowed without wrapping.
+- [x] On hardware, the first touch after display-off wakes the panel but activates
+  no app control.
+- [x] With Wi-Fi disconnected and time unset, the status bar renders the
+  disconnected state, battery icon/percentage, page dots, and `--:--` clock.
+- [x] Page-dot selection follows card changes.
+- [ ] With a battery connected, verify percentage accuracy and charging-state
+  indication. No battery was available for the current hardware test.
+
+Completion gate: passed on the available no-battery hardware. Battery percentage
+accuracy and charging indication remain a deferred hardware follow-up.
+
 ## Phase 7.5: 50% visual crossover
 
 - [ ] The incoming preview follows the finger while the outgoing app is stationary.
+- [ ] A first visit shows the destination identity card immediately, with no blank
+  black pane while the real app is constructed.
 - [ ] Crossing 50% prepares the destination live app behind the preview.
 - [ ] Releasing before 50% cancels without changing the active app.
 - [ ] Releasing after 50% completes the switch and destroys the outgoing app.

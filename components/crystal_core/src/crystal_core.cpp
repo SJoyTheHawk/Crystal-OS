@@ -12,6 +12,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -43,10 +44,13 @@ lv_timer_t *s_toast_hide_timer = nullptr;
 TaskHandle_t s_service_task = nullptr;
 lv_disp_t *s_display = nullptr;
 crystal_clock_update_cb_t s_clock_update = nullptr;
-void *s_clock_context = nullptr;
+crystal_connectivity_update_cb_t s_connectivity_update = nullptr;
+crystal_battery_update_cb_t s_battery_update = nullptr;
+void *s_status_context = nullptr;
 PowerState s_power_state = PowerState::Full;
 std::atomic_bool s_time_valid{false};
 std::atomic<int64_t> s_timer_end_at{0};
+std::atomic<int64_t> s_timer_deadline_us{0};
 std::atomic<uint32_t> s_timer_duration{0};
 std::atomic<uint32_t> s_timer_paused_remaining{0};
 std::atomic_bool s_stopwatch_running{false};
@@ -149,6 +153,11 @@ void drain_event_queue(lv_timer_t *)
             show_toast("Time synchronized");
         } else if (message.type == UI_EVT_TIMER_EXPIRED) {
             show_toast("Timer finished");
+        } else if (message.type == UI_EVT_BATTERY &&
+                   message.length == sizeof(int8_t) + sizeof(uint8_t) && s_battery_update != nullptr) {
+            const int percent = static_cast<int8_t>(message.data[0]);
+            const bool charging = message.data[1] != 0;
+            s_battery_update(s_status_context, percent, charging);
         }
     }
 }
@@ -165,7 +174,14 @@ void update_clock(lv_timer_t *)
     struct tm now = {};
     if (epoch < 1577836800 || localtime_r(&epoch, &now) == nullptr) return;
     const int hour_12 = now.tm_hour % 12 == 0 ? 12 : now.tm_hour % 12;
-    s_clock_update(s_clock_context, hour_12, now.tm_min, now.tm_hour >= 12);
+    s_clock_update(s_status_context, hour_12, now.tm_min, now.tm_hour >= 12);
+}
+
+void update_connectivity(lv_timer_t *)
+{
+    if (s_connectivity_update != nullptr && hal().wifi != nullptr) {
+        s_connectivity_update(s_status_context, hal().wifi->connected());
+    }
 }
 
 void update_timer_indicator(lv_timer_t *)
@@ -212,6 +228,17 @@ void sntp_synced(struct timeval *tv)
             (void)hal().rtc->write(&corrected);
         }
     }
+    const int64_t monotonic_deadline = s_timer_deadline_us.load();
+    if (monotonic_deadline > 0 && tv != nullptr) {
+        const int64_t remaining_us = monotonic_deadline - esp_timer_get_time();
+        if (remaining_us > 0) {
+            int64_t expected = monotonic_deadline;
+            if (s_timer_deadline_us.compare_exchange_strong(expected, 0)) {
+                s_timer_end_at.store(static_cast<int64_t>(tv->tv_sec) +
+                                     (remaining_us + 999999) / 1000000);
+            }
+        }
+    }
     s_time_valid.store(true);
     (void)crystal_ui_post(UI_EVT_TIME_SYNCED);
 }
@@ -237,7 +264,7 @@ void service_task(void *)
         start_sntp();
     }
 
-    TickType_t last_rtc_log = 0;
+    TickType_t last_battery_poll = 0;
     for (;;) {
         uint32_t command = 0;
         if (xTaskNotifyWait(0, UINT32_MAX, &command, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -246,23 +273,30 @@ void service_task(void *)
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
         }
         const TickType_t now_ticks = xTaskGetTickCount();
+        if ((last_battery_poll == 0 || now_ticks - last_battery_poll >= pdMS_TO_TICKS(30000)) &&
+                hal().power != nullptr) {
+            last_battery_poll = now_ticks;
+            int percent = -1;
+            bool charging = false;
+            if (hal().power->readBattery(&percent, &charging)) {
+                const uint8_t battery[] = {
+                    static_cast<uint8_t>(static_cast<int8_t>(percent)),
+                    static_cast<uint8_t>(charging),
+                };
+                (void)crystal_ui_post(UI_EVT_BATTERY, battery, sizeof(battery));
+            }
+        }
         const int64_t timer_end = s_timer_end_at.load();
-        if (timer_end > 0 && static_cast<int64_t>(time(nullptr)) >= timer_end) {
+        const int64_t monotonic_deadline = s_timer_deadline_us.load();
+        if ((timer_end > 0 && static_cast<int64_t>(time(nullptr)) >= timer_end) ||
+                (monotonic_deadline > 0 && esp_timer_get_time() >= monotonic_deadline)) {
             s_timer_end_at.store(0);
+            s_timer_deadline_us.store(0);
             s_timer_duration.store(0);
             s_timer_paused_remaining.store(0);
             ESP_LOGI(TAG, "timer expired");
             crystal_hal_timer_alarm();
             (void)crystal_ui_post(UI_EVT_TIMER_EXPIRED);
-        }
-        if (now_ticks - last_rtc_log >= pdMS_TO_TICKS(60000)) {
-            last_rtc_log = now_ticks;
-            struct tm now = {};
-            if (hal().rtc != nullptr && hal().rtc->read(&now)) {
-                ESP_LOGD(TAG, "RTC time: %04d-%02d-%02d %02d:%02d:%02d",
-                         now.tm_year + 1900, now.tm_mon + 1, now.tm_mday,
-                         now.tm_hour, now.tm_min, now.tm_sec);
-            }
         }
     }
 }
@@ -316,14 +350,16 @@ bool crystal_time_set(const struct tm *local_time)
 bool crystal_timer_start(uint32_t duration_seconds)
 {
     if (duration_seconds == 0 || duration_seconds > 24U * 60U * 60U) return false;
-    const time_t now = time(nullptr);
-    if (now < 1577836800) {
-        ESP_LOGW(TAG, "timer requires valid system time");
-        return false;
-    }
     s_timer_paused_remaining.store(0);
     s_timer_duration.store(duration_seconds);
-    s_timer_end_at.store(static_cast<int64_t>(now) + duration_seconds);
+    if (s_time_valid.load()) {
+        s_timer_deadline_us.store(0);
+        s_timer_end_at.store(static_cast<int64_t>(time(nullptr)) + duration_seconds);
+    } else {
+        s_timer_end_at.store(0);
+        s_timer_deadline_us.store(esp_timer_get_time() +
+                                  static_cast<int64_t>(duration_seconds) * 1000000);
+    }
     ESP_LOGI(TAG, "timer started: %lu seconds", static_cast<unsigned long>(duration_seconds));
     return true;
 }
@@ -339,15 +375,18 @@ bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t du
         s_timer_duration.store(duration_seconds);
         s_timer_paused_remaining.store(0);
         s_timer_end_at.store(static_cast<int64_t>(end_at));
+        s_timer_deadline_us.store(0);
         return true;
     }
     if (paused_remaining > 0 && paused_remaining <= 24U * 60U * 60U) {
         s_timer_duration.store(duration_seconds);
         s_timer_end_at.store(0);
+        s_timer_deadline_us.store(0);
         s_timer_paused_remaining.store(paused_remaining);
         return true;
     }
     s_timer_end_at.store(0);
+    s_timer_deadline_us.store(0);
     s_timer_duration.store(0);
     s_timer_paused_remaining.store(0);
     return false;
@@ -356,12 +395,18 @@ bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t du
 bool crystal_timer_pause()
 {
     const int64_t end_at = s_timer_end_at.exchange(0);
-    const int64_t now = static_cast<int64_t>(time(nullptr));
-    if (end_at <= now) {
+    const int64_t monotonic_deadline = s_timer_deadline_us.exchange(0);
+    int64_t remaining = 0;
+    if (end_at > 0) {
+        remaining = end_at - static_cast<int64_t>(time(nullptr));
+    } else if (monotonic_deadline > 0) {
+        remaining = (monotonic_deadline - esp_timer_get_time() + 999999) / 1000000;
+    }
+    if (remaining <= 0) {
         s_timer_paused_remaining.store(0);
         return false;
     }
-    s_timer_paused_remaining.store(static_cast<uint32_t>(end_at - now));
+    s_timer_paused_remaining.store(static_cast<uint32_t>(remaining));
     ESP_LOGI(TAG, "timer paused");
     return true;
 }
@@ -370,13 +415,14 @@ bool crystal_timer_resume()
 {
     const uint32_t remaining = s_timer_paused_remaining.exchange(0);
     if (remaining == 0) return false;
-    const time_t now = time(nullptr);
-    if (now < 1577836800) {
-        s_timer_paused_remaining.store(remaining);
-        ESP_LOGW(TAG, "timer resume requires valid system time");
-        return false;
+    if (s_time_valid.load()) {
+        s_timer_deadline_us.store(0);
+        s_timer_end_at.store(static_cast<int64_t>(time(nullptr)) + remaining);
+    } else {
+        s_timer_end_at.store(0);
+        s_timer_deadline_us.store(esp_timer_get_time() +
+                                  static_cast<int64_t>(remaining) * 1000000);
     }
-    s_timer_end_at.store(static_cast<int64_t>(now) + remaining);
     ESP_LOGI(TAG, "timer resumed");
     return true;
 }
@@ -384,6 +430,7 @@ bool crystal_timer_resume()
 void crystal_timer_reset()
 {
     s_timer_end_at.store(0);
+    s_timer_deadline_us.store(0);
     s_timer_duration.store(0);
     s_timer_paused_remaining.store(0);
     ESP_LOGI(TAG, "timer reset");
@@ -394,12 +441,17 @@ CrystalTimerState crystal_timer_state()
     CrystalTimerState result = {};
     const int64_t now = static_cast<int64_t>(time(nullptr));
     const int64_t end_at = s_timer_end_at.load();
+    const int64_t monotonic_deadline = s_timer_deadline_us.load();
     result.duration_seconds = s_timer_duration.load();
     const uint32_t paused = s_timer_paused_remaining.load();
     if (end_at > now) {
         result.running = true;
         result.remaining_seconds = static_cast<uint32_t>(end_at - now);
         result.end_at = static_cast<time_t>(end_at);
+    } else if (monotonic_deadline > esp_timer_get_time()) {
+        result.running = true;
+        result.remaining_seconds = static_cast<uint32_t>(
+            (monotonic_deadline - esp_timer_get_time() + 999999) / 1000000);
     } else if (paused > 0) {
         result.paused = true;
         result.remaining_seconds = paused;
@@ -424,12 +476,29 @@ bool crystal_ui_post(crystal_evt_t type, const void *data, size_t len)
     return xQueueSend(s_queue, &message, 0) == pdTRUE;
 }
 
-bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update, void *clock_context)
+bool crystal_core_consume_wake_touch()
+{
+    if (s_power_state != PowerState::Off) {
+        return false;
+    }
+    s_power_state = PowerState::Full;
+    if (s_service_task != nullptr) {
+        xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::Full), eSetValueWithOverwrite);
+    }
+    return true;
+}
+
+bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
+                       crystal_connectivity_update_cb_t connectivity_update,
+                       crystal_battery_update_cb_t battery_update, void *status_context)
 {
     if (s_queue != nullptr) return true;
-    if (display == nullptr || clock_update == nullptr || clock_context == nullptr) return false;
+    if (display == nullptr || clock_update == nullptr || connectivity_update == nullptr ||
+            battery_update == nullptr || status_context == nullptr) return false;
     s_clock_update = clock_update;
-    s_clock_context = clock_context;
+    s_connectivity_update = connectivity_update;
+    s_battery_update = battery_update;
+    s_status_context = status_context;
     s_display = static_cast<lv_disp_t *>(display);
     s_queue = xQueueCreate(kQueueDepth, sizeof(EventMessage));
     if (s_queue == nullptr) return false;
@@ -438,8 +507,10 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update, vo
     if (!init_timer_indicator()) return false;
     if (lv_timer_create(drain_event_queue, 50, nullptr) == nullptr) return false;
     if (lv_timer_create(update_clock, 1000, nullptr) == nullptr) return false;
+    if (lv_timer_create(update_connectivity, 1000, nullptr) == nullptr) return false;
     if (lv_timer_create(update_timer_indicator, 250, nullptr) == nullptr) return false;
     if (lv_timer_create(check_power_state, 250, nullptr) == nullptr) return false;
     update_clock(nullptr);
+    update_connectivity(nullptr);
     return xTaskCreatePinnedToCore(service_task, "crystal_service", 4096, nullptr, 2, &s_service_task, 0) == pdPASS;
 }

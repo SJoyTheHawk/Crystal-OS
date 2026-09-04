@@ -588,39 +588,29 @@ it from PSRAM and free it immediately.
 
 ## Phase 7 — gesture arbiter
 
-One owner, claimed once per touch, released on lift.
+One owner, claimed once per touch, released on lift. The implementation reuses
+Brookesia's global gesture sampler and mask object. The stylesheet disables
+Brookesia's eager time-based mask; `crystal_shell` raises that mask only when its
+12px direction lock selects an OS owner. Raising it resets the app's active LVGL
+target, preventing a later release or click from leaking through.
 
 ```cpp
-enum GestureOwner { OWNER_NONE, OWNER_APP_SWITCH, OWNER_QUICK_SETTINGS, OWNER_APP };
+enum class CrystalGestureOwner { None, AppSwitch, QuickSettings, App };
 
 static constexpr int kLockThreshold = 12;    // px of travel before direction locks
 static constexpr int kEdgeBand      = 24;    // px from left/right edge
 static constexpr int kTopBand       = 20;    // px from top for quick settings
 
-static GestureOwner s_owner = OWNER_NONE;
+static CrystalGestureOwner s_owner = CrystalGestureOwner::None;
 ```
 
 ```cpp
-static void on_pressing(lv_point_t start, lv_point_t now)
+static void on_pressing(const ESP_Brookesia_GestureInfo_t &info)
 {
-    if (s_owner != OWNER_NONE) return;                 // claimed once, then stable
-
-    int dx = now.x - start.x, dy = now.y - start.y;
-    if (abs(dx) < kLockThreshold && abs(dy) < kLockThreshold) return;
-
-    if (abs(dx) > abs(dy)) {
-        if (start.x <= kEdgeBand && dx > 0)             s_owner = OWNER_APP_SWITCH; // prev
-        else if (start.x >= SCREEN_W - kEdgeBand && dx < 0) s_owner = OWNER_APP_SWITCH; // next
-    } else if (dy > 0 && start.y <= kTopBand && !quick_settings_open()) {
-        s_owner = OWNER_QUICK_SETTINGS;
-    }
-
-    if (s_owner == OWNER_NONE) s_owner = OWNER_APP;
-}
-
-bool crystal_gesture_should_pass_to_app(void)
-{
-    return s_owner == OWNER_APP;      // OS ownership blocks lv_indev delivery
+    if (s_owner != CrystalGestureOwner::None ||
+        info.direction == ESP_BROOKESIA_GESTURE_DIR_NONE) return;
+    // Apply modal, quick-settings, keyboard, Settings, then OS-edge precedence.
+    // Call gesture->setMaskObjectVisible(true) only for an OS owner.
 }
 ```
 
@@ -628,6 +618,33 @@ The `start.y <= kTopBand` condition is the one that matters. Without it, a
 swipe-down inside a scrolled app view opens quick settings when the user meant
 to scroll up — the only case where OS-over-app priority feels like a bug.
 Quick-settings-open also suppresses app switching, as decided.
+
+Future overlay phases must call the corresponding
+`crystal_shell_set_*_open(bool)` API when their visibility changes. Do not infer
+overlay state by scanning the LVGL tree. Battery reads also stay out of the LVGL
+task: `IPower::readBattery()` runs on `crystal_service` no faster than every 30
+seconds and posts the result back through the UI queue.
+
+## Phase 7.5 — finger-tracked crossover
+
+The crossover uses an app-area-clipped overlay on `lv_layer_top()`. The outgoing
+app is captured at direction lock and remains visually stationary. A single
+incoming card moves 1:1 with horizontal touch distance; its full-resolution
+RGB565 pane comes from the bounded neighbour cache when that card has previously
+been visited. An unvisited neighbour immediately shows a shell-rendered card face
+with its launcher icon and app name; its real app is created at the 50% crossing
+and captured behind the overlay. Never use a blank black pane for this state.
+
+The state machine is `Idle` -> `Dragging` -> `Settling`. Crossing half the app
+width creates the destination without the Phase 6 snap/fade. Release at or beyond
+half animates the card to full width; release below half restores the original app
+when necessary and animates the card off-screen. The overlay blocks input through
+the 250 ms settle and is clipped to the app visual area, so neither drag nor shadow
+can cover the indicator bar.
+
+Pane ownership stays bounded: the active drag owns one outgoing capture, and the
+cache retains only the current card's immediate neighbours. Never instantiate a
+neighbour merely to populate the cache.
 
 ## Phase 8 — quick settings
 

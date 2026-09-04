@@ -43,6 +43,26 @@ static void update_status_clock(void *context, int hour, int minute, bool is_pm)
     }
 }
 
+static void update_status_connectivity(void *context, bool connected)
+{
+    auto *phone = static_cast<ESP_Brookesia_Phone *>(context);
+    auto *status_bar = phone->getHome().getStatusBar();
+    if (status_bar != nullptr) {
+        (void)status_bar->setWifiIconState(connected
+            ? ESP_Brookesia_StatusBar::WifiState::SIGNAL_3
+            : ESP_Brookesia_StatusBar::WifiState::DISCONNECTED);
+    }
+}
+
+static void update_status_battery(void *context, int percent, bool charging)
+{
+    auto *phone = static_cast<ESP_Brookesia_Phone *>(context);
+    auto *status_bar = phone->getHome().getStatusBar();
+    if (status_bar != nullptr) {
+        (void)status_bar->setBatteryPercent(charging, percent);
+    }
+}
+
 static void require_boot_step(bool succeeded, const char *message)
 {
     if (!succeeded) {
@@ -92,7 +112,9 @@ extern "C" void app_main(void)
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
     stylesheet->core.manager.app.max_running_num = 1;
     stylesheet->manager.gesture.threshold.direction_horizon = 12;
+    stylesheet->manager.gesture.threshold.direction_vertical = 12;
     stylesheet->manager.gesture.threshold.horizontal_edge = 24;
+    stylesheet->manager.gesture_mask_indicator_trigger_time_ms = UINT32_MAX;
     require_boot_step(phone->addStylesheet(stylesheet), "Failed to add phone stylesheet");
     require_boot_step(phone->activateStylesheet(stylesheet), "Failed to activate phone stylesheet");
     delete stylesheet;
@@ -107,7 +129,8 @@ extern "C" void app_main(void)
     );
     require_boot_step(phone->begin(), "Failed to start Brookesia phone");
     require_boot_step(
-        crystal_core_init(display, update_status_clock, phone),
+        crystal_core_init(display, update_status_clock, update_status_connectivity,
+                          update_status_battery, phone),
         "Failed to start Crystal core services"
     );
 

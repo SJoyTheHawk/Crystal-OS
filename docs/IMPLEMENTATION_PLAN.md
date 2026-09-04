@@ -453,6 +453,35 @@ SNTP synchronization.
 Exit: no gesture reaches an app while the OS owns it; scrolled app views still
 scroll up.
 
+**Status — closed (2026-09-04).** `crystal_shell` now owns the explicit
+four-state arbiter. Brookesia still samples touch, but its eager edge-mask trigger
+is disabled; Crystal raises the input mask only after the 12px direction lock.
+The owner remains stable until release, outward left/right edge drags are reserved
+for card switching, and top-band downward drags are reserved for Phase 8 quick
+settings. Public lock setters cover quick settings, keyboard, Settings, and modal
+states without giving apps an edge-gesture opt-out. A touch that wakes an off
+display is masked through release.
+
+The indicator bar now adds the Crystal mark and fixed-order page dots, reports
+Wi-Fi connectivity, and reads AXP2101 battery percentage plus charging state on
+the service task at a 30-second minimum interval. The existing Brookesia status
+bar continues to own clock rendering. The firmware builds successfully, and the
+physical gesture and available status-bar validation have passed.
+The former once-per-minute RTC diagnostic poll was removed, leaving RTC reads at
+boot and the post-SNTP write path as specified for the shared I2C bus.
+
+Hardware validation with no battery and no network confirms the disconnected
+Wi-Fi state, battery icon/percentage, fixed-order page dots, and expected `--:--`
+clock are visible. Battery percentage accuracy and charging indication remain
+untested until a battery is connected and are retained as a non-blocking hardware
+follow-up.
+
+Hardware testing also exposed an existing Clock defect: countdown start/resume
+was rejected while RTC/SNTP time was unavailable. The service now uses a wall-clock
+deadline when time is valid and a monotonic uptime deadline otherwise. Both keep
+counting across app destruction; only the wall-clock form is persisted, so the
+documented reset-after-reboot behavior is preserved for an unsynchronised device.
+
 ### Phase 7.5 — Required 50% visual crossover
 
 Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
@@ -470,6 +499,22 @@ to remove the interaction.
 Exit: the card tracks the finger, both sides of the 50% threshold behave as
 specified, touch ownership transfers without leaking events, the status bar is
 never covered, and physical-panel testing shows no obvious tearing.
+
+**Implementation record (2026-09-04):** The shell now has an explicit
+idle/dragging/settling crossover state machine. A full-resolution outgoing
+app-area snapshot remains stationary while one rounded incoming card follows the
+finger 1:1. At 50%, the destination is created behind the opaque panes and its
+fresh app-area capture replaces any cached preview. Release uses the app area's
+half-width as the commit threshold and a 250 ms ease-out for both commit and
+cancel. The transition root clips all drawing below the status bar and blocks
+input until settle completes. Cached RGB565 panes are pruned to immediate
+neighbours; an unvisited destination uses an immediate neutral card face with its
+launcher icon and app name until the 50% construction point rather than showing a
+black pane or violating `max_running_num = 1`.
+
+Compilation and physical-panel validation remain open. The build invocation was
+blocked by the command approval service before ESP-IDF ran, so no compiler result
+is recorded yet.
 
 ### Phase 8 — Quick settings
 

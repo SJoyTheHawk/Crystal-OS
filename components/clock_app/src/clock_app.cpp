@@ -154,7 +154,10 @@ bool ClockApp::onCreate()
     (void)state().get_u32("tm_end", &timer_end);
     (void)state().get_u32("tm_ps", &timer_pause);
     (void)state().get_u32("tm_dur", &timer_duration);
-    if (timer_duration != 0 && (timer_end != 0 || timer_pause != 0)) {
+    const CrystalTimerState live_timer = crystal_timer_state();
+    if (live_timer.running || live_timer.paused) {
+        selected_duration_ = live_timer.duration_seconds;
+    } else if (timer_duration != 0 && (timer_end != 0 || timer_pause != 0)) {
         if (crystal_timer_restore(static_cast<time_t>(timer_end), timer_pause, timer_duration)) {
             selected_duration_ = timer_duration;
         }
