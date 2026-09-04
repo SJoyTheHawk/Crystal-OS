@@ -31,17 +31,18 @@ physical hardware.
 
 ## Phase 1: performance gate
 
-- [ ] `CONFIG_BSP_LCD_RGB_BUFFER_NUMS=1` remains selected.
-- [ ] The benchmark app can be restored or built when a performance regression
+- [x] Two RGB framebuffers with avoid-tear direct mode remain selected.
+- [x] The benchmark app can be restored or built when a performance regression
   needs investigation.
-- [ ] Visible drag performance remains consistent with the recorded 7-8 FPS.
-- [ ] Phase 6 continues to avoid a live full-screen tracking card, dynamic blur,
+- [x] The corrected display path completes 8-10 refreshes/sec under sustained
+  benchmark dragging.
+- [x] Phase 6 continues to avoid a live full-screen tracking card, dynamic blur,
   and shadow during drag.
-- [ ] Future switcher transitions use a short cross-fade or snap and receive a
-  new physical-panel measurement.
+- [x] The switcher uses a short snapshot fade and has passed physical-panel
+  measurement without obvious tearing.
 
-Completion gate: the measured result and single-buffer animation decision are
-recorded in `IMPLEMENTATION_PLAN.md`.
+Completion gate: the measured result, corrected display mode, and simplified
+animation decision are recorded in `IMPLEMENTATION_PLAN.md`.
 
 ## Phase 2: HAL
 
@@ -174,12 +175,54 @@ state survives app destruction without requiring a resident app.
 - [x] A card switch performs `onPause()` then `onDestroy()` before the next
   card's `onCreate()`.
 - [x] Hardware log confirms `Hello -> State Test -> Clock -> State Test -> Hello`.
-- [ ] Low-resolution snapshots and the 50% visual crossover are implemented.
-- [ ] Physical-panel measurement confirms the simplified snap transition.
+- [x] Destination snapshots are cropped to 90% about the centre **of the app area**
+  and downsampled to half the app resolution per axis (240x220 on this panel, so
+  the app's aspect ratio is preserved and one zoom factor serves both axes),
+  then magnified to cover the app area and centred inside a container clipped to
+  that area, so no rounding overshoot can paint over the status bar.
+- [x] A swipe switches with no live drag tracking: the outgoing app does not
+  follow the finger, and the transition is the snapshot fade after the switch
+  completes.
+- [x] Physical-panel measurement confirms the simplified app-area-sized
+  snapshot fade transition.
 
-Completion gate for the current shell increment: direct card boot and
-deterministic switching pass on hardware. Snapshot visuals and the full gesture
-arbiter remain separate exit criteria in Phase 6/7.
+These two items describe an **interim fallback**, not a design decision. The 50%
+visual crossover is required by `DESIGN.md` §5; Phase 6.5 corrected the unintended
+display mode, re-ran the gate, and landed below the continuation threshold, so
+snap-and-fade stays only until the render cost is fixed. See
+`PHASE_6_5_CROSSOVER.md` for the measurements and Phase 7.5 below for the items
+that retire these two. Nothing in this checklist authorises keeping snap-and-fade
+as the final interaction.
+
+### Phase 6.5 re-gate
+
+- [x] Single-buffer instrumentation recorded render and flush time separately.
+  **Not reproducible from the tree:** the instrumentation was not committed. Nothing
+  in `components/` or `main/` splits render from flush today — `perf_spike` only logs
+  `lv_refr_get_fps_avg()`. Re-add the timing hooks before trusting or re-running the
+  49-96 ms / 15-34 ms figures, and commit them this time.
+- [x] Generated `sdkconfig` retains two RGB buffers, avoid-tear, and direct mode.
+- [x] Direct mode reduces synchronous flush from 15-34 ms to 3-10 ms.
+- [x] Sustained drag completes about 8-10 refresh cycles/sec with render time at
+  91-106 ms, below the 12 FPS continuation gate.
+- [x] Physical-panel testing confirms no more obvious snapshot tearing.
+- [x] The 50% crossover is deferred to Phase 7.5 with a measured reason, and the
+  snap/fade baseline is recorded as interim rather than final.
+
+Completion gate for the current shell increment: direct card boot, deterministic
+switching, and the app-area-sized snapshot transition pass on hardware. Full
+gesture arbitration remains Phase 7.
+
+## Phase 7.5: 50% visual crossover
+
+- [ ] The incoming preview follows the finger while the outgoing app is stationary.
+- [ ] Crossing 50% prepares the destination live app behind the preview.
+- [ ] Releasing before 50% cancels without changing the active app.
+- [ ] Releasing after 50% completes the switch and destroys the outgoing app.
+- [ ] Touch transfers only after the destination is live; no event leaks across
+  gesture owners.
+- [ ] App-area clipping keeps the preview below the status bar at every offset.
+- [ ] The physical panel shows no obvious tearing throughout drag and settle.
 
 ## Regression command sequence
 

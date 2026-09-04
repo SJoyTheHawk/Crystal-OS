@@ -236,9 +236,10 @@ absolute paths, no access to another app's folder, no access to `/spiffs`.
 
 ### 6.6 Lifecycle
 
-The app module returns a table of hooks mapping one-to-one onto `CrystalApp`:
-`onCreate`, `onStart`, `onPause`, `onResume`, `onStop`, `onDestroy`, `onBack`.
-All are optional. There are no install/uninstall callbacks; installation and
+The app module returns a table of hooks mapping one-to-one onto `CrystalApp`. The
+four lifecycle states are `onCreate`, `onResume`, `onPause`, `onDestroy`; `onBack`
+is a gesture callback; `onStart`/`onStop` are declared for forward compatibility and
+are not dispatched in v1. All are optional. There are no install/uninstall callbacks; installation and
 clear-data are platform operations. Once-per-boot setup, when unavoidable, runs
 from `onCreate` behind module-local or instance-local guard state.
 
@@ -249,9 +250,13 @@ The contract authors must be told, because guessing wrong is silent data loss:
 - `onPause` is the only guaranteed write point, and precedes `onDestroy` on every
   path including return-to-launcher.
 - Handles do not survive `onDestroy`. Rebuild in `onCreate`.
-- `onStop` fires when an OS overlay fully covers the app. Stop timers there — the
-  panel measured 7-8 FPS at gate G1 and redrawing behind an opaque overlay costs
-  an animation its frames.
+- **v1 dispatches four of these:** `onCreate`, `onPause`, `onResume`, `onDestroy`
+  (plus `onBack`, which is a gesture, not a lifecycle state). `onStart`/`onStop`
+  are declared and overridable but **never called in v1** — do not put required
+  logic in them. They are reserved for Phase 8, when an OS overlay can fully cover
+  a card; the intent is that `onStop` becomes the place to stop timers, since
+  redrawing behind an opaque overlay costs an animation its frames on a panel that
+  measured 7-8 FPS at gate G1.
 - Return values are advisory. A false return is logged, not fatal — same fix as
   §4.5 item 5.
 - `onCreate` has an 80ms budget, warned in debug builds.

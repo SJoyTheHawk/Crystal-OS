@@ -199,6 +199,14 @@ Behaviour:
 - **Release after 50%** → card completes, outgoing app gets `onPause()` then
   `onDestroy()`.
 
+**This interaction is required, not aspirational.** The 50% finger-tracked
+crossover is the specified switching behaviour for Crystal OS. Performance
+measurement may delay *when* it ships — it does not authorise replacing it with a
+different interaction. Any shipped substitute (see the snap/fade baseline in
+`IMPLEMENTATION_PLAN.md` §Phase 6) is an interim fallback that carries an open
+requirement to reach the behaviour described above. Documents describing the
+fallback must say so; none of them supersede this section.
+
 The incoming app is built, not resumed, because only one app is ever resident
 (`max_running_num = 1`). That makes the switch path the same every time, which is
 the point: an app never has to ask whether it is being created or restored. The
@@ -283,10 +291,14 @@ swipe A → B:
    B: onCreate()    rebuild UI from state
 ```
 
-**Six hooks are declared; v1 dispatches four** — `onCreate`,
-`onPause`, `onResume`, `onDestroy`, plus `onBack`. `onStart`/`onStop` are the
-reserved pair: cards are opened and closed by swipes with nothing in between, so
-there is no event to map them to yet.
+**Crystal OS borrows four Android lifecycle states: `onCreate`, `onResume`,
+`onPause`, `onDestroy`.** Those four are the contract an app author must
+understand, and they are the four v1 dispatches. `onBack` is also dispatched but is
+a gesture callback, not a lifecycle state.
+
+Two further Android hooks — `onStart`/`onStop` — are **declared but never called in
+v1**. They are the reserved pair: cards are opened and closed by swipes with
+nothing in between, so there is no event to map them to yet.
 
 They stay wired as base-class no-ops rather than being absent, so adding one
 later is a framework change plus an optional override — no ABI break.

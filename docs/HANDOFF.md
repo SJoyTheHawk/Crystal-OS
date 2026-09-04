@@ -1,5 +1,30 @@
 # Handoff — lifecycle change, 2026-09-04
 
+## Standing statements — read before changing switching or lifecycle
+
+Two things are settled by the owner and are not open for a session to re-decide.
+
+**1. The 50% visual crossover is required.** Card switching is a finger-tracked
+preview that follows the drag from the edge, with 50% as the commit threshold:
+release past it completes to full screen, release before it returns to the origin
+side. This is specified in `DESIGN.md` §5, which is the design authority.
+
+Phase 6 shipped a snap-and-fade transition and Phase 6.5 measured 91-106 ms render
+time against a 12 FPS gate. That defers the crossover to Phase 7.5; it does **not**
+replace it. Where a document says the crossover "is not used", it is describing an
+interim fallback. A failed performance gate is a bill to pay, not a design change —
+the render cost is the defect to fix. Confirmed by the owner on 2026-09-04 after an
+earlier session read the deferral as a cancellation.
+
+Settled alongside it and not to be reopened: the card ring is home, and the
+launcher opens from the navigation bar as overflow.
+
+**2. Crystal OS borrows four Android lifecycle states.** `onCreate`, `onResume`,
+`onPause`, `onDestroy`. Those four are dispatched and are the contract app authors
+learn. `onBack` is also dispatched but is a gesture callback, not a lifecycle state.
+`onStart`/`onStop` are declared for forward compatibility and are **never called in
+v1** — nothing that must run may live in them. There are no install/uninstall hooks.
+
 ## Status — closed
 
 Closed on 2026-09-04. Clock's former install work now runs once behind an
@@ -34,8 +59,10 @@ Two files, both in `components/crystal_app`.
 ### `include/crystal_app.hpp`
 
 Removed `virtual bool onInstall()` and `virtual bool onUninstall()`. Six hooks
-remain declared and called: `onCreate`, `onStart`, `onPause`, `onResume`,
-`onStop`, `onDestroy`, plus `onBack`.
+remain declared, of which **four are dispatched** — the four borrowed Android
+lifecycle states `onCreate`, `onResume`, `onPause`, `onDestroy` — plus `onBack`, a
+gesture callback. `onStart`/`onStop` are declared and overridable but not called in
+v1.
 
 ### `src/crystal_app.cpp`
 
@@ -132,9 +159,13 @@ question nobody has answered.
   `init()`/`deinit()` **as** `onInstall()`/`onUninstall()`, now the opposite of
   what the code does.
 - `VALIDATION_CHECKLIST.md:122` — asserts a log line that no longer exists.
-- `APP_PLATFORM.md:240` — lists `onInstall` in the ABI hook set. This one matters
-  most: it is a **versioned ABI commitment**, so it should be settled before any
-  third-party app is written against it.
+- ~~`APP_PLATFORM.md:240` — lists `onInstall` in the ABI hook set.~~ **Resolved
+  2026-09-04.** §6.6 now states the four dispatched lifecycle states
+  (`onCreate`/`onResume`/`onPause`/`onDestroy`), marks `onBack` as a gesture
+  callback, and marks `onStart`/`onStop` as declared-but-not-dispatched. `onInstall`
+  is gone from the hook set. The false "`onStop` fires when an OS overlay covers the
+  app" claim was corrected there and in `examples/clock3p/README.md` — both told app
+  authors to put timer teardown in a hook that never runs.
 - `examples/clock3p/main.lua:122` — defines `M.onInstall()`, which the host will
   no longer call.
 

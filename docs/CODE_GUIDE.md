@@ -37,11 +37,11 @@ criteria.
 
 ## Phase 1 — performance spike (complete)
 
-The temporary `Phase 1 Perf` app is intentionally isolated from the production
+The `Phase 1 Perf` diagnostic app is intentionally isolated from the production
 shell. It creates a dense static backdrop and a draggable live card, then uses
 `lv_refr_get_fps_avg()` plus the built-in LVGL performance monitor to report the
-single-buffer result. The app should be removed after the G1 decision is written
-and before the Phase 6 switcher is implemented.
+display-path result. Its component is retained for future regression checks but
+is not registered in the production app table.
 
 The hardware run on 2026-09-02 showed approximately 7--8 visible FPS while
 dragging with one RGB buffer. LVGL reported 19--30 FPS, which is useful
@@ -50,6 +50,18 @@ the run with `CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2` remained at approximately 7--8
 visible FPS, so double buffering is not the Phase 6 solution. The switcher must
 use the documented simplified animation fallback: no live full-screen tracking
 card, blur, or shadow during the drag; use a short cross-fade or snap instead.
+
+The Phase 6.5 hardware re-test corrected the display configuration to two RGB
+framebuffers with avoid-tear direct mode. Instrumentation measured 3-10 ms of
+synchronous flush time but 91-106 ms of render time, with only 8-10 refreshes
+completed per second during sustained dragging. Obvious snapshot tearing was
+removed, but the result remains below the 12 FPS crossover gate. Production
+therefore carries the snap/fade transition and the direct-mode tearing fix as an
+**interim baseline**, not as the final interaction: the 50% finger-tracked
+crossover specified in `DESIGN.md` §5 is a requirement and moves to Phase 7.5,
+after gesture arbitration. Treat the 91-106 ms render time as the blocking defect
+to fix, not as grounds to redesign the switch. The diagnostic app is not
+registered in the production app table.
 
 Order matters: RTC before the first frame, WiFi after it.
 
@@ -273,9 +285,10 @@ wrong hour.
 ## Phase 4 — CrystalApp
 
 The current checkpoint is implemented in `components/crystal_app`. `CrystalApp`
-seals Brookesia's lifecycle entry points and forwards them to
-`onCreate()`/`onStart()`/`onResume()`/`onPause()`/`onStop()`/`onDestroy()`, plus
-`onBack()`. `init()` and `deinit()` are sealed bookkeeping entry points and do
+seals Brookesia's lifecycle entry points and forwards them to the four borrowed
+Android lifecycle hooks — `onCreate()`/`onResume()`/`onPause()`/`onDestroy()` —
+plus `onBack()`. `onStart()`/`onStop()` are declared but not dispatched in v1 (see
+"Occlusion hooks" below). `init()` and `deinit()` are sealed bookkeeping entry points and do
 not dispatch app hooks. Because
 Brookesia owns screen creation and recycling, `onCreate()` builds the active
 screen tree whenever `run()` creates a screen; app data belongs in

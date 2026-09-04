@@ -59,9 +59,11 @@ ABI rather than reimplemented in it.
   `onDestroy` on every path including return-to-launcher.
 - Widget handles do not survive `onDestroy`. Rebuild in `onCreate`; never cache
   one in a module-level table expecting it to still be valid.
-- `onStop` fires when an OS overlay fully covers the app. Stop your timers there
-  — the panel is bandwidth-bound and redrawing behind an opaque overlay costs an
-  animation its frames.
+- `onStop` is **not called in v1**. It is declared so adding it later is additive,
+  and is reserved for when an OS overlay can fully cover a card. Do not rely on it:
+  stop your timers in `onPause`. When it does arrive, `onStop` is the right place,
+  because the panel is bandwidth-bound and redrawing behind an opaque overlay costs
+  an animation its frames.
 - A callback that runs long is killed. The host checks a deadline every ~10k VM
   instructions; overrun raises a Lua error, the app is torn down, and the user
   gets a toast. The OS stays up.

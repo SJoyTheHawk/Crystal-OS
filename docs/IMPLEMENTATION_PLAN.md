@@ -120,6 +120,22 @@ full-screen tracking card, no blur/shadow during the drag, and a short
 cross-fade or snap transition. Keep the benchmark app until that simpler
 animation has its own measurement.
 
+**Phase 6.5 re-measurement (2026-09-04):** The original runs used an unintended
+480x100 partial-buffer copy path because Kconfig dropped direct mode. Step 0
+instrumentation measured approximately 49-96 ms render and 15-34 ms synchronous
+flush per refresh with one RGB framebuffer. With two RGB framebuffers,
+`BSP_DISPLAY_LVGL_AVOID_TEAR=y`, and direct mode active, synchronous flush fell
+to approximately 3-10 ms, but render time rose to approximately 91-106 ms.
+Sustained dragging completed only about 8-10 refresh cycles per second; the
+long-window LVGL average decayed from 30 to 15 FPS. This is below the Phase 6.5
+12 FPS stop gate, so the 50% finger-tracked crossover was deferred from Phase 6
+and the snap/fade interaction stands as an interim baseline. The crossover is a
+**required** interaction per `DESIGN.md` §5 and lands in Phase 7.5 after gesture
+arbitration; the 91-106 ms render time is the defect to fix, not a reason to
+change the design. The two-buffer direct mode stays:
+physical-panel testing confirmed that the obvious preview tearing is gone.
+Display initialization measured 922,232 bytes of PSRAM consumed by this mode.
+
 ### Phase 2 — HAL boundary and simulator (G2)
 
 Every hardware touch goes behind an interface: `IBrightness`, `IWifi`, `IRtc`,
@@ -349,11 +365,12 @@ mid-flight and correct. Start a timer, leave Clock entirely, and the expiry toas
 still fires. Reboot mid-timer and the behaviour is defined (v1: cleared, and the
 user is not lied to about it).
 
-### Phase 6 — App switcher (minimal shell implemented; visual switcher remains)
+### Phase 6 — App switcher (visual snapshot transition complete)
 
-Gated on G1. 1/8-downscale snapshot (480x480 RGB565 is 460KB; a 60x60 buffer is
-~7KB), box blur on the small buffer, LVGL upscales on draw — visually
-equivalent at this size and roughly 60x cheaper.
+Gated on G1. A half-resolution RGB565 destination snapshot is shown over an
+opaque handoff cover while the next card is created, then faded out. This keeps
+the preview readable without exposing app construction or requiring live
+full-screen drag tracking.
 
 **Progress (2026-09-04):** Added `crystal_shell`, which exposes the registry's
 slot-sorted installed cards, persists the active card by stable app ID, boots
@@ -363,18 +380,55 @@ snap behavior: one resident app, `onPause()`/`onDestroy()` followed by the next
 card's `onCreate()`. The firmware builds, flashes, and was verified on hardware
 with the sequence `Hello -> State Test -> Clock -> State Test -> Hello`.
 
-The snapshot-backed tracking card and visual 50% crossover are intentionally
-deferred: G1 measured only 7--8 visible FPS, so Phase 6 uses a direct snap until
-the low-resolution snapshot path is implemented and measured. Full gesture
-ownership, app-input suppression, quick-settings/keyboard exclusions, and page
-dots remain Phase 7.
+The destination visual transition is now implemented: an opaque handoff cover
+hides app construction, then the destination screen is captured with LVGL,
+center-cropped to 90% of the **app area** about its centre, box-averaged down to
+half the app area per axis (240x220 RGB565, ~103 KiB for the observed 480x440 app
+area), then magnified by a single rounded-up zoom factor and **centred inside a
+container clipped to the app area**, and faded out over 180 ms. The container is
+what protects the status bar: any rounding overshoot is clipped rather than
+arithmetically avoided. The full-screen source snapshot is freed immediately after
+downsampling, so only one live app and the bounded transition buffer remain
+resident. This is an interim replacement for live drag tracking; see Phase 7.5.
+Full gesture ownership, app-input suppression, quick-settings/keyboard exclusions,
+and page dots remain Phase 7.
 
-Card overlay follows the drag; past 50% the incoming app renders and receives
-touch. Left edge dragged right = previous, right edge dragged left = next.
+The shell as built in this phase recognizes the edge gesture and commits on
+release; it does not yet move a card with the finger or transfer touch at a visual
+crossover. Left edge dragged right selects the previous app, and right edge dragged
+left selects the next. The finger tracking and crossover are added in Phase 7.5 —
+the direction mapping above does not change when they land.
 
-Exit: the current shell switches deterministically without wrapping and keeps
-steady-state PSRAM bounded to one live app. The visual snapshot/crossover exit
-criteria remain open for the next Phase 6 increment.
+Exit: the current shell switches deterministically without wrapping, keeps
+steady-state PSRAM bounded to one live app, and the final app-area-sized
+snapshot transition has passed the physical-panel check. This is an **interim
+fallback**, not a closed design decision — the required 50% live visual crossover
+(`DESIGN.md` §5) is delivered in Phase 7.5; full gesture ownership remains
+Phase 7.
+
+### Phase 6.5 — Crossover re-gate (measured and deferred)
+
+G1's 7-8 FPS was measured with the intended display mode silently disabled:
+`CONFIG_BSP_DISPLAY_LVGL_DIRECT_MODE=y` sits in `sdkconfig.defaults` but is absent
+from the generated `sdkconfig`, because `AVOID_TEAR` requires
+`BSP_LCD_RGB_BUFFER_NUMS > 1` and defaults to `n`. The retest at
+`BSP_LCD_RGB_BUFFER_NUMS=2` was therefore also a no-op — without `AVOID_TEAR` the
+second framebuffer is allocated and never used by LVGL. The band-copy of a
+480x100 partial buffer into the live scanout framebuffer also explains the visible
+layer-by-layer tearing during the snapshot transition.
+
+That does not mean the config fix reaches 20 FPS: `AVOID_TEAR` moves the render
+target into PSRAM, and roughly 100 ms of the 125-143 ms frame time remains
+unattributed. So Phase 6.5 instruments render-vs-flush time first, then changes the
+config, then re-gates. Full procedure, gate thresholds, and the deferral path are
+in `PHASE_6_5_CROSSOVER.md`.
+
+**Result (2026-09-04):** Steps 0 and 1 passed on hardware. Direct mode removed
+the obvious snapshot tearing and reduced synchronous flush cost, but rendering
+dominated at 91-106 ms and sustained dragging completed only 8-10 refreshes per
+second. Per the `<12 FPS` gate, Steps 2-4 are not implemented. The production
+shell keeps the snap/fade transition and the verified two-buffer avoid-tear
+direct mode. This closes the measurement phase, not the crossover requirement.
 
 ### Phase 7 — Gesture arbiter and indicator bar
 
@@ -398,6 +452,24 @@ SNTP synchronization.
 
 Exit: no gesture reaches an app while the OS owns it; scrolled app views still
 scroll up.
+
+### Phase 7.5 — Required 50% visual crossover
+
+Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
+Phase 7's gesture arbiter. The incoming preview follows the edge drag while the
+outgoing app remains stationary. At 50%, construct the destination behind the
+preview and transfer touch only when its live content is ready. Release before
+the threshold cancels; release after it completes the switch.
+
+Start from the Phase 6 tear-free path: retain two RGB framebuffers, avoid-tear
+direct mode, app-area clipping, and bottom-edge alignment. Optimize the drag path
+to avoid invalidating the full screen on every touch sample; the Phase 6.5
+91-106ms render measurement is the blocking performance problem, not permission
+to remove the interaction.
+
+Exit: the card tracks the finger, both sides of the 50% threshold behave as
+specified, touch ownership transfers without leaking events, the status bar is
+never covered, and physical-panel testing shows no obvious tearing.
 
 ### Phase 8 — Quick settings
 
