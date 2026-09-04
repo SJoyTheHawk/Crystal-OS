@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <vector>
 
 #include "crystal_app.hpp"
@@ -24,10 +25,18 @@ constexpr int kTopBand = 20;
 // 480x440 app area produces a 240x220 snapshot (~103 KiB).
 constexpr uint32_t kSnapshotCropPercent = 90;
 constexpr uint32_t kSnapshotScaleDivisor = 2;
-constexpr uint32_t kCrossoverCommitPercent = 10;
+constexpr uint32_t kCrossoverCommitPercent = 50;
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
+// An lv_anim ready callback runs inside lv_timer_handler, before the display is
+// refreshed, so the animation's final frame is still unpainted at that moment.
+// Doing the Brookesia switch there costs the user that frame and makes the
+// commit look like it overlaps the slide. One frame of slack lets each stage
+// reach the panel before the next one starts.
+constexpr uint32_t kCommitStageMs = 20;
 constexpr char kCurrentCardKey[] = "shell.card";
+constexpr char kPreviewPathPrefix[] = "/spiffs/crystal_preview_";
+constexpr uint32_t kPreviewMagic = 0x43525056;
 
 ESP_Brookesia_Phone *s_phone = nullptr;
 size_t s_current_index = 0;
@@ -62,7 +71,6 @@ struct CardTransition {
     lv_coord_t width = 0;
     lv_coord_t progress = 0;
     int direction = 0;
-    bool destination_live = false;
     bool commit = false;
 };
 
@@ -73,13 +81,14 @@ bool start_card(size_t index, bool animate = true);
 lv_img_dsc_t *downscale_crop(const lv_img_dsc_t *source, const lv_area_t &crop,
                              lv_coord_t dest_w, lv_coord_t dest_h);
 
-bool crossover_commit_reached(lv_coord_t progress, lv_coord_t width)
+bool crossover_threshold_reached(lv_coord_t progress, lv_coord_t width,
+                                 uint32_t percent)
 {
     if (width <= 0) {
         return false;
     }
     const lv_coord_t threshold = LV_MAX(1, static_cast<lv_coord_t>(
-        (static_cast<int32_t>(width) * kCrossoverCommitPercent) / 100));
+        (static_cast<int32_t>(width) * percent) / 100));
     return progress >= threshold;
 }
 
@@ -224,26 +233,113 @@ lv_img_dsc_t *capture_app_area_full()
     return pane;
 }
 
-lv_img_dsc_t *capture_app_preview()
+struct PreviewFileHeader { uint32_t magic; uint16_t width; uint16_t height; };
+
+bool preview_path(size_t index, char *path, size_t size)
 {
-    lv_img_dsc_t *pane = capture_app_area_full();
-    if (pane == nullptr) {
+    const char *id = crystal_registry_installed_id(index);
+    if (id == nullptr || path == nullptr || size == 0) return false;
+    char safe[40]; size_t n = 0;
+    for (; id[n] != '\0' && n + 1 < sizeof(safe); ++n) {
+        const char c = id[n];
+        safe[n] = ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '_' || c == '-') ? c : '_';
+    }
+    safe[n] = '\0';
+    const int written = snprintf(path, size, "%s%s.bin", kPreviewPathPrefix, safe);
+    return written > 0 && static_cast<size_t>(written) < size;
+}
+
+lv_img_dsc_t *load_persistent_preview(size_t index)
+{
+    const char *id = crystal_registry_installed_id(index);
+    char path[96];
+    if (!preview_path(index, path, sizeof(path))) {
+        ESP_LOGW(TAG, "preview load: id=%s path construction failed", id != nullptr ? id : "<null>");
         return nullptr;
     }
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) {
+        ESP_LOGI(TAG, "preview load: id=%s path=%s result=missing",
+                 id != nullptr ? id : "<null>", path);
+        return nullptr;
+    }
+    PreviewFileHeader header{}; lv_img_dsc_t *image = nullptr;
+    const bool header_ok = fread(&header, sizeof(header), 1, file) == 1 &&
+                           header.magic == kPreviewMagic && header.width > 0 && header.height > 0;
+    if (!header_ok) {
+        ESP_LOGW(TAG, "preview load: id=%s path=%s result=invalid-header",
+                 id != nullptr ? id : "<null>", path);
+    } else {
+        image = lv_img_buf_alloc(header.width, header.height, LV_IMG_CF_TRUE_COLOR);
+        if (image == nullptr) {
+            ESP_LOGW(TAG, "preview load: id=%s path=%s result=allocation-failed size=%ux%u",
+                     id != nullptr ? id : "<null>", path, header.width, header.height);
+        } else if (fread(const_cast<uint8_t *>(image->data), image->data_size, 1, file) != 1) {
+            ESP_LOGW(TAG, "preview load: id=%s path=%s result=truncated expected_bytes=%u",
+                     id != nullptr ? id : "<null>", path, static_cast<unsigned>(image->data_size));
+            lv_img_buf_free(image);
+            image = nullptr;
+        } else {
+            ESP_LOGI(TAG, "preview load: id=%s path=%s result=success size=%ux%u bytes=%u",
+                     id != nullptr ? id : "<null>", path, header.width, header.height,
+                     static_cast<unsigned>(image->data_size));
+        }
+    }
+    fclose(file);
+    return image;
+}
 
-    const lv_coord_t width = pane->header.w;
-    const lv_coord_t height = pane->header.h;
-    // Store incoming previews at half app resolution. They are enlarged only
-    // while the card is moving, keeping the steady-state cache near one quarter
-    // the bytes of a full-resolution app-area capture.
-    const lv_coord_t preview_w = LV_MAX(1, static_cast<lv_coord_t>(width / 2));
-    const lv_coord_t preview_h = LV_MAX(1, static_cast<lv_coord_t>(height / 2));
-    const lv_area_t source_area = {0, 0,
-                                   static_cast<lv_coord_t>(width - 1),
-                                   static_cast<lv_coord_t>(height - 1)};
-    lv_img_dsc_t *preview = downscale_crop(pane, source_area, preview_w, preview_h);
-    lv_img_buf_free(pane);
-    return preview;
+void save_persistent_preview(size_t index, const lv_img_dsc_t *image)
+{
+    const char *id = crystal_registry_installed_id(index);
+    if (image == nullptr) {
+        ESP_LOGW(TAG, "preview save: id=%s result=no-image", id != nullptr ? id : "<null>");
+        return;
+    }
+    char path[96];
+    if (!preview_path(index, path, sizeof(path))) {
+        ESP_LOGW(TAG, "preview save: id=%s path construction failed", id != nullptr ? id : "<null>");
+        return;
+    }
+    // SPIFFS is configured with a 32-character object-name limit. Appending
+    // ".tmp" to the full preview filename makes the state_test object too
+    // long, so use a short temporary basename and retain the stable ID.
+    const char *stable_name = path + strlen(kPreviewPathPrefix);
+    const size_t stable_name_len = strlen(stable_name);
+    const size_t id_len = stable_name_len > 4 ? stable_name_len - 4 : stable_name_len;
+    char temp[104];
+    const int written = snprintf(temp, sizeof(temp), "/spiffs/.tmp_%.*s",
+                                 static_cast<int>(id_len), stable_name);
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(temp)) {
+        ESP_LOGW(TAG, "preview save: id=%s path=%s result=temp-path-failed",
+                 id != nullptr ? id : "<null>", path);
+        return;
+    }
+    FILE *file = fopen(temp, "wb");
+    if (file == nullptr) {
+        ESP_LOGW(TAG, "preview save: id=%s path=%s result=open-failed",
+                 id != nullptr ? id : "<null>", path);
+        return;
+    }
+    const PreviewFileHeader header = {kPreviewMagic, image->header.w, image->header.h};
+    const bool ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
+                    fwrite(image->data, image->data_size, 1, file) == 1;
+    fclose(file);
+    if (ok && remove(path) == 0) {
+        // Removing an existing file is expected on refresh; continue to rename.
+    }
+    const int rename_result = ok ? rename(temp, path) : -1;
+    if (rename_result == 0) {
+        ESP_LOGI(TAG, "preview save: id=%s path=%s result=success size=%ux%u bytes=%u",
+                 id != nullptr ? id : "<null>", path, image->header.w, image->header.h,
+                 static_cast<unsigned>(image->data_size));
+    } else {
+        ESP_LOGW(TAG, "preview save: id=%s path=%s result=%s bytes=%u",
+                 id != nullptr ? id : "<null>", path, ok ? "rename-failed" : "write-failed",
+                 static_cast<unsigned>(image->data_size));
+        (void)remove(temp);
+    }
 }
 
 void replace_cached_pane(size_t index, lv_img_dsc_t *image)
@@ -521,29 +617,111 @@ void set_transition_progress(void *, int32_t value)
     lv_obj_set_x(transition.incoming_card, x);
 }
 
+// Downscaling the outgoing pane and writing it to storage is the heaviest work
+// in the whole gesture. It is deferred to its own stage so it cannot stall the
+// slide or the destination's first frame; the caller hands over ownership of the
+// full-resolution buffer.
+struct PendingPreview {
+    lv_img_dsc_t *outgoing = nullptr;
+    size_t index = SIZE_MAX;
+};
+PendingPreview s_pending_preview;
+
+void store_outgoing_preview(lv_img_dsc_t *outgoing, size_t index)
+{
+    if (outgoing == nullptr) {
+        return;
+    }
+    if (index < s_pane_cache.size()) {
+        const lv_coord_t preview_w = LV_MAX(1, static_cast<lv_coord_t>(
+            outgoing->header.w / kSnapshotScaleDivisor));
+        const lv_coord_t preview_h = LV_MAX(1, static_cast<lv_coord_t>(
+            outgoing->header.h / kSnapshotScaleDivisor));
+        const lv_area_t source_area = {0, 0,
+                                       static_cast<lv_coord_t>(outgoing->header.w - 1),
+                                       static_cast<lv_coord_t>(outgoing->header.h - 1)};
+        lv_img_dsc_t *preview = downscale_crop(outgoing, source_area, preview_w, preview_h);
+        replace_cached_pane(index, preview);
+        save_persistent_preview(index, preview);
+    }
+    lv_img_buf_free(outgoing);
+}
+
+void preview_persist_cb(lv_timer_t *timer)
+{
+    lv_timer_del(timer);
+    const PendingPreview pending = s_pending_preview;
+    s_pending_preview = PendingPreview{};
+    store_outgoing_preview(pending.outgoing, pending.index);
+}
+
 void finish_card_transition(lv_anim_t *)
 {
     CardTransition &transition = s_card_transition;
     const bool committed = transition.commit;
     const size_t original_index = transition.original_index;
     const size_t active_index = s_current_index;
+    lv_img_dsc_t *outgoing = transition.outgoing;
 
     if (transition.root != nullptr) {
         lv_obj_del(transition.root);
     }
-    if (committed && transition.outgoing != nullptr && original_index < s_pane_cache.size()) {
-        replace_cached_pane(original_index, transition.outgoing);
-        transition.outgoing = nullptr;
-    }
-    if (transition.outgoing != nullptr) {
-        lv_img_buf_free(transition.outgoing);
-    }
     transition = CardTransition{};
+
+    if (committed && outgoing != nullptr) {
+        s_pending_preview = PendingPreview{outgoing, original_index};
+        lv_timer_create(preview_persist_cb, kCommitStageMs, nullptr);
+    } else if (outgoing != nullptr) {
+        lv_img_buf_free(outgoing);
+    }
+
     prune_pane_cache(active_index);
     ESP_LOGI(TAG, "card crossover %s; active=%u, PSRAM free=%u",
              committed ? "committed" : "cancelled",
              static_cast<unsigned>(active_index + 1),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+}
+
+// Stage 3: the destination is live and has had a frame to draw under the
+// overlay, so the overlay can go without exposing a half-built tree.
+void card_reveal_cb(lv_timer_t *timer)
+{
+    lv_timer_del(timer);
+    finish_card_transition(nullptr);
+}
+
+// Stage 2: the card has been presented at full width. Now run the Brookesia
+// lifecycle -- A onPause/onDestroy, B onCreate/onResume -- behind the card.
+void card_commit_cb(lv_timer_t *timer)
+{
+    lv_timer_del(timer);
+    CardTransition &transition = s_card_transition;
+    if (transition.phase != CardTransitionPhase::Settling || !transition.commit) {
+        finish_card_transition(nullptr);
+        return;
+    }
+
+    const bool started = transition.target_index < crystal_registry_installed_count() &&
+                         start_card(transition.target_index, false);
+    if (!started) {
+        transition.commit = false;
+        ESP_LOGE(TAG, "card commit failed after cover; keeping current app");
+        finish_card_transition(nullptr);
+        return;
+    }
+    lv_timer_create(card_reveal_cb, kCommitStageMs, nullptr);
+}
+
+// Stage 1: the slide has finished in the object tree but has not been flushed
+// yet. Yield so the full-width card reaches the panel before anything else.
+void schedule_card_commit(lv_anim_t *)
+{
+    CardTransition &transition = s_card_transition;
+    if (transition.phase != CardTransitionPhase::Settling || !transition.commit) {
+        finish_card_transition(nullptr);
+        return;
+    }
+    lv_timer_create(card_commit_cb, kCommitStageMs, nullptr);
 }
 
 bool attach_incoming_image(lv_img_dsc_t *pane)
@@ -567,33 +745,6 @@ bool attach_incoming_image(lv_img_dsc_t *pane)
                              pane->header.h - 1) / pane->header.h;
     lv_img_set_zoom(transition.incoming_image, static_cast<uint16_t>(LV_MAX(zoom_x, zoom_y)));
     lv_obj_center(transition.incoming_image);
-    return true;
-}
-
-bool prepare_transition_destination()
-{
-    CardTransition &transition = s_card_transition;
-    if (transition.destination_live) {
-        return true;
-    }
-    if (transition.target_index >= crystal_registry_installed_count() ||
-            !start_card(transition.target_index, false)) {
-        return false;
-    }
-
-    transition.destination_live = true;
-    lv_img_dsc_t *fresh = capture_app_preview();
-    if (fresh != nullptr && transition.target_index < s_pane_cache.size()) {
-        lv_img_dsc_t *old = s_pane_cache[transition.target_index].image;
-        s_pane_cache[transition.target_index].image = fresh;
-        (void)attach_incoming_image(fresh);
-        if (old != nullptr && old != fresh) {
-            lv_img_buf_free(old);
-        }
-    }
-    ESP_LOGI(TAG, "card crossover destination %u prepared (commit at %u%%)",
-             static_cast<unsigned>(transition.target_index + 1),
-             static_cast<unsigned>(kCrossoverCommitPercent));
     return true;
 }
 
@@ -707,16 +858,16 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     s_card_transition.width = width;
     s_card_transition.direction = direction;
     if (target_index < s_pane_cache.size()) {
-        (void)attach_incoming_image(s_pane_cache[target_index].image);
+        lv_img_dsc_t *pane = s_pane_cache[target_index].image;
+        if (pane == nullptr) {
+            pane = load_persistent_preview(target_index);
+            if (pane != nullptr) s_pane_cache[target_index].image = pane;
+        }
+        (void)attach_incoming_image(pane);
     }
 
     const int dx = info.stop_x - info.start_x;
     set_transition_progress(nullptr, direction > 0 ? dx : -dx);
-    // Prepare the neighbor as soon as the edge drag starts.  The outgoing
-    // pane above remains stationary, so destination startup/capture cannot
-    // expose a blank or partially rendered screen.  Fifty percent is only
-    // the commit threshold; it must not gate preview rendering.
-    (void)prepare_transition_destination();
     ESP_LOGI(TAG, "card crossover started: %u -> %u, PSRAM free=%u",
              static_cast<unsigned>(s_current_index + 1),
              static_cast<unsigned>(target_index + 1),
@@ -741,17 +892,6 @@ void settle_card_transition(bool commit)
         return;
     }
 
-    if (commit && !prepare_transition_destination()) {
-        commit = false;
-    }
-    if (!commit && transition.destination_live) {
-        if (start_card(transition.original_index, false)) {
-            transition.destination_live = false;
-        } else {
-            commit = true;
-        }
-    }
-
     transition.phase = CardTransitionPhase::Settling;
     transition.commit = commit;
     if (transition.root != nullptr) {
@@ -764,7 +904,7 @@ void settle_card_transition(bool commit)
     lv_anim_set_values(&animation, transition.progress, commit ? transition.width : 0);
     lv_anim_set_time(&animation, kCrossoverSettleMs);
     lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
-    lv_anim_set_ready_cb(&animation, finish_card_transition);
+    lv_anim_set_ready_cb(&animation, commit ? schedule_card_commit : finish_card_transition);
     lv_anim_start(&animation);
 }
 
@@ -859,8 +999,9 @@ void on_gesture_release(lv_event_t *event)
 
     if (s_card_transition.phase == CardTransitionPhase::Dragging) {
         update_card_transition(*info);
-        settle_card_transition(crossover_commit_reached(s_card_transition.progress,
-                                                        s_card_transition.width));
+        settle_card_transition(crossover_threshold_reached(
+            s_card_transition.progress, s_card_transition.width,
+            kCrossoverCommitPercent));
         return;
     }
 

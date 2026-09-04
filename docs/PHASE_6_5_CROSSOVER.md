@@ -359,10 +359,9 @@ arithmetic, not measurement.
 
 ## 11. Current shell tuning
 
-The production card shell now prepares the destination preview at direction lock,
-so rendering is not gated on crossover progress. For hardware tuning, the live
-commit threshold is currently 10% of the app-area width; the 50% value remains in
-the historical design discussion above.
+The production card shell begins preparing the destination preview at 10% of the
+app-area width. The live app commit threshold remains 50%; crossing 10% must not
+switch apps by itself.
 
 ## 12. Hardware result
 

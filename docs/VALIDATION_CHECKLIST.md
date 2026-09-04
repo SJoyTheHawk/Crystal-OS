@@ -87,6 +87,13 @@ desktop mock. Until the SDL item passes, Phase 2 remains technically open.
 - [ ] The launcher and Hello app remain responsive after waking.
 - [ ] No queue, LVGL, I2C, watchdog, or task errors appear during the test.
 
+Brightness stability follow-up (2026-09-05): direct 0%, 1%, 3%, and 5%
+backlight levels were stable during the 30-second hardware observations. The
+underlying energy-saver low-level brightness behavior remains unresolved and is
+deferred. The temporary boot brightness diagnostic has been removed; production
+behavior continues to use 0% for the `Off` state, with no wake-path experiment
+retained.
+
 Completion gate: offline RTC boot, queued toast, and dim/off/wake behavior all
 pass on physical hardware. Wake-touch suppression remains a Phase 6 gesture
 ownership requirement.
@@ -245,23 +252,60 @@ gesture arbitration remains Phase 7.
 Completion gate: passed on the available no-battery hardware. Battery percentage
 accuracy and charging indication remain a deferred hardware follow-up.
 
-## Phase 7.5: visual crossover (10% commit threshold)
+## Phase 7.5: 50% visual crossover
 
-- [ ] The incoming preview follows the finger while the outgoing app is stationary.
-- [ ] The incoming card is created at direction lock, without a blank or blocked
-  frame before the 10% crossover.
-- [ ] A first visit begins preparing the destination preview at drag start; its
-  identity card is the immediate non-black fallback while capture completes.
-- [ ] Visited-app previews use a downscaled app-area image during motion and are
+- [x] The incoming preview follows the finger while the outgoing app is stationary.
+- [x] The incoming card is created at direction lock, without a blank or blocked
+  frame during the drag.
+- [x] A first visit shows the destination identity card without constructing the
+  target app during the drag.
+- [x] Visited-app previews use a downscaled app-area image during motion and are
   enlarged to the card area without covering the status bar.
-- [ ] Crossing 10% commits the already-prepared destination live app behind the
-  preview.
-- [ ] Releasing before 10% cancels without changing the active app.
-- [ ] Releasing after 10% completes the switch and destroys the outgoing app.
-- [ ] Touch transfers only after the destination is live; no event leaks across
+- [x] Crossing 10% has no lifecycle effect; release at or beyond 50% commits the
+  destination live app behind the preview.
+- [x] Releasing before 50% cancels without changing the active app.
+- [x] Releasing after 50% completes the switch and destroys the outgoing app.
+- [x] Touch transfers only after the destination is live; no event leaks across
   gesture owners.
-- [ ] App-area clipping keeps the preview below the status bar at every offset.
-- [ ] The physical panel shows no obvious tearing throughout drag and settle.
+- [x] App-area clipping keeps the preview below the status bar at every offset.
+- [x] The physical panel shows no obvious tearing throughout drag and settle.
+
+Persistent preview files are implemented under `/spiffs` and keyed by stable app
+ID; persistence across reboot is validated for Hello, Clock, and State Test.
+
+Persistence finding: SPIFFS allows a maximum 32-character object name. The
+original State Test temporary filename exceeded that limit and caused
+`result=open-failed`; short `/spiffs/.tmp_<stable-app-id>` names now avoid the
+limit. The final preview path remains unchanged.
+
+## Post-cleanup checklist (2026-09-05)
+
+### Phase 7
+
+- [x] Temporary brightness diagnostic code is removed from production startup.
+- [x] Production `Off` brightness target remains 0%; no 5% floor was added.
+- [x] The experimental wake-touch inactivity reset was reverted.
+- [x] Existing gesture ownership, status-bar, timer, and wake-touch behavior is
+  unchanged by the cleanup.
+- [x] No stale diagnostic symbols or log messages remain.
+
+### Phase 7.5
+
+- [x] Preview/lifecycle state machine remains unchanged by the cleanup.
+- [x] Dragging remains preview-only; no lifecycle callbacks occur during drag.
+- [x] Release below 50% cancels; release at or above 50% commits after cover.
+- [x] Persistent previews remain keyed by stable app ID under `/spiffs`.
+- [x] No stale preview path references remain in the implementation documents.
+- [x] Re-test card transitions and persistent preview loading after an app-only
+  production flash.
+
+Phase 7.5 completion: all visual, lifecycle, persistence, and no-tearing checks
+passed on hardware; phase closed.
+
+### Deferred
+
+- [ ] Determine the root cause of any low-brightness energy-saver fluctuation if
+  it reappears; do not change the production brightness floor without evidence.
 
 ## Regression command sequence
 

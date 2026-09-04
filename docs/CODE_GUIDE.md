@@ -627,27 +627,106 @@ seconds and posts the result back through the UI queue.
 
 ## Phase 7.5 — finger-tracked crossover
 
+**A drag is pixels, not lifecycle.** A card preview is a shell-owned image. It
+must never start, resume, pause, or destroy a Brookesia app. The outgoing app is
+the only live app until the finger lifts past the commit threshold. See
+`PHASE_7_5_PREVIEW_LIFECYCLE.md`; it is the authority for this phase, and
+`DESIGN.md` §5 is the authority for the interaction it serves.
+
 The crossover uses an app-area-clipped overlay on `lv_layer_top()`. The outgoing
-app is captured at direction lock and remains visually stationary. A single
-incoming card moves 1:1 with horizontal touch distance; the outgoing/current app
-remains live and full-resolution underneath, while the incoming half-resolution RGB565 pane is
-enlarged to the card area during motion and comes from the bounded neighbour cache when that card has previously
-been visited. An unvisited neighbour immediately shows a shell-rendered card face
-with its launcher icon and app name while its real app is prepared at direction
-lock. The destination is captured and attached behind the overlay as soon as the
-drag begins; 10% controls only the live crossover commit. Never use a blank black
-pane for this state.
+app is captured at direction lock and stays visually stationary. A single incoming
+card moves 1:1 with horizontal touch distance, drawing a half-resolution RGB565
+preview enlarged to the card area.
 
-The state machine is `Idle` -> `Dragging` -> `Settling`. Crossing 10% of the app
-width commits the already-prepared destination without the Phase 6 snap/fade. Release at or beyond
-10% animates the card to full width; release below 10% restores the original app
-when necessary and animates the card off-screen. The overlay blocks input through
-the 250 ms settle and is clipped to the app visual area, so neither drag nor shadow
-can cover the indicator bar.
+There is one threshold, and it is tested on release:
 
-Pane ownership stays bounded: the active drag owns one outgoing capture, and the
-cache retains only the current card's immediate neighbours. A neighbour is
-prepared only for an active edge drag, never speculatively while the app is idle.
+```cpp
+constexpr uint32_t kCrossoverCommitPercent = 50;  // of app-area width
+```
+
+10% is **not** a threshold. Earlier revisions prepared the destination there, which
+meant an app was constructed by a drag the user had not finished. Passing 10% now
+does nothing beyond moving the card. Do not reintroduce a mid-drag preparation
+percentage; if a preview is missing at 10%, the fix is a better cache or the
+identity card, never an early `start_card()`.
+
+The state machine stays `Idle` -> `Dragging` -> `Settling`.
+
+| Event | Visual | Lifecycle |
+|---|---|---|
+| Direction lock | build overlay, outgoing capture, target preview | none |
+| Drag, any distance | card follows finger | **none** |
+| Release below 50% | card animates back off-screen | **none** |
+| Release at/above 50% | card animates to full width and is painted | `start_card()` once, a frame later |
+
+The commit runs in three stages, each separated by one painted frame. Finishing
+the animation is not the same as showing it: an `lv_anim` ready callback fires
+inside `lv_timer_handler` *before* the refresh, so at that moment the card sits at
+full width in the object tree and has not reached the panel. Doing the switch there
+costs the user the final frame and makes the slide look like it overlaps the
+switch. Each stage therefore hands off through a one-shot `lv_timer` of
+`kCommitStageMs`:
+
+1. `schedule_card_commit()` — anim ready. Yields so the full-width card is flushed.
+2. `card_commit_cb()` — sends the start event behind the card: A `onPause()` →
+   A `onDestroy()` → B `onCreate()` → B `onResume()`.
+3. `card_reveal_cb()` — the target has had a frame to draw, so the overlay goes.
+
+The shell never invokes an app's hooks by hand; it sends the start event and lets
+the manager dispatch. `max_running_num = 1`, so there is no state in which two
+apps are live.
+
+Downscaling the outgoing capture and writing it to storage is the heaviest work in
+the gesture, so it is a fourth deferred stage (`preview_persist_cb()`) rather than
+part of teardown. Run inline, it stalls the destination's first frame. The pending
+full-resolution buffer is owned by `s_pending_preview` between stages and freed
+there.
+
+Do not collapse these stages back into one callback. If the slide starts feeling
+like it runs in parallel with the switch, a stage boundary has been removed.
+
+A cancelled drag deletes the overlay and nothing else. It needs no repair step:
+because nothing was started, there is nothing to restore. If you find yourself
+writing a `start_card(original_index)` in the cancel path, the drag started an app
+it should not have.
+
+The overlay blocks input through the 250 ms settle and is clipped to the app
+visual area, so neither the card nor its shadow can cover the status bar. Keep it
+in place across a committed transition — it is what hides the target's
+construction — and delete it only once the target is live and resumed.
+
+## Phase 7.5 — preview repository
+
+Previews belong to `crystal_shell`, keyed by **stable app ID** — not by card index.
+Indices shift when apps are installed or uninstalled; a preview keyed by index
+shows the user the wrong app's picture after a registry change.
+
+```text
+in-memory neighbour cache  ->  /spiffs/crystal_preview_<stable-app-id>.bin  ->  identity card
+```
+
+Resolution order is strict, and the third entry is not optional. A missing,
+truncated, or unreadable preview file must fall through to the shell-rendered
+identity card — launcher icon plus app name, which `begin_card_transition()`
+already builds. A blank or black card is a bug, not a fallback.
+
+`CrystalState` is for small values. Image blobs go to the filesystem; do not push
+~103 KiB of RGB565 through NVS.
+
+Two capture points, both on an app that is already live:
+
+- after its first stable frame, so the current card is immediately cacheable;
+- on the `onPause()` path, while its LVGL tree still exists — this is the last
+  moment a real preview can be taken before Brookesia destroys the app.
+
+Never instantiate an app to populate the cache. A never-visited app correctly
+shows its identity card until the user has actually opened it once. Capture the
+app area only, downscale to the established preview size, and free the temporary
+full-resolution buffer in the same call — `capture_app_preview()` does this, and
+it is the pattern to follow.
+
+Cache retention stays bounded to the current card's immediate neighbours
+(`prune_pane_cache()`). RAM is the cache; the filesystem is the record.
 
 ## Phase 8 — quick settings
 
@@ -827,3 +906,6 @@ lv_img_set_src(icon, "S:/assets/clock/icon.bin");   // not LV_IMG_DECLARE
   partition.
 - Every hardware access goes through `hal()`, which is what keeps the simulator
   viable.
+- Gestures move pixels. Only a completed gesture changes app lifecycle, and it
+  does so through Brookesia — `start_card()` is the single entry point, and it is
+  never called from a drag in progress.

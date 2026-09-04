@@ -175,6 +175,12 @@ service also implements a 30-second dim and 60-second backlight-off
 policy with ramped brightness and touch activity restoration. Swallowing the
 first wake touch remains assigned to the Phase 6 gesture arbiter.
 
+**Brightness stability follow-up (2026-09-05):** Direct hardware observation
+at 0%, 1%, 3%, and 5% for 30 seconds per level was stable. The underlying
+energy-saver low-level brightness behavior remains unresolved and is deferred;
+no production brightness floor or wake-path experiment is retained. The
+temporary diagnostic sequence was removed, and the `Off` target remains 0%.
+
 - UI event queue: `crystal_ui_post()` from any task, drained by an `lv_timer` on
   the LVGL task so handlers already hold the lock
 - `crystal_service` task, low priority, core 0: RTC reads, brightness ramp,
@@ -482,13 +488,14 @@ deadline when time is valid and a monotonic uptime deadline otherwise. Both keep
 counting across app destruction; only the wall-clock form is persisted, so the
 documented reset-after-reboot behavior is preserved for an unsynchronised device.
 
-### Phase 7.5 — Required visual crossover (10% commit threshold)
+### Phase 7.5 — Required 50% visual crossover
 
 Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
 Phase 7's gesture arbiter. The incoming preview follows the edge drag while the
-outgoing app remains stationary. Prepare the destination at direction lock; 10%
-of the app width is the live commit threshold. Construct it behind the
-preview and transfer touch only when its live content is ready. Release before
+outgoing app remains stationary. The destination is preview-only during dragging;
+10% has no lifecycle effect, and 50% remains the live commit threshold on release.
+After a qualifying release, complete the card cover animation, then construct it
+behind the preview and transfer touch only when its live content is ready. Release before
 the threshold cancels; release after it completes the switch.
 
 Start from the Phase 6 tear-free path: retain two RGB framebuffers, avoid-tear
@@ -497,7 +504,7 @@ to avoid invalidating the full screen on every touch sample; the Phase 6.5
 91-106ms render measurement is the blocking performance problem, not permission
 to remove the interaction.
 
-Exit: the card tracks the finger, both sides of the 10% threshold behave as
+Exit: the card tracks the finger, both sides of the 50% threshold behave as
 specified, touch ownership transfers without leaking events, the status bar is
 never covered, and physical-panel testing shows no obvious tearing.
 
@@ -505,19 +512,22 @@ never covered, and physical-panel testing shows no obvious tearing.
 idle/dragging/settling crossover state machine. A full-resolution outgoing
 app-area snapshot remains stationary while one rounded incoming half-resolution
 card follows the finger 1:1 and is enlarged to the card area. At direction lock,
-the destination is prepared and its fresh downscaled app-area capture is attached
-behind the opaque panes (or an existing cached preview is reused). The 50% point
-is only the commit threshold. Release uses 10% of the app area's
+the destination preview is attached from the shell cache or identity fallback;
+no target app is created. The 50% point is the commit threshold evaluated on
+release. The card reaches full app-area coverage before `start_card()` runs; the
+cover remains in place during lifecycle work. Release uses 50% of the app area's
 width as the commit threshold and a 250 ms ease-out for both commit and
 cancel. The transition root clips all drawing below the status bar and blocks
 input until settle completes. Cached RGB565 panes are pruned to immediate
-neighbours; while a fresh destination capture is prepared, its neutral card face
-with launcher icon and app name provides the non-black fallback. The one-resident-
-app lifecycle is restored on cancellation and committed only after 10%.
+neighbours; committed outgoing panes are downscaled and persisted under stable
+app IDs in `/spiffs`, while a missing preview uses the neutral card face with
+launcher icon and app name. The one-resident-app lifecycle is unchanged during
+cancellation and is committed only after release at or beyond 50%.
 
-Compilation and physical-panel validation remain open. The build invocation was
-blocked by the command approval service before ESP-IDF ran, so no compiler result
-is recorded yet.
+Compilation and physical-panel validation passed. State Test persistence was
+initially blocked by the SPIFFS 32-character object-name limit on its temporary
+filename; shortening that temporary name fixed the save path. App-only flashing
+preserves the runtime preview files. Phase 7.5 is closed.
 
 ### Phase 8 — Quick settings
 
