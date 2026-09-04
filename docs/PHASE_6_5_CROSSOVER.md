@@ -239,10 +239,11 @@ pattern at `esp_brookesia_core_manager.cpp:329-381`: temporarily overwrite
 restore the coords. `lv_snapshot.c:119-129` renders through a fake display, so this
 works on an object that is not the active screen.
 
-Store panes at **exactly the size they will be drawn** — the app area, full
-resolution. Then `zoom` stays at `LV_IMG_ZOOM_NONE` (256) and LVGL does an
-untransformed RGB565 copy rather than an antialiased affine transform. That
-distinction is most of the per-frame cost.
+The production Phase 7.5 implementation stores panes at half app resolution and
+enlarges them during motion. This quarters cache memory at the cost of a softer
+moving preview; the settled destination is live content. Full-resolution panes
+remain the higher-quality option if later measurements justify their memory and
+render cost.
 
 Reuse `downscale_crop()` from `crystal_shell.cpp` only if you decide panes should be
 stored at reduced resolution (§8). For full-size panes no scaling is needed at all.
@@ -356,7 +357,14 @@ arithmetic, not measurement.
   failed gate here does not create one — `DESIGN.md` §5 is the design authority and
   requires the crossover. A gate failure defers it and names the blocking cost.
 
-## 11. Hardware result
+## 11. Current shell tuning
+
+The production card shell now prepares the destination preview at direction lock,
+so rendering is not gated on crossover progress. For hardware tuning, the live
+commit threshold is currently 10% of the app-area width; the 50% value remains in
+the historical design discussion above.
+
+## 12. Hardware result
 
 Steps 0 and 1 ran on the Waveshare board on 2026-09-04.
 

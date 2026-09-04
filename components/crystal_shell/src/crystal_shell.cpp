@@ -24,6 +24,7 @@ constexpr int kTopBand = 20;
 // 480x440 app area produces a 240x220 snapshot (~103 KiB).
 constexpr uint32_t kSnapshotCropPercent = 90;
 constexpr uint32_t kSnapshotScaleDivisor = 2;
+constexpr uint32_t kCrossoverCommitPercent = 10;
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
 constexpr char kCurrentCardKey[] = "shell.card";
@@ -69,6 +70,18 @@ std::vector<CardPane> s_pane_cache;
 CardTransition s_card_transition;
 
 bool start_card(size_t index, bool animate = true);
+lv_img_dsc_t *downscale_crop(const lv_img_dsc_t *source, const lv_area_t &crop,
+                             lv_coord_t dest_w, lv_coord_t dest_h);
+
+bool crossover_commit_reached(lv_coord_t progress, lv_coord_t width)
+{
+    if (width <= 0) {
+        return false;
+    }
+    const lv_coord_t threshold = LV_MAX(1, static_cast<lv_coord_t>(
+        (static_cast<int32_t>(width) * kCrossoverCommitPercent) / 100));
+    return progress >= threshold;
+}
 
 bool os_owns_gesture()
 {
@@ -168,7 +181,7 @@ lv_area_t active_app_area()
                      static_cast<lv_coord_t>(lv_disp_get_ver_res(nullptr) - 1)};
 }
 
-lv_img_dsc_t *capture_app_area()
+lv_img_dsc_t *capture_app_area_full()
 {
     lv_img_dsc_t *screen = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
     if (screen == nullptr || screen->header.w == 0 || screen->header.h == 0) {
@@ -207,7 +220,30 @@ lv_img_dsc_t *capture_app_area()
                static_cast<size_t>(width) * sizeof(lv_color_t));
     }
     lv_snapshot_free(screen);
+
     return pane;
+}
+
+lv_img_dsc_t *capture_app_preview()
+{
+    lv_img_dsc_t *pane = capture_app_area_full();
+    if (pane == nullptr) {
+        return nullptr;
+    }
+
+    const lv_coord_t width = pane->header.w;
+    const lv_coord_t height = pane->header.h;
+    // Store incoming previews at half app resolution. They are enlarged only
+    // while the card is moving, keeping the steady-state cache near one quarter
+    // the bytes of a full-resolution app-area capture.
+    const lv_coord_t preview_w = LV_MAX(1, static_cast<lv_coord_t>(width / 2));
+    const lv_coord_t preview_h = LV_MAX(1, static_cast<lv_coord_t>(height / 2));
+    const lv_area_t source_area = {0, 0,
+                                   static_cast<lv_coord_t>(width - 1),
+                                   static_cast<lv_coord_t>(height - 1)};
+    lv_img_dsc_t *preview = downscale_crop(pane, source_area, preview_w, preview_h);
+    lv_img_buf_free(pane);
+    return preview;
 }
 
 void replace_cached_pane(size_t index, lv_img_dsc_t *image)
@@ -495,7 +531,7 @@ void finish_card_transition(lv_anim_t *)
     if (transition.root != nullptr) {
         lv_obj_del(transition.root);
     }
-    if (committed && original_index < s_pane_cache.size()) {
+    if (committed && transition.outgoing != nullptr && original_index < s_pane_cache.size()) {
         replace_cached_pane(original_index, transition.outgoing);
         transition.outgoing = nullptr;
     }
@@ -521,11 +557,16 @@ bool attach_incoming_image(lv_img_dsc_t *pane)
         if (transition.incoming_image == nullptr) {
             return false;
         }
-        lv_obj_set_pos(transition.incoming_image, 0, 0);
         lv_obj_clear_flag(transition.incoming_image,
                           LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     }
     lv_img_set_src(transition.incoming_image, pane);
+    const uint32_t zoom_x = (static_cast<uint32_t>(transition.width) * 256u + pane->header.w - 1) /
+                            pane->header.w;
+    const uint32_t zoom_y = (static_cast<uint32_t>(lv_obj_get_height(transition.incoming_card)) * 256u +
+                             pane->header.h - 1) / pane->header.h;
+    lv_img_set_zoom(transition.incoming_image, static_cast<uint16_t>(LV_MAX(zoom_x, zoom_y)));
+    lv_obj_center(transition.incoming_image);
     return true;
 }
 
@@ -541,7 +582,7 @@ bool prepare_transition_destination()
     }
 
     transition.destination_live = true;
-    lv_img_dsc_t *fresh = capture_app_area();
+    lv_img_dsc_t *fresh = capture_app_preview();
     if (fresh != nullptr && transition.target_index < s_pane_cache.size()) {
         lv_img_dsc_t *old = s_pane_cache[transition.target_index].image;
         s_pane_cache[transition.target_index].image = fresh;
@@ -550,8 +591,9 @@ bool prepare_transition_destination()
             lv_img_buf_free(old);
         }
     }
-    ESP_LOGI(TAG, "card crossover reached 50%%; destination %u is live",
-             static_cast<unsigned>(transition.target_index + 1));
+    ESP_LOGI(TAG, "card crossover destination %u prepared (commit at %u%%)",
+             static_cast<unsigned>(transition.target_index + 1),
+             static_cast<unsigned>(kCrossoverCommitPercent));
     return true;
 }
 
@@ -581,7 +623,7 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     const lv_area_t app_area = active_app_area();
     const lv_coord_t width = lv_area_get_width(&app_area);
     const lv_coord_t height = lv_area_get_height(&app_area);
-    lv_img_dsc_t *outgoing = capture_app_area();
+    lv_img_dsc_t *outgoing = capture_app_area_full();
     if (outgoing == nullptr || width <= 0 || height <= 0) {
         if (outgoing != nullptr) {
             lv_img_buf_free(outgoing);
@@ -609,8 +651,14 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
         lv_img_buf_free(outgoing);
         return false;
     }
+
     lv_img_set_src(outgoing_image, outgoing);
-    lv_obj_set_pos(outgoing_image, 0, 0);
+    const uint32_t outgoing_zoom_x = (static_cast<uint32_t>(width) * 256u + outgoing->header.w - 1) /
+                                     outgoing->header.w;
+    const uint32_t outgoing_zoom_y = (static_cast<uint32_t>(height) * 256u + outgoing->header.h - 1) /
+                                     outgoing->header.h;
+    lv_img_set_zoom(outgoing_image, static_cast<uint16_t>(LV_MAX(outgoing_zoom_x, outgoing_zoom_y)));
+    lv_obj_center(outgoing_image);
     lv_obj_clear_flag(outgoing_image, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_set_size(incoming_card, width, height);
@@ -664,6 +712,11 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
 
     const int dx = info.stop_x - info.start_x;
     set_transition_progress(nullptr, direction > 0 ? dx : -dx);
+    // Prepare the neighbor as soon as the edge drag starts.  The outgoing
+    // pane above remains stationary, so destination startup/capture cannot
+    // expose a blank or partially rendered screen.  Fifty percent is only
+    // the commit threshold; it must not gate preview rendering.
+    (void)prepare_transition_destination();
     ESP_LOGI(TAG, "card crossover started: %u -> %u, PSRAM free=%u",
              static_cast<unsigned>(s_current_index + 1),
              static_cast<unsigned>(target_index + 1),
@@ -679,9 +732,6 @@ void update_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     }
     const int dx = info.stop_x - info.start_x;
     set_transition_progress(nullptr, transition.direction > 0 ? dx : -dx);
-    if (!transition.destination_live && transition.progress * 2 >= transition.width) {
-        (void)prepare_transition_destination();
-    }
 }
 
 void settle_card_transition(bool commit)
@@ -809,7 +859,8 @@ void on_gesture_release(lv_event_t *event)
 
     if (s_card_transition.phase == CardTransitionPhase::Dragging) {
         update_card_transition(*info);
-        settle_card_transition(s_card_transition.progress * 2 >= s_card_transition.width);
+        settle_card_transition(crossover_commit_reached(s_card_transition.progress,
+                                                        s_card_transition.width));
         return;
     }
 

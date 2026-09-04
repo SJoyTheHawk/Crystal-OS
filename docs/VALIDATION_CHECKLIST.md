@@ -245,14 +245,19 @@ gesture arbitration remains Phase 7.
 Completion gate: passed on the available no-battery hardware. Battery percentage
 accuracy and charging indication remain a deferred hardware follow-up.
 
-## Phase 7.5: 50% visual crossover
+## Phase 7.5: visual crossover (10% commit threshold)
 
 - [ ] The incoming preview follows the finger while the outgoing app is stationary.
-- [ ] A first visit shows the destination identity card immediately, with no blank
-  black pane while the real app is constructed.
-- [ ] Crossing 50% prepares the destination live app behind the preview.
-- [ ] Releasing before 50% cancels without changing the active app.
-- [ ] Releasing after 50% completes the switch and destroys the outgoing app.
+- [ ] The incoming card is created at direction lock, without a blank or blocked
+  frame before the 10% crossover.
+- [ ] A first visit begins preparing the destination preview at drag start; its
+  identity card is the immediate non-black fallback while capture completes.
+- [ ] Visited-app previews use a downscaled app-area image during motion and are
+  enlarged to the card area without covering the status bar.
+- [ ] Crossing 10% commits the already-prepared destination live app behind the
+  preview.
+- [ ] Releasing before 10% cancels without changing the active app.
+- [ ] Releasing after 10% completes the switch and destroys the outgoing app.
 - [ ] Touch transfers only after the destination is live; no event leaks across
   gesture owners.
 - [ ] App-area clipping keeps the preview below the status bar at every offset.

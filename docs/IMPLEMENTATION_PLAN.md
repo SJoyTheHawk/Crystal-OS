@@ -482,11 +482,12 @@ deadline when time is valid and a monotonic uptime deadline otherwise. Both keep
 counting across app destruction; only the wall-clock form is persisted, so the
 documented reset-after-reboot behavior is preserved for an unsynchronised device.
 
-### Phase 7.5 — Required 50% visual crossover
+### Phase 7.5 — Required visual crossover (10% commit threshold)
 
 Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
 Phase 7's gesture arbiter. The incoming preview follows the edge drag while the
-outgoing app remains stationary. At 50%, construct the destination behind the
+outgoing app remains stationary. Prepare the destination at direction lock; 10%
+of the app width is the live commit threshold. Construct it behind the
 preview and transfer touch only when its live content is ready. Release before
 the threshold cancels; release after it completes the switch.
 
@@ -496,21 +497,23 @@ to avoid invalidating the full screen on every touch sample; the Phase 6.5
 91-106ms render measurement is the blocking performance problem, not permission
 to remove the interaction.
 
-Exit: the card tracks the finger, both sides of the 50% threshold behave as
+Exit: the card tracks the finger, both sides of the 10% threshold behave as
 specified, touch ownership transfers without leaking events, the status bar is
 never covered, and physical-panel testing shows no obvious tearing.
 
 **Implementation record (2026-09-04):** The shell now has an explicit
 idle/dragging/settling crossover state machine. A full-resolution outgoing
-app-area snapshot remains stationary while one rounded incoming card follows the
-finger 1:1. At 50%, the destination is created behind the opaque panes and its
-fresh app-area capture replaces any cached preview. Release uses the app area's
-half-width as the commit threshold and a 250 ms ease-out for both commit and
+app-area snapshot remains stationary while one rounded incoming half-resolution
+card follows the finger 1:1 and is enlarged to the card area. At direction lock,
+the destination is prepared and its fresh downscaled app-area capture is attached
+behind the opaque panes (or an existing cached preview is reused). The 50% point
+is only the commit threshold. Release uses 10% of the app area's
+width as the commit threshold and a 250 ms ease-out for both commit and
 cancel. The transition root clips all drawing below the status bar and blocks
 input until settle completes. Cached RGB565 panes are pruned to immediate
-neighbours; an unvisited destination uses an immediate neutral card face with its
-launcher icon and app name until the 50% construction point rather than showing a
-black pane or violating `max_running_num = 1`.
+neighbours; while a fresh destination capture is prepared, its neutral card face
+with launcher icon and app name provides the non-black fallback. The one-resident-
+app lifecycle is restored on cancellation and committed only after 10%.
 
 Compilation and physical-panel validation remain open. The build invocation was
 blocked by the command approval service before ESP-IDF ran, so no compiler result

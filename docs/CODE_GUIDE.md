@@ -629,22 +629,25 @@ seconds and posts the result back through the UI queue.
 
 The crossover uses an app-area-clipped overlay on `lv_layer_top()`. The outgoing
 app is captured at direction lock and remains visually stationary. A single
-incoming card moves 1:1 with horizontal touch distance; its full-resolution
-RGB565 pane comes from the bounded neighbour cache when that card has previously
+incoming card moves 1:1 with horizontal touch distance; the outgoing/current app
+remains live and full-resolution underneath, while the incoming half-resolution RGB565 pane is
+enlarged to the card area during motion and comes from the bounded neighbour cache when that card has previously
 been visited. An unvisited neighbour immediately shows a shell-rendered card face
-with its launcher icon and app name; its real app is created at the 50% crossing
-and captured behind the overlay. Never use a blank black pane for this state.
+with its launcher icon and app name while its real app is prepared at direction
+lock. The destination is captured and attached behind the overlay as soon as the
+drag begins; 10% controls only the live crossover commit. Never use a blank black
+pane for this state.
 
-The state machine is `Idle` -> `Dragging` -> `Settling`. Crossing half the app
-width creates the destination without the Phase 6 snap/fade. Release at or beyond
-half animates the card to full width; release below half restores the original app
+The state machine is `Idle` -> `Dragging` -> `Settling`. Crossing 10% of the app
+width commits the already-prepared destination without the Phase 6 snap/fade. Release at or beyond
+10% animates the card to full width; release below 10% restores the original app
 when necessary and animates the card off-screen. The overlay blocks input through
 the 250 ms settle and is clipped to the app visual area, so neither drag nor shadow
 can cover the indicator bar.
 
 Pane ownership stays bounded: the active drag owns one outgoing capture, and the
-cache retains only the current card's immediate neighbours. Never instantiate a
-neighbour merely to populate the cache.
+cache retains only the current card's immediate neighbours. A neighbour is
+prepared only for an active edge drag, never speculatively while the app is idle.
 
 ## Phase 8 — quick settings
 
