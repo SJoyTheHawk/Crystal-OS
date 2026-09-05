@@ -653,8 +653,10 @@ GET https://api.open-meteo.com/v1/forecast
       &current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m
 ```
 
-- **Location:** no GPS on this board. Lat/long is a Settings › General field.
-  Manual entry is the v1 answer; IP-based geolocation is a later convenience.
+- **Location:** no GPS on this board. Phase 9.5 resolves location once from a
+  keyless IP-geolocation service and caches latitude, longitude, and city in NVS.
+  The precedence is manual Settings › General coordinates (when Phase 11 lands),
+  cached IP result, then the Hong Kong default. The resolved city is displayed.
 - **Refresh:** on app open if the cache is older than 15 minutes, plus a service
   refresh every 30 minutes while WiFi is up. Never per-frame, never on a tight
   timer.
@@ -670,11 +672,9 @@ States: no WiFi → cached reading plus "Offline"; no location set → prompt
 pointing at Settings; fetch failed → keep the cache and show the stale age;
 never-fetched and offline → an empty state, not a spinner.
 
-**Open question — onboard sensor.** "Local temperature and humidity" may mean the
-room, not the region. If the board carries an I2C temp/humidity part, the better
-design is indoor readings from the sensor alongside outdoor from the API, which is
-genuinely more useful than either alone. I could not verify what sensors this
-board has; worth checking the schematic before building.
+The board has no onboard temperature/humidity sensor. Its I2C devices are the
+IMU, camera, RTC, codec, touch controller, and IO expander, so v1 reports the
+outdoor Open-Meteo reading only.
 
 ### Calculator
 

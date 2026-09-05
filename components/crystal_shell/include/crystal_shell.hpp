@@ -2,6 +2,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "crystal_core.hpp"
 
 class ESP_Brookesia_Phone;
 
@@ -22,3 +23,4 @@ void crystal_shell_set_modal_open(bool open);
 
 // Called on the LVGL task when the WiFi adapter posts a state/scan event.
 void crystal_shell_wifi_event(uint8_t event);
+void crystal_shell_weather_event(const CrystalWeatherReading *reading);

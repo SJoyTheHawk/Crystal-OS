@@ -22,6 +22,17 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_TIMER_EXPIRED,
     UI_EVT_BATTERY,
     UI_EVT_TOAST,
+    UI_EVT_WEATHER,
+};
+
+struct CrystalWeatherReading {
+    int16_t temperature_c10;
+    uint8_t humidity;
+    uint8_t weather_code;
+    uint16_t wind_kmh10;
+    int32_t fetched_at;
+    bool success;
+    char city[24];
 };
 
 struct CrystalTimerState {
@@ -33,6 +44,9 @@ struct CrystalTimerState {
 };
 
 bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len = 0);
+void crystal_shell_weather_event(const CrystalWeatherReading *reading);
+// Requests one throttled Open-Meteo fetch on the crystal service task.
+void crystal_weather_request();
 
 // Called by the gesture arbiter on touch-down. Returns true exactly when that
 // touch must wake the display without being delivered as an app interaction.

@@ -1150,7 +1150,125 @@ static void on_network_connected(void *, esp_event_base_t, int32_t, void *)
 Clear `s_sync_in_flight` in `sntp_synced`. Reconnect re-syncs for free, and a
 renewal every few minutes does not become a request storm.
 
-## Phase 9.5 — network fetch off the UI task
+## Phase 9.5 — Weather
+
+The fetch path landed first and works; the app is a placeholder — three labels, no
+icon, no location, hardcoded coordinates. This section is the shape of the rest.
+
+### Provider: Open-Meteo, and the question is closed
+
+`DESIGN.md` §Weather and `IMPLEMENTATION_PLAN.md` §9.5 both decided this, for one
+reason: **weather.com and every other keyed provider requires a secret in
+firmware, and `esptool read_flash` extracts it.** A keyed API means either
+treating the key as public or standing up a proxy server Crystal OS does not
+have. Do not reopen this to gain a nicer icon set or a 7-day forecast.
+
+### Location: resolve it, do not hardcode it
+
+`weather_fetch()` currently carries this, which ships every device set to Hong Kong:
+
+```cpp
+// WRONG — a compiled-in constant is not a location. Every unit reports HK weather.
+double latitude  = 22.3193;
+double longitude = 114.1694;
+```
+
+Three sources, strict precedence, first hit wins:
+
+```text
+manual lat/lon (Settings › General, Phase 11)
+  -> cached IP geolocation result in NVS
+     -> compiled default (HK, matching the Phase 11 default TZ HKT-8)
+```
+
+**IP geolocation is the v1 default, not the later convenience `DESIGN.md`
+assumed.** That line was written when Settings was expected to land first; it did
+not, and shipping 9.5 against a constant is worse than shipping it against a
+city-accurate guess. Manual entry stays the override and remains authoritative
+once Phase 11 exposes the field.
+
+Use a keyless HTTPS endpoint (`ipwho.is`, or `ipapi.co/json`) — the provider
+choice carries the same no-key constraint as the weather API, so verify the free
+tier before wiring one in. Resolve **once**, on the first `CRYSTAL_NETWORK_CONNECTED`
+after boot with no location cached, and persist lat/lon plus the returned city
+name. It is not per-fetch work: the device does not move, and re-resolving on
+every refresh spends a TLS handshake to learn nothing.
+
+Three things IP geolocation gets wrong, all of which the UI must survive:
+CGNAT and mobile carriers can place a device in another city; a VPN places it in
+another country; and the lookup tells a third party this device's IP. City-level
+accuracy is enough for regional weather and is not enough for anything else — do
+not grow this into a general location service.
+
+### Show the resolved location, always
+
+`DESIGN.md`'s mock puts `<location>` bottom-right, and with auto-detection it stops
+being decoration and becomes the only way a user can tell the guess was wrong.
+Show the city name from the geolocation response; fall back to `"22.32, 114.17"`
+formatted coordinates when only numbers are known, and `"Location not set"` when
+nothing resolved. A silently wrong city is a bug report that reads "weather is
+broken".
+
+Tapping it is the natural place for re-detect and manual entry. Ship the label in
+9.5; the affordance can wait for Phase 11 to own the input.
+
+### Icons: procedural, like the clock
+
+There is no SPIFFS asset pipeline yet and `assets/` is empty, so the eight WMO
+glyphs follow `clock_app/src/clock_icon.c` — draw into a static `lv_color_t` map
+once, expose one `lv_img_dsc_t`. Compiling PNG-converted C arrays is what the
+"never compile images in" section below forbids, and it costs ~906KB each.
+
+Eight groups, composed from three primitives (sun disc, cloud blob, precipitation
+dashes) rather than eight independent bitmaps:
+
+| WMO code | Group |
+|---|---|
+| 0 | clear |
+| 1-3 | partly cloudy |
+| 45-48 | fog |
+| 51-57 | drizzle |
+| 61-67, 80-82 | rain |
+| 71-77, 85-86 | snow |
+| 95-99 | thunderstorm |
+| other | unknown |
+
+`condition()` in `weather_app.cpp` already collapses codes to strings, but its
+ranges are wrong at the edges — `code <= 3` catches 2 and 3 as "Partly cloudy"
+where 3 is overcast, and `code <= 48` swallows 4-44 into "Fog". One table, mapping
+code to `{ label, icon }`, keeps the string and the glyph from disagreeing.
+
+The app also needs a launcher icon — `WeatherApp()` passes none, so it renders as
+Brookesia's default. Same procedural pattern, 64x64.
+
+### Widths must match what was written
+
+`CrystalState` is a blob store over `nvs_get_blob`, which happily reads a 2-byte
+blob into a 4-byte buffer and reports `length == 2`. Nothing fails, and the top
+two bytes keep whatever the stack held:
+
+```cpp
+// WRONG — update() wrote int16_t; refresh() reads int32_t. Positive temperatures
+// survive on little-endian by luck; -5.0C reads as a large positive number.
+int32_t temp = 0;
+size_t n = sizeof(temp);
+const bool have = state().get("temp_c10", &temp, &n);
+```
+
+Read into the exact type that was written, and check the length:
+
+```cpp
+int16_t temp = 0;
+size_t n = sizeof(temp);
+const bool have = state().get("temp_c10", &temp, &n) && n == sizeof(temp);
+```
+
+The same mismatch is live on `humid`, `wmo`, and `wind`. The version of this
+section that recommended `state().set_i32(...)` was describing an API
+`CrystalState` does not have — there is `get`/`set` plus `get_u32`/`set_u32`, so a
+typed helper per field is the least error-prone fix.
+
+### The fetch path, unchanged
 
 ```cpp
 // crystal_service task. Never on the LVGL task — TLS blocks for seconds.
@@ -1175,15 +1293,145 @@ static void weather_fetch(void)
 The handler on the LVGL side writes the cache and refreshes labels. Nothing in
 the fetch path touches `lv_*`, which is the whole point.
 
-Cache with its timestamp so the app opens with data rather than a spinner, and so
-staleness is displayable:
+### `perform()` does not leave you a body
+
+This reads correctly and returns an empty buffer every time:
 
 ```cpp
-state().set_i32("temp_c10", reading.temp_c * 10);   // avoid float in NVS
-state().set_i32("humidity", reading.humidity);
-state().set_i32("wmo",      reading.weather_code);
-state().set_i32("fetched",  (int32_t)time(nullptr));  // drives "Updated N min ago"
+// WRONG — read_response() gets 0 bytes, so every parse below it fails.
+if (esp_http_client_perform(client) == ESP_OK &&
+        esp_http_client_get_status_code(client) == 200) {
+    const int length = esp_http_client_read_response(client, buf, sizeof(buf) - 1);
 ```
+
+`esp_http_client_perform()` drains the body itself to satisfy `content_length`,
+and because `response->buffer->output_ptr` is NULL it caches nothing
+(`esp_http_client.c` `http_on_body`: *"Do not cache body when http_on_body is
+called from esp_http_client_perform"*). It then sets `raw_len = 0` and closes the
+connection. The status code is 200 and the buffer is empty, which is why this
+failure looks like a broken API rather than a client bug.
+
+Use the sequence that hands the body over, and loop — one `read` is not
+guaranteed to return everything:
+
+```cpp
+if (esp_http_client_open(client, 0) != ESP_OK) return false;
+const int64_t declared = esp_http_client_fetch_headers(client);   // <0 = chunked
+if (esp_http_client_get_status_code(client) == 200) {
+    int total = 0;
+    while (total < limit) {
+        const int read = esp_http_client_read(client, buf + total, limit - total);
+        if (read <= 0) break;            // 0 = complete, <0 = error
+        total += read;
+    }
+    buf[total] = '\0';
+}
+esp_http_client_close(client);
+```
+
+Both the weather fetch and the geolocation lookup had this bug. It presented as
+"Unable to refresh weather" plus a location that looked correct — the location was
+the compiled Hong Kong fallback, which is indistinguishable from a successful
+resolve for anyone actually in Hong Kong. **A fallback that matches the expected
+answer hides the failure it exists to report.** Log resolved-vs-fallback
+distinctly.
+
+### Geolocation endpoint choice is not free
+
+`ipapi.co` answers **403 with a Cloudflare interstitial** to a device request, so
+it cannot be a fallback. `ip-api.com` gates HTTPS behind a paid plan. `ipwho.is`
+answers 200 without a key.
+
+Ask for only the fields you parse:
+
+```text
+https://ipwho.is/?fields=success,city,latitude,longitude
+```
+
+That trims the body from 957 bytes to ~106. The full response nearly filled the
+1023-byte usable buffer, which would have truncated mid-document the moment the
+provider added a field.
+
+Its JSON is pretty-printed, so a literal `"city":"` never matches:
+
+```cpp
+// WRONG — the body is `"city": "Hong Kong"`. The space defeats the pattern, and
+// %[^"] does not skip leading whitespace the way %lf does.
+sscanf(c, "\"city\":\"%23[^\"]", city);
+```
+
+Find the opening quote, then scan from it. Numbers are more forgiving — `%lf`
+skips the whitespace on its own — but do not rely on the two behaving alike.
+
+### The response parser
+
+The response parser uses `strstr` plus `sscanf` against a 1 KiB static buffer.
+That is acceptable for four known fields in a compact document and is why no JSON
+library is linked — but it must not grow. A forecast array, or anything that can
+exceed 1 KiB, needs a real parser and a chunked read, not a bigger buffer.
+
+Cache with its timestamp so the app opens with data rather than a spinner, and so
+staleness is displayable. Store integers scaled by 10; there are no floats in NVS:
+
+```cpp
+(void)state().set("temp_c10", &reading.temperature_c10, sizeof(reading.temperature_c10));
+(void)state().set("wmo",      &reading.weather_code,    sizeof(reading.weather_code));
+(void)state().set("fetched",  &reading.fetched_at,      sizeof(reading.fetched_at));
+```
+
+### A reading can arrive after the app is gone
+
+`crystal_shell_weather_event()` looks the app up in the registry and calls
+`update()` on it. The instance outlives its LVGL tree — destroy-on-switch means a
+30-minute service refresh routinely lands while the app is `Destroyed` and every
+label pointer is dangling:
+
+```cpp
+// WRONG — the failure branch touches a label before the lifecycle is checked.
+void WeatherApp::update(const CrystalWeatherReading &reading)
+{
+    if (!reading.success) { lv_label_set_text(updated_, "Unable to refresh weather"); return; }
+```
+
+Check liveness first, for every branch. Persisting is always safe; drawing is not:
+
+```cpp
+void WeatherApp::update(const CrystalWeatherReading &reading)
+{
+    pending_ = false;
+    if (reading.success) write_cache(reading);   // safe in any lifecycle state
+    if (lifecycle_state() != LifecycleState::Created &&
+        lifecycle_state() != LifecycleState::Started &&
+        lifecycle_state() != LifecycleState::Resumed) return;
+    reading.success ? refresh() : show_refresh_failure();
+}
+```
+
+`onDestroy()` must null `root_`, `condition_`, `details_`, `updated_`, and
+`icon_`. Brookesia frees the tree; the members are the app's to clear, and
+`refresh()`'s null guard only works if something actually nulls them.
+
+### Layout uses the visual area, not 480x440
+
+```cpp
+lv_obj_set_size(root_, 480, 440);   // WRONG — hardcoded bar height, per Conventions
+```
+
+Use `getVisualArea()` as `clock_app.cpp:55` does. The status bar height is a
+stylesheet value, and 440 is a guess that goes stale silently.
+
+### States, and none of them is a spinner
+
+| Condition | Shows |
+|---|---|
+| Cache present, fresh | reading + "Updated N min ago" |
+| Cache present, offline or fetch failed | same reading, age kept visible |
+| No cache, no WiFi | empty state, pointing at WiFi |
+| No location resolved | prompt, not a HK reading |
+
+Exit criteria for the phase: correct conditions and icon with WiFi up; the
+resolved location visible; a cached reading with a visible age when offline; and
+no `lv_*` call anywhere in the fetch path.
 
 ## Assets: never compile images in
 

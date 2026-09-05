@@ -236,6 +236,7 @@ public:
         (void)esp_wifi_set_storage(WIFI_STORAGE_FLASH);
         (void)esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &DeviceWifi::event_handler, this);
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &DeviceWifi::event_handler, this);
+        (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &DeviceWifi::event_handler, this);
         wifi_config_t saved_config = {};
         const bool have_saved = esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK &&
                                 saved_config.sta.ssid[0] != 0;
@@ -303,6 +304,7 @@ public:
         config.sta.pmf_cfg.capable = true;
         config.sta.pmf_cfg.required = false;
         has_connected_ = false;
+        has_ip_ = false;
         pending_connect_ = false;
         retries_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
@@ -337,6 +339,7 @@ public:
                  verify_err == ESP_OK ? static_cast<unsigned>(strlen(
                      reinterpret_cast<const char *>(verify.sta.ssid))) : 0U);
         has_connected_ = false;
+        has_ip_ = false;
         notify(Disconnected);
     }
 
@@ -345,6 +348,8 @@ public:
         wifi_ap_record_t record = {};
         return started_ && esp_wifi_sta_get_ap_info(&record) == ESP_OK;
     }
+
+    bool has_ip() const override { return has_ip_; }
 
     bool enabled() const override { return enabled_; }
     void set_enabled(bool enabled) override
@@ -382,7 +387,10 @@ private:
         auto *self = static_cast<DeviceWifi *>(arg);
         if (self == nullptr) return;
         if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            self->has_ip_ = true;
             self->notify(GotIp);
+        } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
+            self->has_ip_ = false;
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
             if (self->pending_connect_) {
                 self->pending_connect_ = false;
@@ -393,6 +401,9 @@ private:
                 }
             }
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            // The lease dies with the association, and LOST_IP is not always
+            // delivered on a drop, so clear it here as well.
+            self->has_ip_ = false;
             const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
             const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
             if (disconnected != nullptr) ESP_LOGW(TAG, "WiFi disconnected, reason=%u", reason);
@@ -497,6 +508,9 @@ private:
     Network scan_results_[20] = {};
     size_t scan_count_ = 0;
     bool has_connected_ = false;
+    // Written from the esp_event task, read from the service task, so keep the
+    // compiler from caching it. Single byte, one writer: no lock needed.
+    volatile bool has_ip_ = false;
     volatile bool pending_connect_ = false;
     uint8_t retries_ = 0;
     esp_timer_handle_t retry_timer_ = nullptr;

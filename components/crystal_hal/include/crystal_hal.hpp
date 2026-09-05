@@ -30,7 +30,13 @@ struct IWifi {
     virtual void scan() = 0;
     virtual void connect(const char *ssid, const char *pass) = 0;
     virtual void forget() = 0;
+    // Associated with an AP. True before DHCP completes, so this is the right
+    // question for a status indicator and the wrong one for network I/O.
     virtual bool connected() const = 0;
+    // Associated *and* holding an IP lease. Anything that resolves a hostname
+    // must gate on this: getaddrinfo() fails with EAI_FAIL between association
+    // and GOT_IP, which is a window of roughly a second on a normal join.
+    virtual bool has_ip() const = 0;
     virtual bool enabled() const = 0;
     virtual void set_enabled(bool enabled) = 0;
     virtual const char *last_ssid() const = 0;

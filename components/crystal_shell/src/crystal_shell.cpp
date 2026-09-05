@@ -11,6 +11,7 @@
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_registry.hpp"
+#include "weather_app.hpp"
 #include "esp_brookesia.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -1545,6 +1546,18 @@ void crystal_shell_wifi_event(uint8_t event)
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
     } else if (event == UI_EVT_WIFI_SCAN_DONE) {
         wifi_page_fill_list();
+    }
+}
+
+void crystal_shell_weather_event(const CrystalWeatherReading *reading)
+{
+    if (reading == nullptr) return;
+    for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
+        if (strcmp(crystal_registry_installed_id(i), "weather") == 0) {
+            auto *weather = static_cast<WeatherApp *>(crystal_registry_installed_app(i));
+            if (weather != nullptr) weather->update(*reading);
+            break;
+        }
     }
 }
 

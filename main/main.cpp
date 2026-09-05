@@ -14,6 +14,7 @@
 #include "hello_app.hpp"
 #include "state_test_app.hpp"
 #include "clock_app.hpp"
+#include "weather_app.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
@@ -27,11 +28,13 @@ static int64_t s_boot_start_us;
 static CrystalApp *make_hello_app() { return new HelloApp(); }
 static CrystalApp *make_state_test_app() { return new StateTestApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
+static CrystalApp *make_weather_app() { return new WeatherApp(); }
 
 static const CrystalAppEntry kApps[] = {
     {"hello", make_hello_app, true, 0},
     {"state_test", make_state_test_app, true, 1},
     {"clock", make_clock_app, true, 2},
+    {"weather", make_weather_app, true, 3},
 };
 
 static void update_status_clock(void *context, int hour, int minute, bool is_pm)
