@@ -541,9 +541,15 @@ Exit: released past half-open completes the animation; releasing short of it
 returns; app switching is locked while the panel is active.
 
 Shipped and validated on hardware as a full-screen overlay. Phase 8.5 supersedes
-its layout, trigger zone, and background.
+its layout, trigger zone, and background. Phase 8 is closed; see the completed
+Phase 8.5 entry below for the final implementation.
 
 ### Phase 8.5 — Corner-anchored quick panel
+
+**Status — closed (2026-09-05).** Implemented and validated on hardware,
+including persistence for brightness, volume, and Energy Saving; timeout dimming
+and wake restoration; corner gesture handling; tap-outside dismissal; and
+panel cleanup.
 
 Replaces the full-screen overlay with a 306x306 panel hanging from the top-right
 corner, laid out on a 4x4 grid of 62px cells. The app beneath stays fully visible

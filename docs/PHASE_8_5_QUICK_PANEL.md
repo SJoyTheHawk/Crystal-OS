@@ -305,6 +305,6 @@ Phase 11, and the whole WiFi flow in §6.
 
 ## Status
 
-Specified, not yet implemented. `DESIGN.md`, `IMPLEMENTATION_PLAN.md`, and
-`CODE_GUIDE.md` are aligned to this spec.
-
+Implemented and validated on hardware (2026-09-05). Phase 8.5 is closed.
+Brightness and volume persistence, Energy Saving timeout behavior, wake
+brightness restoration, gesture arbitration, and panel cleanup are included.

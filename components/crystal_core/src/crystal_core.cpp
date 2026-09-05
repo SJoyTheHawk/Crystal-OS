@@ -55,6 +55,26 @@ std::atomic<uint32_t> s_timer_duration{0};
 std::atomic<uint32_t> s_timer_paused_remaining{0};
 std::atomic_bool s_stopwatch_running{false};
 
+bool energy_saving_enabled()
+{
+    if (hal().storage == nullptr) return false;
+    uint8_t value = 0;
+    size_t length = sizeof(value);
+    return hal().storage->get("power.saving", &value, &length) &&
+           length == sizeof(value) && value != 0;
+}
+
+uint8_t saved_brightness()
+{
+    uint8_t value = kFullBrightness;
+    size_t length = sizeof(value);
+    if (hal().storage != nullptr && hal().storage->get("brightness", &value, &length) &&
+            length == sizeof(value)) {
+        return value > kFullBrightness ? kFullBrightness : value;
+    }
+    return value;
+}
+
 void hide_toast(lv_timer_t *)
 {
     if (s_toast != nullptr) {
@@ -200,8 +220,10 @@ void check_power_state(lv_timer_t *)
     if (s_display == nullptr || s_service_task == nullptr) return;
     const uint32_t inactive_ms = lv_disp_get_inactive_time(s_display);
     PowerState requested = PowerState::Full;
-    if (inactive_ms >= kOffTimeoutMs) requested = PowerState::Off;
-    else if (inactive_ms >= kDimTimeoutMs) requested = PowerState::Dim;
+    if (energy_saving_enabled()) {
+        if (inactive_ms >= kOffTimeoutMs) requested = PowerState::Off;
+        else if (inactive_ms >= kDimTimeoutMs) requested = PowerState::Dim;
+    }
     if (requested != s_power_state) {
         s_power_state = requested;
         xTaskNotify(s_service_task, static_cast<uint32_t>(requested), eSetValueWithOverwrite);
@@ -268,7 +290,7 @@ void service_task(void *)
     for (;;) {
         uint32_t command = 0;
         if (xTaskNotifyWait(0, UINT32_MAX, &command, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (command == static_cast<uint32_t>(PowerState::Full)) ramp_brightness(kFullBrightness);
+            if (command == static_cast<uint32_t>(PowerState::Full)) ramp_brightness(saved_brightness());
             else if (command == static_cast<uint32_t>(PowerState::Dim)) ramp_brightness(kDimBrightness);
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
         }
