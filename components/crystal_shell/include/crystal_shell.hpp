@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 
+#include <stdint.h>
+
 class ESP_Brookesia_Phone;
 
 enum class CrystalGestureOwner {
@@ -17,3 +19,6 @@ void crystal_shell_set_quick_settings_open(bool open);
 void crystal_shell_set_keyboard_open(bool open);
 void crystal_shell_set_settings_open(bool open);
 void crystal_shell_set_modal_open(bool open);
+
+// Called on the LVGL task when the WiFi adapter posts a state/scan event.
+void crystal_shell_wifi_event(uint8_t event);

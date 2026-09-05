@@ -28,13 +28,22 @@ public:
 
 class MockWifi final : public IWifi {
 public:
+    void set_event_callback(EventCallback callback, void *context) override { callback_ = callback; context_ = context; }
     void start() override { started_ = true; }
     void scan() override {}
     void connect(const char *, const char *) override { connected_ = started_; }
+    void forget() override { connected_ = false; }
     bool connected() const override { return connected_; }
+    bool enabled() const override { return started_; }
+    void set_enabled(bool enabled) override { started_ = enabled; if (!enabled) connected_ = false; }
+    const char *last_ssid() const override { return ssid_; }
+    size_t scan_results(Network *, size_t) const override { return 0; }
 private:
     bool started_ = false;
     bool connected_ = false;
+    EventCallback callback_ = nullptr;
+    void *context_ = nullptr;
+    char ssid_[33] = {};
 };
 
 class MockStorage final : public IStorage {

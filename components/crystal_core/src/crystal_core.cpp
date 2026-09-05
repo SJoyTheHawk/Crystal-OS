@@ -10,13 +10,17 @@
 
 #include "crystal_hal.hpp"
 #include "esp_err.h"
+#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "lvgl.h"
+
+extern void crystal_shell_wifi_event(uint8_t event);
 
 namespace {
 constexpr size_t kQueueDepth = 12;
@@ -49,11 +53,17 @@ crystal_battery_update_cb_t s_battery_update = nullptr;
 void *s_status_context = nullptr;
 PowerState s_power_state = PowerState::Full;
 std::atomic_bool s_time_valid{false};
+std::atomic_bool s_sntp_initialized{false};
+std::atomic_bool s_sntp_sync_started{false};
+esp_event_handler_instance_t s_network_handler = nullptr;
 std::atomic<int64_t> s_timer_end_at{0};
 std::atomic<int64_t> s_timer_deadline_us{0};
 std::atomic<uint32_t> s_timer_duration{0};
 std::atomic<uint32_t> s_timer_paused_remaining{0};
 std::atomic_bool s_stopwatch_running{false};
+
+void update_connectivity(lv_timer_t *timer);
+void sntp_synced(struct timeval *tv);
 
 bool energy_saving_enabled()
 {
@@ -164,7 +174,14 @@ void drain_event_queue(lv_timer_t *)
     if (s_queue == nullptr) return;
     EventMessage message;
     while (xQueueReceive(s_queue, &message, 0) == pdTRUE) {
-        if (message.type == UI_EVT_TOAST) {
+        if (message.type == UI_EVT_WIFI_GOT_IP || message.type == UI_EVT_WIFI_DISCONNECTED ||
+                message.type == UI_EVT_WIFI_SCAN_DONE || message.type == UI_EVT_WIFI_CONNECT_FAILED ||
+                message.type == UI_EVT_WIFI_CONNECTING) {
+            if (message.type == UI_EVT_WIFI_GOT_IP) show_toast("Connected to WiFi");
+            else if (message.type == UI_EVT_WIFI_CONNECT_FAILED) show_toast("Failed to connect to WiFi network");
+            crystal_shell_wifi_event(static_cast<uint8_t>(message.type));
+            update_connectivity(nullptr);
+        } else if (message.type == UI_EVT_TOAST) {
             char text[kEventDataMax + 1] = {};
             memcpy(text, message.data, message.length);
             show_toast(text);
@@ -202,6 +219,45 @@ void update_connectivity(lv_timer_t *)
     if (s_connectivity_update != nullptr && hal().wifi != nullptr) {
         s_connectivity_update(s_status_context, hal().wifi->connected());
     }
+}
+
+void wifi_event(IWifi::Event event, void *)
+{
+    if (event == IWifi::GotIp) {
+        const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
+                                             nullptr, 0, 0);
+        if (err != ESP_OK) ESP_LOGW(TAG, "network connected signal dropped: %s", esp_err_to_name(err));
+    } else if (event == IWifi::Disconnected || event == IWifi::ConnectFailed) {
+        s_sntp_sync_started = false;
+        const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_DISCONNECTED,
+                                             nullptr, 0, 0);
+        if (err != ESP_OK) ESP_LOGW(TAG, "network disconnected signal dropped: %s", esp_err_to_name(err));
+    }
+    crystal_evt_t ui_event = UI_EVT_WIFI_DISCONNECTED;
+    if (event == IWifi::GotIp) ui_event = UI_EVT_WIFI_GOT_IP;
+    else if (event == IWifi::ScanDone) ui_event = UI_EVT_WIFI_SCAN_DONE;
+    else if (event == IWifi::ConnectFailed) ui_event = UI_EVT_WIFI_CONNECT_FAILED;
+    else if (event == IWifi::Connecting) ui_event = UI_EVT_WIFI_CONNECTING;
+    (void)crystal_ui_post(ui_event);
+}
+
+void network_signal_handler(void *, esp_event_base_t, int32_t id, void *)
+{
+    if (id != CRYSTAL_NETWORK_CONNECTED || s_sntp_sync_started) return;
+    if (!s_sntp_initialized.load()) {
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        config.start = false;
+        config.sync_cb = sntp_synced;
+        const esp_err_t err = esp_netif_sntp_init(&config);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "SNTP initialization failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_sntp_initialized.store(true);
+    }
+    const esp_err_t err = esp_netif_sntp_start();
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) s_sntp_sync_started = true;
+    else ESP_LOGW(TAG, "SNTP start failed: %s", esp_err_to_name(err));
 }
 
 void update_timer_indicator(lv_timer_t *)
@@ -262,17 +318,8 @@ void sntp_synced(struct timeval *tv)
         }
     }
     s_time_valid.store(true);
+    s_sntp_sync_started = false;
     (void)crystal_ui_post(UI_EVT_TIME_SYNCED);
-}
-
-void start_sntp()
-{
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-    config.sync_cb = sntp_synced;
-    const esp_err_t err = esp_netif_sntp_init(&config);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(TAG, "SNTP initialization failed: %s", esp_err_to_name(err));
-    }
 }
 
 void service_task(void *)
@@ -282,8 +329,12 @@ void service_task(void *)
     (void)crystal_ui_post(UI_EVT_TOAST, kReadyMessage, sizeof(kReadyMessage) - 1);
 
     if (hal().wifi != nullptr) {
+        hal().wifi->set_event_callback(wifi_event, nullptr);
+        (void)esp_netif_init();
+        (void)esp_event_loop_create_default();
+        (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
+                                                  network_signal_handler, nullptr, &s_network_handler);
         hal().wifi->start();
-        start_sntp();
     }
 
     TickType_t last_battery_poll = 0;
@@ -323,6 +374,8 @@ void service_task(void *)
     }
 }
 } // namespace
+
+ESP_EVENT_DEFINE_BASE(CRYSTAL_NETWORK_EVENT);
 
 void crystal_time_init()
 {

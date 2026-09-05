@@ -21,11 +21,20 @@ struct IRtc {
 };
 
 struct IWifi {
+    enum Event : uint8_t { GotIp, Disconnected, ScanDone, ConnectFailed, Connecting };
+    struct Network { char ssid[33]; int8_t rssi; bool secured; };
+    using EventCallback = void (*)(Event event, void *context);
     virtual ~IWifi() = default;
+    virtual void set_event_callback(EventCallback callback, void *context) = 0;
     virtual void start() = 0;
     virtual void scan() = 0;
     virtual void connect(const char *ssid, const char *pass) = 0;
+    virtual void forget() = 0;
     virtual bool connected() const = 0;
+    virtual bool enabled() const = 0;
+    virtual void set_enabled(bool enabled) = 0;
+    virtual const char *last_ssid() const = 0;
+    virtual size_t scan_results(Network *out, size_t capacity) const = 0;
 };
 
 struct IStorage {

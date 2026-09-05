@@ -874,6 +874,282 @@ static void service_tick_1s(void)
 Paused state stores remaining seconds plus a flag rather than an end time, since
 there is no end instant while paused.
 
+## Phase 9 — WiFi scan results and the page
+
+The `esp_event` task has a 2304-byte stack (`CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE`).
+`wifi_ap_record_t` is ~110 bytes, so this overflows it and corrupts memory:
+
+```cpp
+// WRONG — ~2.2 KiB on a 2304-byte stack. Crashes on every scan completion.
+static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    wifi_ap_record_t records[20] = {};
+    esp_wifi_scan_get_ap_records(&fetch, records);
+}
+```
+
+Keep the buffer out of the handler frame. The adapter already needs the parsed
+results to outlive the callback anyway:
+
+```cpp
+// Adapter member, not a local. The handler fills it and posts a bare event;
+// the UI task reads it back through scan_results().
+static wifi_ap_record_t s_records[kMaxNetworks];   // file scope
+
+static void event_handler(void *arg, esp_event_base_t, int32_t id, void *)
+{
+    auto *self = static_cast<DeviceWifi *>(arg);
+    uint16_t fetch = kMaxNetworks;
+    if (esp_wifi_scan_get_ap_records(&fetch, s_records) != ESP_OK) {
+        self->notify(ScanDone);                    // still notify; empty list
+        return;
+    }
+    // parse s_records into self->scan_results_, sort by RSSI, then:
+    self->notify(ScanDone);
+}
+```
+
+The same rule applies to anything else that runs on that task. Nothing large is
+declared in an `esp_event` handler frame.
+
+### The WiFi page, not an inline list
+
+Long-press closes quick settings first and opens a page. The two must not overlap
+— the panel is destroyed before the page is built, so the page never has a
+translating ancestor and never inherits `QUICK_SETTINGS` ownership:
+
+```cpp
+lv_obj_add_event_cb(s_quick_wifi, [](lv_event_t *) {
+    close_quick_settings(/*animate=*/true, /*then=*/wifi_page_open);
+}, LV_EVENT_LONG_PRESSED, nullptr);
+```
+
+`wifi_page_open` runs from the close animation's ready callback, so it starts
+with no gesture owner held. It sets the same suppression flag the settings page
+uses (`crystal_shell_set_settings_open(true)`), which already blocks the
+pull-down and app switching.
+
+Scan results arrive asynchronously, so the page must tolerate opening before any
+results exist, and a scan completing after it closed:
+
+```cpp
+void crystal_shell_wifi_event(uint8_t event)
+{
+    if (event == UI_EVT_WIFI_SCAN_DONE) {
+        if (s_wifi_page == nullptr) return;   // page closed mid-scan; drop it
+        wifi_page_fill_list();
+    }
+}
+```
+
+That null check is the whole defence. The previous version rebuilt a list
+parented to `s_quick_panel`, which could already be freed by a dismiss gesture.
+
+Password entry ships before Phase 10's keyboard overlay, so the dialog creates a
+plain `lv_keyboard` and deletes it with itself. Phase 10 swaps in the shell
+overlay; the dialog must not assume it owns the keyboard's lifetime.
+
+## Phase 9.1 — deriving WiFi state, not remembering it
+
+Every WiFi surface is built lazily and the event stream is silent while an
+association is stable. A widget whose constructor hardcodes state is therefore
+wrong for as long as it lives:
+
+```cpp
+// WRONG — the panel is built on first open, ~2.5 s after boot. If the network
+// came up before that, this text is already false and no event is coming.
+s_quick_wifi = tile(LV_SYMBOL_WIFI "\nWiFi\nOn\nNot Connected", ...);
+if (hal().wifi != nullptr && hal().wifi->enabled()) {
+    lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);   // enabled != connected
+}
+```
+
+One formatter, called from both the constructor and the event handler. Build-time
+and event-time must not be able to disagree:
+
+```cpp
+static void wifi_tile_text(char *out, size_t size)
+{
+    IWifi *wifi = hal().wifi;
+    if (wifi == nullptr || !wifi->enabled())  strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nOff", size);
+    else if (wifi->connected())               snprintf(out, size, LV_SYMBOL_WIFI "\nWiFi\n%.32s", wifi->last_ssid());
+    else                                      strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nOn\nNot Connected", size);
+}
+```
+
+The rule generalises past this tile: a lazily built widget reads the HAL, it does
+not trust that it saw the event.
+
+### Glyphs must be in the linked font
+
+```cpp
+// WRONG — U+2713 is not in Montserrat's ASCII + FontAwesome subset. Renders
+// as a missing-glyph box, silently, with no build warning.
+const char *tick = connected ? "✓ " : "";
+```
+
+Use the FontAwesome names from `lv_symbol_def.h`; those are the glyphs actually
+compiled in. `LV_SYMBOL_OK` is `0xF00C`:
+
+```cpp
+const char *tick = connected ? LV_SYMBOL_OK " " : "";
+```
+
+### Attempted is not connected
+
+`s_wifi_connecting` holds the last *attempted* SSID. A tick driven off it marks a
+network you failed to join, because nothing clears it on the terminal events:
+
+```cpp
+// WRONG — survives ConnectFailed and Disconnected. Reads as success.
+strcmp(networks[i].ssid, s_wifi_connecting) == 0 ? LV_SYMBOL_OK " " : ""
+```
+
+A tick means connected, so ask what is connected. Both the tick and the row
+highlight use the one predicate:
+
+```cpp
+const char *joined = (wifi != nullptr && wifi->connected()) ? wifi->last_ssid() : "";
+const bool is_joined = strcmp(networks[i].ssid, joined) == 0;
+```
+
+Keep `s_wifi_connecting` for an in-progress affordance, distinct from the tick,
+and clear it on both `ConnectFailed` and `Disconnected`.
+
+### Forgetting has an order
+
+`esp_wifi_disconnect()` does not forget anything — `WIFI_STORAGE_FLASH` keeps the
+credentials and `start()` reconnects next boot. And the retry timer added for
+transient `AUTH_EXPIRE` will fight you:
+
+```cpp
+// WRONG — disconnect fires the handler, which sees last_ssid_ still set and
+// schedules a reconnect to the network being forgotten.
+void forget() override
+{
+    esp_wifi_disconnect();
+    last_ssid_[0] = '\0';
+}
+```
+
+Disarm the retry path before causing the disconnect it watches for, and write a
+zeroed config to erase the NVS copy:
+
+```cpp
+void forget() override
+{
+    if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+    retries_ = 0;
+    last_ssid_[0] = '\0';          // before disconnect: the retry branch gates on this
+    (void)esp_wifi_disconnect();
+    wifi_config_t empty = {};
+    (void)esp_wifi_set_config(WIFI_IF_STA, &empty);   // this is what forgets
+    notify(Disconnected);
+}
+```
+
+### Publish signals on the default event loop
+
+Crystal OS consumes `WIFI_EVENT` and `IP_EVENT` already; publishing its own
+signals needs a base, not new machinery:
+
+```cpp
+// crystal_core.hpp
+ESP_EVENT_DECLARE_BASE(CRYSTAL_NETWORK_EVENT);
+enum { CRYSTAL_NETWORK_CONNECTED, CRYSTAL_NETWORK_DISCONNECTED };
+
+// crystal_core.cpp
+ESP_EVENT_DEFINE_BASE(CRYSTAL_NETWORK_EVENT);
+```
+
+Post from `wifi_event()` before the UI post, and check the result — the queue is
+32 deep (`CONFIG_ESP_SYSTEM_EVENT_QUEUE_SIZE`) and posting can fail:
+
+```cpp
+const int32_t id = (event == IWifi::GotIp) ? CRYSTAL_NETWORK_CONNECTED
+                                           : CRYSTAL_NETWORK_DISCONNECTED;
+const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, id, nullptr, 0, 0);
+if (err != ESP_OK) ESP_LOGW(TAG, "network signal dropped: %s", esp_err_to_name(err));
+```
+
+Subscribers run on the same 2304-byte event task as the Phase 9 scan handler, so
+the same rule applies: dispatch work, do not do it. No blocking, no deep frames,
+no `lv_*`. Handler order across subscribers is unspecified — no subscriber may
+depend on another having run.
+
+### A destroyed app must unregister
+
+Apps are destroyed on switch. A handler left registered points into freed memory
+and the next post calls through it:
+
+```cpp
+// WRONG — Android's leaked-receiver bug with no GC to soften it. The next
+// CONNECTED post is a wild jump, and it will not reproduce on the bench.
+bool onCreate() override
+{
+    esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, ESP_EVENT_ANY_ID,
+                                        &on_network, this, nullptr);
+    return true;
+}
+```
+
+Store the instance handle and unregister symmetrically, unconditionally:
+
+```cpp
+bool onCreate() override
+{
+    return esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, ESP_EVENT_ANY_ID,
+                                               &on_network, this, &network_handler_) == ESP_OK;
+}
+bool onDestroy() override
+{
+    if (network_handler_ != nullptr) {
+        (void)esp_event_handler_instance_unregister_with(
+            nullptr, CRYSTAL_NETWORK_EVENT, ESP_EVENT_ANY_ID, network_handler_);
+        network_handler_ = nullptr;
+    }
+    return true;
+}
+```
+
+Better still, do not subscribe from an app when the work is not an app's. Time
+sync outlives every app, so it subscribes once from `crystal_core_init()` and
+never unregisters; the Clock app keeps consuming `UI_EVT_TIME_SYNCED` on the UI
+task. An app subscribing directly also means the feature only works while that
+app happens to be resident.
+
+### SNTP starts on the signal, not at boot
+
+```cpp
+// WRONG — start() is non-blocking, so this runs with no interface up. The
+// default config has start = true, so the one request goes nowhere and there
+// is no interface-up retry. sync_cb never fires.
+hal().wifi->start();
+start_sntp();
+```
+
+Separate init from start, and let the signal drive it:
+
+```cpp
+static void on_network_connected(void *, esp_event_base_t, int32_t, void *)
+{
+    if (!s_sntp_inited) {
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        config.start   = false;               // so init and start are separable
+        config.sync_cb = sntp_synced;
+        if (esp_netif_sntp_init(&config) != ESP_OK) return;
+        s_sntp_inited = true;
+    }
+    if (!s_sync_in_flight) {                  // GotIp also fires on DHCP renewal
+        s_sync_in_flight = true;
+        (void)esp_netif_sntp_start();
+    }
+}
+```
+
+Clear `s_sync_in_flight` in `sntp_synced`. Reconnect re-syncs for free, and a
+renewal every few minutes does not become a request storm.
+
 ## Phase 9.5 — network fetch off the UI task
 
 ```cpp

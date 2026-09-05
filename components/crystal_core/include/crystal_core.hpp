@@ -4,12 +4,20 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
+#include "esp_event.h"
+
+ESP_EVENT_DECLARE_BASE(CRYSTAL_NETWORK_EVENT);
+enum crystal_network_event_id_t {
+    CRYSTAL_NETWORK_CONNECTED,
+    CRYSTAL_NETWORK_DISCONNECTED,
+};
 
 enum crystal_evt_t : uint8_t {
     UI_EVT_WIFI_GOT_IP,
     UI_EVT_WIFI_DISCONNECTED,
     UI_EVT_WIFI_SCAN_DONE,
     UI_EVT_WIFI_CONNECT_FAILED,
+    UI_EVT_WIFI_CONNECTING,
     UI_EVT_TIME_SYNCED,
     UI_EVT_TIMER_EXPIRED,
     UI_EVT_BATTERY,

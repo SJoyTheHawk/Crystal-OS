@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "bsp/display.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
@@ -31,6 +32,9 @@ constexpr uint8_t kAxp2101Address = 0x34;
 constexpr uint32_t kAlarmSampleRate = 22050;
 constexpr float kPi = 3.14159265358979323846f;
 static const char *TAG = "crystal_hal";
+constexpr size_t kWifiMaxNetworks = 20;
+// This buffer is used by the esp_event task; keep it out of that task's stack.
+wifi_ap_record_t s_wifi_records[kWifiMaxNetworks] = {};
 
 static uint8_t bcd_to_bin(uint8_t value) { return static_cast<uint8_t>((value >> 4) * 10 + (value & 0x0f)); }
 static uint8_t bin_to_bcd(uint8_t value) { return static_cast<uint8_t>((value / 10) << 4 | (value % 10)); }
@@ -199,6 +203,12 @@ private:
 
 class DeviceWifi final : public IWifi {
 public:
+    void set_event_callback(EventCallback callback, void *context) override
+    {
+        callback_ = callback;
+        callback_context_ = context;
+    }
+
     void start() override
     {
         if (started_) {
@@ -220,14 +230,43 @@ public:
 
         wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
         if (esp_wifi_init(&init_config) != ESP_OK ||
-            esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
-            esp_wifi_start() != ESP_OK) {
+            esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) {
+            return;
+        }
+        (void)esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+        (void)esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &DeviceWifi::event_handler, this);
+        (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &DeviceWifi::event_handler, this);
+        wifi_config_t saved_config = {};
+        const bool have_saved = esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK &&
+                                saved_config.sta.ssid[0] != 0;
+        if (have_saved) {
+            // The config comes back from flash and may have been written by an
+            // older build with a too-strict threshold, or pinned to a channel and
+            // BSSID the AP has since moved off. Reset the routing fields so the
+            // connect attempt does a full scan under a sane security floor.
+            saved_config.sta.threshold.authmode =
+                saved_config.sta.password[0] == '\0' ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_PSK;
+            saved_config.sta.bssid_set = false;
+            saved_config.sta.channel = 0;
+            saved_config.sta.pmf_cfg.capable = true;
+            saved_config.sta.pmf_cfg.required = false;
+            (void)esp_wifi_set_config(WIFI_IF_STA, &saved_config);
+        }
+        // Arm the deferred connect before starting: WIFI_EVENT_STA_START can be
+        // dispatched from inside esp_wifi_start().
+        pending_connect_ = have_saved;
+        if (esp_wifi_start() != ESP_OK) {
+            pending_connect_ = false;
             return;
         }
         started_ = true;
-        wifi_config_t saved_config = {};
-        if (esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK && saved_config.sta.ssid[0] != 0) {
-            (void)esp_wifi_connect();
+        if (have_saved) {
+            strlcpy(last_ssid_, reinterpret_cast<const char *>(saved_config.sta.ssid), sizeof(last_ssid_));
+            notify(Connecting);
+        } else {
+            // The radio is enabled even when no remembered network exists.
+            // Notify the UI so the tile uses the enabled/disconnected color.
+            notify(Disconnected);
         }
     }
 
@@ -236,6 +275,13 @@ public:
         if (started_) {
             (void)esp_wifi_scan_start(nullptr, false);
         }
+    }
+
+    size_t scan_results(Network *out, size_t capacity) const override
+    {
+        const size_t count = scan_count_ < capacity ? scan_count_ : capacity;
+        if (out != nullptr && count != 0) memcpy(out, scan_results_, count * sizeof(Network));
+        return scan_count_;
     }
 
     void connect(const char *ssid, const char *pass) override
@@ -247,9 +293,45 @@ public:
         wifi_config_t config = {};
         strlcpy(reinterpret_cast<char *>(config.sta.ssid), ssid, sizeof(config.sta.ssid));
         strlcpy(reinterpret_cast<char *>(config.sta.password), pass, sizeof(config.sta.password));
+        config.sta.bssid_set = false;
+        config.sta.channel = 0;
+        // threshold.authmode is the *minimum* acceptable AP security. The enum is
+        // ordered OPEN < WEP < WPA_PSK < WPA2_PSK < WPA_WPA2_PSK < ... < WPA3_PSK,
+        // so anything above WPA_PSK silently filters out ordinary WPA2 routers and
+        // the driver loops on "Haven't to connect to a suitable AP now!".
+        config.sta.threshold.authmode = pass[0] == '\0' ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_PSK;
+        config.sta.pmf_cfg.capable = true;
+        config.sta.pmf_cfg.required = false;
+        has_connected_ = false;
+        pending_connect_ = false;
+        retries_ = 0;
+        if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+        // Cancel any in-flight scan; esp_wifi_connect() fails while one is running.
+        (void)esp_wifi_scan_stop();
+        (void)esp_wifi_disconnect();
         if (esp_wifi_set_config(WIFI_IF_STA, &config) == ESP_OK) {
-            (void)esp_wifi_connect();
+            strlcpy(last_ssid_, ssid, sizeof(last_ssid_));
+            notify(Connecting);
+            const esp_err_t err = esp_wifi_connect();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+                notify(ConnectFailed);
+            }
         }
+    }
+
+    void forget() override
+    {
+        if (!started_) return;
+        pending_connect_ = false;
+        retries_ = 0;
+        if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+        last_ssid_[0] = '\0';
+        (void)esp_wifi_disconnect();
+        wifi_config_t empty = {};
+        (void)esp_wifi_set_config(WIFI_IF_STA, &empty);
+        has_connected_ = false;
+        notify(Disconnected);
     }
 
     bool connected() const override
@@ -258,9 +340,156 @@ public:
         return started_ && esp_wifi_sta_get_ap_info(&record) == ESP_OK;
     }
 
+    bool enabled() const override { return enabled_; }
+    void set_enabled(bool enabled) override
+    {
+        if (!started_ || enabled == enabled_) return;
+        enabled_ = enabled;
+        retries_ = 0;
+        if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+        if (enabled_) {
+            // Connect from WIFI_EVENT_STA_START, not here: right after
+            // esp_wifi_start() the station is not yet up and connect() returns
+            // ESP_ERR_WIFI_STATE.
+            pending_connect_ = last_ssid_[0] != 0;
+            if (esp_wifi_start() != ESP_OK) {
+                pending_connect_ = false;
+                notify(Disconnected);
+                return;
+            }
+            notify(pending_connect_ ? Connecting : Disconnected);
+        } else {
+            pending_connect_ = false;
+            (void)esp_wifi_disconnect(); (void)esp_wifi_stop(); notify(Disconnected);
+        }
+    }
+    const char *last_ssid() const override { return last_ssid_; }
+
 private:
+    static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+    {
+        auto *self = static_cast<DeviceWifi *>(arg);
+        if (self == nullptr) return;
+        if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            self->notify(GotIp);
+        } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+            if (self->pending_connect_) {
+                self->pending_connect_ = false;
+                const esp_err_t err = esp_wifi_connect();
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+                    self->notify(ConnectFailed);
+                }
+            }
+        } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
+            const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
+            if (disconnected != nullptr) ESP_LOGW(TAG, "WiFi disconnected, reason=%u", reason);
+            // AUTH_EXPIRE / handshake timeouts are routinely transient, especially
+            // on the first attempt after boot while the panel and PSRAM are still
+            // settling. Retry a few times before telling the UI it failed.
+            if (self->enabled_ && self->last_ssid_[0] != 0 && reason != WIFI_REASON_AUTH_FAIL &&
+                reason != WIFI_REASON_NO_AP_FOUND && self->retries_ < kMaxRetries) {
+                ++self->retries_;
+                ESP_LOGW(TAG, "Retrying connect (%u/%u)", self->retries_, kMaxRetries);
+                self->schedule_retry();
+                self->notify(Connecting);
+                return;
+            }
+            self->retries_ = 0;
+            self->notify(self->has_connected_ ? Disconnected : ConnectFailed);
+        } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+            uint16_t count = 0;
+            if (esp_wifi_scan_get_ap_num(&count) != ESP_OK) { self->notify(ScanDone); return; }
+            uint16_t fetch = count < 20 ? count : 20;
+            if (esp_wifi_scan_get_ap_records(&fetch, s_wifi_records) == ESP_OK) {
+                self->scan_count_ = 0;
+                for (uint16_t i = 0; i < fetch && self->scan_count_ < 20; ++i) {
+                    const char *ssid = reinterpret_cast<const char *>(s_wifi_records[i].ssid);
+                    bool duplicate = false;
+                    for (size_t existing = 0; existing < self->scan_count_; ++existing) {
+                        if (strcmp(self->scan_results_[existing].ssid, ssid) == 0) { duplicate = true; break; }
+                    }
+                    if (duplicate || ssid[0] == '\0') continue;
+                    Network &network = self->scan_results_[self->scan_count_++];
+                    strlcpy(network.ssid, ssid, sizeof(network.ssid));
+                    network.rssi = s_wifi_records[i].rssi;
+                    network.secured = s_wifi_records[i].authmode != WIFI_AUTH_OPEN;
+                }
+                for (size_t i = 1; i < self->scan_count_; ++i) {
+                    Network current = self->scan_results_[i];
+                    size_t j = i;
+                    while (j > 0 && self->scan_results_[j - 1].rssi < current.rssi) {
+                        self->scan_results_[j] = self->scan_results_[j - 1]; --j;
+                    }
+                    self->scan_results_[j] = current;
+                }
+                wifi_ap_record_t connected_ap = {};
+                if (esp_wifi_sta_get_ap_info(&connected_ap) == ESP_OK) {
+                    const char *connected_ssid = reinterpret_cast<const char *>(connected_ap.ssid);
+                    for (size_t i = 0; i < self->scan_count_; ++i) {
+                        if (strcmp(self->scan_results_[i].ssid, connected_ssid) == 0 && i != 0) {
+                            Network connected = self->scan_results_[i];
+                            memmove(&self->scan_results_[1], &self->scan_results_[0], i * sizeof(Network));
+                            self->scan_results_[0] = connected;
+                            break;
+                        }
+                    }
+                }
+            }
+            self->notify(ScanDone);
+        }
+        (void)data;
+    }
+    // Reconnect off the event-loop task: esp_wifi_connect() from inside the
+    // disconnect handler re-enters the driver while it is still tearing the
+    // previous association down.
+    void schedule_retry()
+    {
+        if (retry_timer_ == nullptr) {
+            const esp_timer_create_args_t args = {
+                .callback = &DeviceWifi::retry_cb,
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "wifi_retry",
+                .skip_unhandled_events = true,
+            };
+            if (esp_timer_create(&args, &retry_timer_) != ESP_OK) return;
+        }
+        (void)esp_timer_stop(retry_timer_);
+        // Linear backoff: 1s, 2s, 3s ...
+        (void)esp_timer_start_once(retry_timer_, static_cast<uint64_t>(retries_) * 1000000ULL);
+    }
+
+    static void retry_cb(void *arg)
+    {
+        auto *self = static_cast<DeviceWifi *>(arg);
+        if (self == nullptr || !self->enabled_ || !self->started_) return;
+        const esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Retry esp_wifi_connect failed: %s", esp_err_to_name(err));
+            self->notify(ConnectFailed);
+        }
+    }
+
+    void notify(Event event)
+    {
+        if (event == GotIp) { has_connected_ = true; retries_ = 0; }
+        if (callback_ != nullptr) callback_(event, callback_context_);
+    }
+    static constexpr uint8_t kMaxRetries = 5;
     esp_netif_t *netif_ = nullptr;
     bool started_ = false;
+    bool enabled_ = true;
+    EventCallback callback_ = nullptr;
+    void *callback_context_ = nullptr;
+    Network scan_results_[20] = {};
+    size_t scan_count_ = 0;
+    bool has_connected_ = false;
+    volatile bool pending_connect_ = false;
+    uint8_t retries_ = 0;
+    esp_timer_handle_t retry_timer_ = nullptr;
+    char last_ssid_[33] = {};
 };
 
 class Axp2101Power final : public IPower {

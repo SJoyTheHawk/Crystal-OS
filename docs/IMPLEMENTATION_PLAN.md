@@ -585,13 +585,35 @@ Non-blocking, off the boot path. `esp_wifi_start()` plus auto-connect from NVS
 returns immediately; the bar shows disconnected until `IP_EVENT_STA_GOT_IP`
 arrives on the UI queue.
 
-Long-press the WiFi button expands SSIDs sorted by RSSI, connected one pinned
-first. Pick → credential dialog → on success dismiss the whole stack to the app
-and toast; on failure, a dialog. Enable `CONFIG_NVS_ENCRYPTION` with the
-`nvs_keys` partition — credentials are otherwise plaintext.
+**Scan buffers never live on the event task stack.** `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE`
+is 2304 bytes and `wifi_ap_record_t` is ~110 bytes, so a 20-record array declared
+inside the `esp_event` handler overflows it and corrupts memory on every scan
+completion. Keep the record array as a file-scope static in the WiFi adapter and
+copy out of it under the adapter's own lock. This was a real crash during the
+first Phase 9 attempt, not a theoretical concern.
 
-Exit: first frame is not delayed by WiFi; credentials survive reboot; WPA3 works
-(`ESP_WIFI_ENABLE_WPA3_SAE` is already on).
+Long-press the WiFi tile opens a **full-screen WiFi page**, not an inline list.
+Quick settings closes first, then the page animates in. The page owns a
+full-width scrollable SSID list sorted by RSSI, connected network pinned first,
+and a back button. Pick → credential dialog → on success close the page, return
+to the app underneath, toast; on failure, keep the page open and toast the
+failure. Enable `CONFIG_NVS_ENCRYPTION` with the `nvs_keys` partition —
+credentials are otherwise plaintext.
+
+The page replaces the earlier inline-expansion design because that stacked a
+scrollable list, a modal, and async scan results inside a panel that is itself
+animating and owns a gesture. See §6 of `DESIGN.md`.
+
+Phase 11's Settings › Network reuses this page rather than building a second SSID
+list.
+
+Password entry lands before Phase 10's keyboard overlay, so Phase 9 uses a plain
+`lv_keyboard` parented to the dialog. Phase 10 replaces it with the shell overlay
+and its viewport rebinding; the dialog must not assume it owns the keyboard.
+
+Exit: first frame is not delayed by WiFi; a completed scan does not crash;
+credentials survive reboot; WPA3 works (`ESP_WIFI_ENABLE_WPA3_SAE` is already on);
+back from the page returns to the app that was running, not the launcher.
 
 ### Phase 9.5 — Weather app
 

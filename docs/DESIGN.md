@@ -119,8 +119,8 @@ Every screen in the system.
 | App content | launcher, app switch | per-app |
 | App switcher cards | edge drag | transient overlay |
 | Quick settings | top-right corner pull | corner overlay |
-| WiFi SSID list | long-press WiFi in quick settings | expanding inline list |
-| WiFi credential dialog | pick an SSID | modal |
+| WiFi page | long-press WiFi in quick settings; Settings › Network | full-screen page |
+| WiFi credential dialog | pick an SSID on the WiFi page | modal |
 | Settings root | gear in quick settings | app |
 | Settings › Network | settings root | sub-page |
 | Settings › Power | settings root | sub-page |
@@ -140,8 +140,8 @@ travel, and holds it until lift.
 | Drag down | top band ≤20px, **right 120px only** | `QUICK_SETTINGS` | pull panel |
 | Drag up | anywhere, panel open | `QUICK_SETTINGS` | dismiss panel |
 | Tap | outside panel, panel open | `QUICK_SETTINGS` | dismiss panel |
-| Long press | quick settings WiFi button | — | expand SSID list |
-| Drag vertical | SSID list | `APP` (list scrolls) | scroll SSIDs |
+| Long press | quick settings WiFi button | — | close panel, open WiFi page |
+| Drag vertical | WiFi page SSID list | `APP` (list scrolls) | scroll SSIDs |
 | Any other | anywhere | `APP` | passed through |
 
 Constants: `kLockThreshold = 12`, `kEdgeBand = 24`, `kTopBand = 20`,
@@ -424,8 +424,8 @@ hardcoded. Full geometry and rationale in `PHASE_8_5_QUICK_PANEL.md`.
   colour alone cannot distinguish them.
 - **Gear:** opens Settings and dismisses the panel.
 - **Reserved cells:** the two grid cells beside the gear stay empty until a real
-  control needs them (Phase 9's SSID expansion first). No filler tile may be added
-  to square off the panel.
+  control needs them. Phase 9 no longer claims them — WiFi expands into its own
+  page, not into the panel. No filler tile may be added to square off the panel.
 
 State presentation rule for the whole panel: colour carries binary state; any
 control with more than two states also carries text. WiFi has at least four
@@ -442,19 +442,49 @@ control with more than two states also carries text. WiFi has at least four
 
 ### WiFi flow
 
-Long-press (500ms) the WiFi button → the tile expands into an inline scrollable
-SSID list, sorted by RSSI descending, with the connected network pinned first.
-When nothing is connected, pure RSSI order.
+Long-press (500ms) the WiFi tile → quick settings closes completely → a
+full-screen **WiFi page** opens. The tile does not expand in place.
+
+The page is a normal full-screen page over the app area, below the indicator bar.
+It holds a title, a back button, and a full-width scrollable SSID list sorted by
+RSSI descending with the connected network pinned first. When nothing is
+connected, pure RSSI order. Rows show SSID, a signal glyph, and a lock glyph when
+secured.
 
 ```
-pick SSID → SSID list collapses → credential dialog (keyboard auto-opens)
-   ├─ success → dismiss dialog + panel + list, return to app, toast
-   │            "Connected to <SSID>", bar icon turns active
-   └─ failure → dialog: "Failed to connect to WiFi network", stay in flow
+long-press WiFi tile
+   |
+   +-> quick settings animates closed, gesture ownership released
+   |
+   +-> WiFi page opens, scan starts, list shows "Scanning..." until results
+         |
+         +-> tap a row -> credential dialog (keyboard opens)
+         |     |
+         |     +- success -> close dialog, close page, return to the app that
+         |     |             was running, toast "Connected to <SSID>",
+         |     |             bar icon turns active
+         |     +- failure -> close dialog, stay on the page,
+         |                   toast "Failed to connect to WiFi network"
+         |
+         +-> back -> close page, return to the app that was running
 ```
+
+**Why a page and not an inline list.** The inline version stacked a scrollable
+list, a modal, and asynchronously arriving scan results inside a panel that is
+simultaneously animating and holding `QUICK_SETTINGS` gesture ownership. Nested
+scroll inside a translating parent, and a modal whose parent can be destroyed by
+a dismiss gesture, are both avoidable. The page owns its own area, scrolls
+normally, and has one clear exit.
+
+Ownership: while the WiFi page is open the quick-settings pull-down is
+unavailable and app switching is suppressed, same as `s_settings_open`. Back is
+the only exit besides a successful connect.
 
 Outcomes are toasts; input is dialogs. That split is why the toast layer is built
-before WiFi.
+before WiFi. Failure is a toast on the page rather than a stacked dialog, so
+there is never a dialog over a dialog.
+
+Settings › Network opens the same page. There is one SSID list in the system.
 
 Known networks reconnect without a prompt. Saved credentials live in
 NVS-encrypted storage (`nvs_keys` partition) — plaintext otherwise.
