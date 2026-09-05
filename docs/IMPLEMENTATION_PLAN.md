@@ -612,13 +612,14 @@ Password entry lands before Phase 10's keyboard overlay, so Phase 9 uses a plain
 and its viewport rebinding; the dialog must not assume it owns the keyboard.
 
 Exit: first frame is not delayed by WiFi; a completed scan does not crash;
-credentials survive reboot; WPA3 works (`ESP_WIFI_ENABLE_WPA3_SAE` is already on);
-back from the page returns to the app that was running, not the launcher.
+credentials survive reboot; back from the page returns to the app that was
+running, not the launcher. WPA3 interoperability is outside this phase's
+verification scope.
 
 **Status — closed (2026-09-06).** The Phase 9 WiFi page, asynchronous scan,
-credential flow, connection feedback, persistence, and WPA3 path were validated
-on hardware. WPA2-only interoperability remains untested and is retained as a
-follow-up verification item, not a Phase 9 implementation blocker.
+credential flow, connection feedback, persistence, and WPA2 connection path were
+validated on hardware. WPA3 interoperability is outside Phase 9's verification
+scope.
 
 ### Phase 9.5 — Weather app
 

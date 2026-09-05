@@ -329,7 +329,13 @@ public:
         last_ssid_[0] = '\0';
         (void)esp_wifi_disconnect();
         wifi_config_t empty = {};
-        (void)esp_wifi_set_config(WIFI_IF_STA, &empty);
+        const esp_err_t config_err = esp_wifi_set_config(WIFI_IF_STA, &empty);
+        wifi_config_t verify = {};
+        const esp_err_t verify_err = esp_wifi_get_config(WIFI_IF_STA, &verify);
+        ESP_LOGI(TAG, "forgot WiFi credentials: set=%s, verify=%s, ssid_length=%u",
+                 esp_err_to_name(config_err), esp_err_to_name(verify_err),
+                 verify_err == ESP_OK ? static_cast<unsigned>(strlen(
+                     reinterpret_cast<const char *>(verify.sta.ssid))) : 0U);
         has_connected_ = false;
         notify(Disconnected);
     }

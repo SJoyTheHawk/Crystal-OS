@@ -224,11 +224,14 @@ void update_connectivity(lv_timer_t *)
 void wifi_event(IWifi::Event event, void *)
 {
     if (event == IWifi::GotIp) {
+        ESP_LOGI(TAG, "publishing network connected signal");
         const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
                                              nullptr, 0, 0);
         if (err != ESP_OK) ESP_LOGW(TAG, "network connected signal dropped: %s", esp_err_to_name(err));
     } else if (event == IWifi::Disconnected || event == IWifi::ConnectFailed) {
         s_sntp_sync_started = false;
+        ESP_LOGI(TAG, "publishing network disconnected signal (%s)",
+                 event == IWifi::ConnectFailed ? "connect failed" : "disconnected");
         const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_DISCONNECTED,
                                              nullptr, 0, 0);
         if (err != ESP_OK) ESP_LOGW(TAG, "network disconnected signal dropped: %s", esp_err_to_name(err));
@@ -244,6 +247,7 @@ void wifi_event(IWifi::Event event, void *)
 void network_signal_handler(void *, esp_event_base_t, int32_t id, void *)
 {
     if (id != CRYSTAL_NETWORK_CONNECTED || s_sntp_sync_started) return;
+    ESP_LOGI(TAG, "network connected signal received; starting SNTP");
     if (!s_sntp_initialized.load()) {
         esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
         config.start = false;
@@ -256,7 +260,10 @@ void network_signal_handler(void *, esp_event_base_t, int32_t id, void *)
         s_sntp_initialized.store(true);
     }
     const esp_err_t err = esp_netif_sntp_start();
-    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) s_sntp_sync_started = true;
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        s_sntp_sync_started = true;
+        ESP_LOGI(TAG, "SNTP request started");
+    }
     else ESP_LOGW(TAG, "SNTP start failed: %s", esp_err_to_name(err));
 }
 
@@ -319,6 +326,7 @@ void sntp_synced(struct timeval *tv)
     }
     s_time_valid.store(true);
     s_sntp_sync_started = false;
+    ESP_LOGI(TAG, "SNTP synchronized system clock and RTC");
     (void)crystal_ui_post(UI_EVT_TIME_SYNCED);
 }
 

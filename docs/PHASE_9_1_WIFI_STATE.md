@@ -277,6 +277,12 @@ Confirm with `esp_wifi_get_config()` after `forget()` and assert `ssid[0] == 0`.
 
 ## Deferred
 
+**Status — closed (2026-09-06).** Quick Settings state, connected-row marking,
+forget/NVS clearing, connectivity signals, and SNTP synchronization were
+validated on hardware. The event-task LVGL constraint was verified by code
+inspection: network callbacks only publish events, while LVGL updates run in
+the UI queue-drain callback.
+
 **Signal strength on the tile.** `wifi_ap_record_t.rssi` is available from
 `esp_wifi_sta_get_ap_info()` and the quick panel has the reserved cells for it
 (see PHASE_8_5_QUICK_PANEL.md). Not in this add-on — it needs a poll, and this
