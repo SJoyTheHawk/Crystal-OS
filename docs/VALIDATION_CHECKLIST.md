@@ -226,7 +226,9 @@ gesture arbitration remains Phase 7.
   owner, claimed at the 12px direction lock and reset only on release.
 - [x] Brookesia's eager edge mask is disabled; Crystal raises the full-screen input
   mask only for an OS-owned gesture.
-- [x] Left/right edge bands are 24px and the quick-settings arm band is 20px.
+- [x] Left/right edge bands are 24px and the quick-settings arm band is 20px tall.
+- [ ] Phase 8.5: the arm band is also bounded to the right 120px, so a top-band
+  drag at left or centre reaches the app.
 - [x] Quick-settings, keyboard, Settings, and modal lock APIs are present for their
   owning phases to drive.
 - [x] The off-screen wake touch is masked until release.

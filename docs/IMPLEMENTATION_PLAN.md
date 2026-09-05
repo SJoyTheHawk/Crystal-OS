@@ -540,6 +540,39 @@ disabled. Power-saving toggle per Phase 11.
 Exit: released past half-open completes the animation; releasing short of it
 returns; app switching is locked while the panel is active.
 
+Shipped and validated on hardware as a full-screen overlay. Phase 8.5 supersedes
+its layout, trigger zone, and background.
+
+### Phase 8.5 — Corner-anchored quick panel
+
+Replaces the full-screen overlay with a 306x306 panel hanging from the top-right
+corner, laid out on a 4x4 grid of 62px cells. The app beneath stays fully visible
+and undimmed; the snapshot background is removed entirely, which drops ~880 KiB of
+transient allocation and a box-average downscale from every open and lets the
+opaque panel body draw through LVGL's solid-fill path.
+
+The open trigger narrows to the top 20px band within the right 120px
+(`kQuickCornerWidth`), so the rest of the top band returns to the app. Dismissal
+adds tap-outside via a transparent full-screen catcher, attached only after the
+open animation completes — otherwise the pull gesture's own release dismisses the
+panel on the same touch. Panel motion stays translate-only; animating opacity
+would composite the subtree through an intermediate buffer.
+
+`lv_switch` is replaced by tiles whose background colour is their state, using
+`LV_STATE_CHECKED`. Colour carries binary state; text remains on any control with
+more than two states, because off and unavailable both render dim — a colour-only
+Bluetooth tile is indistinguishable from power saving being off. Every toggle is
+one cell; two cells stay empty and reserved for Phase 9's SSID expansion, with no
+filler tile permitted.
+
+Spec: `PHASE_8_5_QUICK_PANEL.md`. Supersedes `DESIGN.md` §6, which has been
+updated, along with §4's gesture table and constants.
+
+Exit: corner drag opens and other top-band drags reach the app; both release
+thresholds behave; tap-outside dismisses but a release-outside ending the opening
+drag does not; energy saving persists across reboot; PSRAM returns to its
+pre-open level after close.
+
 ### Phase 9 — WiFi
 
 Non-blocking, off the boot path. `esp_wifi_start()` plus auto-connect from NVS

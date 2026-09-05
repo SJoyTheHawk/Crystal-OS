@@ -755,6 +755,36 @@ static void brightness_bar_cb(lv_event_t *e)
 Bar range should be 0..95 to match `BSP_LCD_BACKLIGHT_BRIGHTNESS_MAX`. Setting
 0..100 makes the top 5% of the slider travel do nothing.
 
+## Phase 8.5 — corner panel, grid, colour state
+
+Full spec in `PHASE_8_5_QUICK_PANEL.md`. The three things that bite:
+
+**Grid descriptors must be `static`.** `lv_obj_set_grid_dsc_array()` retains the
+pointer rather than copying, so a stack array leaves LVGL reading freed memory on
+the next layout pass.
+
+```cpp
+static lv_coord_t s_cols[] = {62, 62, 62, 62, LV_GRID_TEMPLATE_LAST};
+lv_obj_set_grid_dsc_array(panel, s_cols, s_rows);
+lv_obj_set_grid_cell(wifi, LV_GRID_ALIGN_STRETCH, 0, 2,   // col 0, span 2
+                           LV_GRID_ALIGN_STRETCH, 0, 2);  // row 0, span 2
+```
+
+**Translate, never fade.** In LVGL 8 a non-opaque object with children composites
+through an intermediate buffer. On a single-buffer RGB panel that is the whole
+reason the panel is opaque instead of frosted — animating its opacity gives the
+cost straight back.
+
+**Tap-outside needs a transparent catcher, added late.** LVGL hit-tests by area,
+not opacity, so `LV_OPA_TRANSP` still takes clicks and no visible scrim is needed.
+Attach it only after the open animation finishes, or the release that ends the
+pull gesture lands outside the panel and dismisses it instantly.
+
+State is `LV_STATE_CHECKED` on a tile, not `lv_switch`. Colour is the signal;
+text stays wherever more than two states exist — off and unavailable both render
+dim, so a colour-only Bluetooth tile is indistinguishable from Energy Saving being
+off.
+
 ## Phase 10 — keyboard field centering
 
 ```cpp

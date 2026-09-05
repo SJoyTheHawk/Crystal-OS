@@ -66,11 +66,13 @@ here.
 
 Rules that follow from the ordering:
 
-- The indicator bar stays visible during app switching (cards slide beneath it)
-  but is **covered** by quick settings, which is what makes the pull-down read as
-  coming from above.
-- Keyboard sits below quick settings: pulling down over an open keyboard covers
-  it rather than dismissing it. On close, the keyboard is still there. Card
+- The indicator bar stays visible during app switching (cards slide beneath it).
+  Quick settings is ordered above it and slides out from behind it, which is what
+  makes the pull-down read as coming from above — but the corner panel only ever
+  overlaps the bar's right end, not the whole bar.
+- Keyboard sits below quick settings: pulling down over an open keyboard leaves it
+  in place rather than dismissing it, and the corner panel covers only the part of
+  it that falls inside the panel rect. On close, the keyboard is still there. Card
   switching is suppressed while the keyboard is open.
 - Dialogs are modal and block the arbiter entirely — no app switching, no
   pull-down while one is open.
@@ -116,7 +118,7 @@ Every screen in the system.
 | Launcher | Settings / automatic overflow | Brookesia |
 | App content | launcher, app switch | per-app |
 | App switcher cards | edge drag | transient overlay |
-| Quick settings | top-edge pull | overlay |
+| Quick settings | top-right corner pull | corner overlay |
 | WiFi SSID list | long-press WiFi in quick settings | expanding inline list |
 | WiFi credential dialog | pick an SSID | modal |
 | Settings root | gear in quick settings | app |
@@ -135,20 +137,25 @@ travel, and holds it until lift.
 | --- | --- | --- | --- |
 | Drag right | left edge, ≤24px | `APP_SWITCH` | previous app |
 | Drag left | right edge, ≤24px from right | `APP_SWITCH` | next app |
-| Drag down | top band, ≤20px | `QUICK_SETTINGS` | pull panel |
+| Drag down | top band ≤20px, **right 120px only** | `QUICK_SETTINGS` | pull panel |
 | Drag up | anywhere, panel open | `QUICK_SETTINGS` | dismiss panel |
+| Tap | outside panel, panel open | `QUICK_SETTINGS` | dismiss panel |
 | Long press | quick settings WiFi button | — | expand SSID list |
 | Drag vertical | SSID list | `APP` (list scrolls) | scroll SSIDs |
 | Any other | anywhere | `APP` | passed through |
 
-Constants: `kLockThreshold = 12`, `kEdgeBand = 24`, `kTopBand = 20`, long press
-= 500ms.
+Constants: `kLockThreshold = 12`, `kEdgeBand = 24`, `kTopBand = 20`,
+`kQuickCornerWidth = 120`, long press = 500ms.
+
+`kTopBand` gates the pull-down's vertical component; `kQuickCornerWidth` gates its
+horizontal one, measured from the right edge. Dismissal is unrestricted — only the
+*open* gesture is confined to the corner.
 
 Precedence, in order:
 
 1. **A modal dialog blocks everything.** No switching, no pull-down.
-2. **Quick settings open** suppresses app switching. Only dismiss-up is
-   available.
+2. **Quick settings open** suppresses app switching. Only dismiss-up and
+   tap-outside are available; the app beneath is visible but not interactive.
 3. **Keyboard open** suppresses app switching. Text entry remains committed
    until the keyboard closes.
 4. **Mid-app-switch** suppresses the pull-down.
@@ -162,7 +169,14 @@ There is no per-app opt-out such as `claimsEdgeGestures()`.
 The `kTopBand` restriction is the deliberate exception to rule 4. Without it, a
 swipe-down inside a scrolled app view opens quick settings when the user meant to
 scroll back up — the only place where OS priority reads as a bug rather than a
-feature.
+feature. `kQuickCornerWidth` narrows the same exception further: the top band's
+left portion now belongs to the app outright, so only a corner drag can be
+mistaken for a scroll.
+
+The cost is discoverability. Nothing marks the corner, so the pull-down is
+learned rather than seen. Accepted for v1 on the grounds that it matches an
+established desktop convention; a status-bar affordance is the fallback if
+testing says otherwise.
 
 Reserved, not built in v1: multi-touch. Apps may opt into a raw GT911 point
 array via `ITouchRaw`, bypassing `lv_indev`. No OS-level pinch or rotate
@@ -359,42 +373,63 @@ first, measure, add the cache only if the feel demands it.
 
 ## 6. Quick settings
 
-Pulled from the top 20px band. Panel height ~320px of the 480.
+Pulled from the top 20px band **within the right 120px**. The panel wraps its own
+content and hangs from the top-right corner; it does not span the display. Size is
+derived from a 4x4 grid of 62px cells — 306x306 on this panel — and never
+hardcoded. Full geometry and rationale in `PHASE_8_5_QUICK_PANEL.md`.
 
 ```
-┌──────────────────────────────────────────────┐
-│ ▔▔▔▔▔▔▔▔  (grab handle, highlights on hold)  │
-│                                              │
-│  ┌────────────┐  ┌────────────┐              │
-│  │   WiFi     │  │ Bluetooth  │              │
-│  │  MyNetwork │  │  (disabled)│              │
-│  └────────────┘  └────────────┘              │
-│                                              │
-│  ┌────────────┐  ┌───┐ ┌───┐                 │
-│  │            │  │ ☼ │ │ ♪ │                 │
-│  │ ▓▓▓▓▓░░░░  │  │ ▓ │ │ ▓ │  ← fill bars    │
-│  │            │  │ ▓ │ │ ▓ │                 │
-│  └────────────┘  └───┘ └───┘                 │
-│   power saving   bright  vol                 │
-│                                       [gear] │
-├──────────────────────────────────────────────┤
-│         app beneath, blurred snapshot        │
-└──────────────────────────────────────────────┘
++-----------------------------------------------+
+| status bar                                    |
+|                    +----------------------+   |
+|                    | +--------++--------+ |   |
+|                    | | ((*))  ||   BT   | |   |
+|                    | | WiFi   ||Bluetoo.| |   |
+|                    | |MyNetwo.||Unavail.| |   |
+|     app, fully     | +--------++--------+ |   |
+|     visible and    | +--++--++----++----+ |   |
+|     untouched      | |##||##||Ener||Gear| |   |
+|                    | |##||##|| Off||    | |   |
+|                    | |##||##|+----++----+ |   |
+|                    | |##||##|             |   |
+|                    | |Br||Vo| (reserved)  |   |
+|                    | +--++--+             |   |
+|                    +----------------------+   |
++-----------------------------------------------+
 ```
 
-- **Background:** a 1/8 blurred snapshot of the foreground app taken at pull
-  start, not live. Live translucency would mean recompositing the app every frame
-  on a single-buffer RGB panel.
-- **Grab handle:** hidden until a touch lands in the top band, then highlights —
-  the affordance that the panel exists.
-- **Half-open threshold:** release past 50% completes the open (200ms ease-out);
-  release below snaps shut.
-- **Brightness / volume:** vertical fill bars, iPhone-style, dragged directly.
-  Range **0..95**, not 0..100, matching `BSP_LCD_BACKLIGHT_BRIGHTNESS_MAX`.
-  Volume goes to `bsp_extra_codec_volume_set`.
-- **Power saving:** one toggle, several effects (§8).
-- **Bluetooth:** present, visibly disabled, non-interactive. Reserved.
+- **Background:** none. The panel body is opaque — a vertical gradient with a 1px
+  top highlight — and the app stays fully visible and undimmed everywhere outside
+  the panel rect. No snapshot is taken. Frosted translucency would cost a
+  full-screen capture plus a downscale on every open, and would blend a zoomed
+  image on every drag frame; opaque draws through LVGL's solid-fill path.
+- **Grab handle:** none. It belonged to a full-width sheet; a corner card that
+  animates from its own corner does not need one.
+- **Half-open threshold:** release past 50% of panel travel completes the open
+  (200ms ease-out); release below snaps shut. Motion is translate-only — opacity
+  is never animated, since a non-opaque parent composites through an intermediate
+  buffer.
+- **Dismiss:** drag up, tap the gear, or **tap anywhere outside the panel**. The
+  outside-tap target is a transparent full-screen catcher, attached only after the
+  open animation finishes so the pull gesture's own release cannot dismiss it.
+- **Brightness / volume:** vertical fill bars, iPhone-style, dragged directly, one
+  grid column wide and two rows tall. Range **0..95**, not 0..100, matching
+  `BSP_LCD_BACKLIGHT_BRIGHTNESS_MAX`. Volume goes to
+  `bsp_extra_codec_volume_set`. No text label — a fill level is self-evident.
+- **Power saving:** a single 1x1 tile, not a switch. Tile colour is the state
+  (translucent white off, accent fill on) plus a one-word state line, so "off"
+  never reads as "broken". Several effects (§8).
+- **Bluetooth:** present, visibly unavailable, non-interactive. Reserved. Its
+  status text is required: off and unavailable both render as a dim tile, so
+  colour alone cannot distinguish them.
 - **Gear:** opens Settings and dismisses the panel.
+- **Reserved cells:** the two grid cells beside the gear stay empty until a real
+  control needs them (Phase 9's SSID expansion first). No filler tile may be added
+  to square off the panel.
+
+State presentation rule for the whole panel: colour carries binary state; any
+control with more than two states also carries text. WiFi has at least four
+(below), which no single colour can express.
 
 ### WiFi button states
 
