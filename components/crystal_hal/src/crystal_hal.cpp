@@ -360,6 +360,11 @@ public:
             notify(pending_connect_ ? Connecting : Disconnected);
         } else {
             pending_connect_ = false;
+            // Cancel any in-flight scan and drop its results: they are void once
+            // the radio cycles, and a late SCAN_DONE would repopulate the UI with
+            // networks from before the toggle.
+            (void)esp_wifi_scan_stop();
+            scan_count_ = 0;
             (void)esp_wifi_disconnect(); (void)esp_wifi_stop(); notify(Disconnected);
         }
     }

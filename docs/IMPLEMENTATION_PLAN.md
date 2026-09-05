@@ -615,6 +615,11 @@ Exit: first frame is not delayed by WiFi; a completed scan does not crash;
 credentials survive reboot; WPA3 works (`ESP_WIFI_ENABLE_WPA3_SAE` is already on);
 back from the page returns to the app that was running, not the launcher.
 
+**Status — closed (2026-09-06).** The Phase 9 WiFi page, asynchronous scan,
+credential flow, connection feedback, persistence, and WPA3 path were validated
+on hardware. WPA2-only interoperability remains untested and is retained as a
+follow-up verification item, not a Phase 9 implementation blocker.
+
 ### Phase 9.5 — Weather app
 
 First app with a network dependency, so it lands immediately after WiFi.

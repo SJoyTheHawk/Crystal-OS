@@ -124,7 +124,6 @@ void quick_snapshot_cleanup(lv_timer_t *timer)
             s_quick_volume = nullptr;
             s_quick_wifi = nullptr;
             s_wifi_dialog = nullptr;
-            s_wifi_page_status = nullptr;
             s_quick_catcher = nullptr;
             s_quick_settling = false;
             s_quick_closing = false;
@@ -1443,6 +1442,23 @@ void wifi_tile_text(char *out, size_t size)
     }
 }
 
+// The only teardown path for the WiFi page. Every cached pointer into the page
+// tree is cleared here, because lv_obj_del() frees the children too and a stale
+// pointer passes the != nullptr guards at every use site.
+void wifi_page_close()
+{
+    if (s_wifi_page == nullptr) return;
+    lv_obj_del(s_wifi_page);
+    s_wifi_page = nullptr;
+    s_wifi_page_list = nullptr;
+    s_wifi_page_status = nullptr;
+    if (s_wifi_dialog != nullptr) {
+        s_wifi_dialog = nullptr;
+        crystal_shell_set_modal_open(false);
+    }
+    crystal_shell_set_settings_open(false);
+}
+
 void wifi_page_open()
 {
     if (s_wifi_page != nullptr) return;
@@ -1456,7 +1472,7 @@ void wifi_page_open()
     crystal_shell_set_settings_open(true);
     lv_obj_t *back = lv_btn_create(s_wifi_page); lv_obj_set_size(back, 76, 38); lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 8);
     lv_obj_t *back_label = lv_label_create(back); lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back"); lv_obj_set_style_text_color(back_label, lv_color_white(), 0); lv_obj_center(back_label);
-    lv_obj_add_event_cb(back, [](lv_event_t *) { if (s_wifi_page != nullptr) { if (s_wifi_dialog != nullptr) { lv_obj_del(s_wifi_dialog); s_wifi_dialog = nullptr; crystal_shell_set_modal_open(false); } lv_obj_del(s_wifi_page); s_wifi_page = nullptr; s_wifi_page_list = nullptr; crystal_shell_set_settings_open(false); } }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(back, [](lv_event_t *) { wifi_page_close(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *title = lv_label_create(s_wifi_page); lv_label_set_text(title, "WiFi Networks"); lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
     s_wifi_page_status = lv_label_create(s_wifi_page); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_align(s_wifi_page_status, LV_ALIGN_TOP_MID, 0, 38);
     s_wifi_page_list = lv_list_create(s_wifi_page); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), lv_area_get_height(&area) - 92); lv_obj_align(s_wifi_page_list, LV_ALIGN_TOP_MID, 0, 74); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
@@ -1504,7 +1520,7 @@ void crystal_shell_wifi_event(uint8_t event)
     if (event == UI_EVT_WIFI_GOT_IP) {
         s_wifi_connecting[0] = '\0';
         if (s_quick_wifi != nullptr) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
-        if (s_wifi_page != nullptr) { lv_obj_del(s_wifi_page); s_wifi_page = nullptr; s_wifi_page_list = nullptr; crystal_shell_set_settings_open(false); }
+        wifi_page_close();
         if (s_quick_wifi == nullptr) return;
         lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0);
         if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); }
@@ -1513,10 +1529,11 @@ void crystal_shell_wifi_event(uint8_t event)
         const char *ssid = hal().wifi != nullptr ? hal().wifi->last_ssid() : "";
         strlcpy(s_wifi_connecting, ssid, sizeof(s_wifi_connecting));
         if (s_quick_wifi != nullptr) { lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0); if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); } }
-        if (s_wifi_page_status != nullptr) { char text[64]; snprintf(text, sizeof(text), "Connecting to %.32s...", ssid); lv_label_set_text(s_wifi_page_status, text); }
+        if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) { char text[64]; snprintf(text, sizeof(text), "Connecting to %.32s...", ssid); lv_label_set_text(s_wifi_page_status, text); }
         wifi_page_fill_list();
     } else if (event == UI_EVT_WIFI_DISCONNECTED) {
         s_wifi_connecting[0] = '\0';
+        wifi_page_fill_list();
         if (s_quick_wifi == nullptr) return;
         if (hal().wifi != nullptr && hal().wifi->enabled()) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         else lv_obj_clear_state(s_quick_wifi, LV_STATE_CHECKED);
@@ -1524,7 +1541,8 @@ void crystal_shell_wifi_event(uint8_t event)
         if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); }
     } else if (event == UI_EVT_WIFI_CONNECT_FAILED) {
         s_wifi_connecting[0] = '\0';
-        if (s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
+        wifi_page_fill_list();
+        if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
     } else if (event == UI_EVT_WIFI_SCAN_DONE) {
         wifi_page_fill_list();
     }
