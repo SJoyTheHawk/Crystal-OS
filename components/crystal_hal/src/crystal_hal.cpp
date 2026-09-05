@@ -377,8 +377,24 @@ int crystal_hal_get_volume()
 
 void crystal_hal_init()
 {
-    // Keep the initial board-selected brightness; later settings may change it.
-    s_brightness.set(s_brightness.get());
+    // Restore user controls after NVS and the board display have initialized.
+    uint8_t brightness = s_brightness.get();
+    size_t brightness_len = sizeof(brightness);
+    if (s_storage.get("brightness", &brightness, &brightness_len) &&
+        brightness_len == sizeof(brightness)) {
+        s_brightness.set(brightness);
+    } else {
+        s_brightness.set(s_brightness.get());
+    }
+
+    // The codec is initialized lazily by the volume adapter. Apply the saved
+    // value here so audio uses the user's setting before the quick panel opens.
+    uint8_t volume = 85;
+    size_t volume_len = sizeof(volume);
+    if (s_storage.get("volume", &volume, &volume_len) &&
+        volume_len == sizeof(volume)) {
+        (void)crystal_hal_set_volume(volume);
+    }
 }
 
 void crystal_hal_bind_touch(void *lvgl_input_device)
