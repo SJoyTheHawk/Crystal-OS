@@ -57,6 +57,11 @@ struct CrystalHal {
 
 CrystalHal &hal();
 
+// Board codec output volume, matching the reference bsp_extra 0..100 API.
+// The adapter lazily initializes the speaker codec on first use.
+bool crystal_hal_set_volume(int volume);
+int crystal_hal_get_volume();
+
 // Must be called after the board display has initialized its backlight.
 void crystal_hal_init();
 void crystal_hal_bind_touch(void *lvgl_input_device);

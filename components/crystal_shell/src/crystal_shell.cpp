@@ -28,6 +28,8 @@ constexpr uint32_t kSnapshotScaleDivisor = 2;
 constexpr uint32_t kCrossoverCommitPercent = 50;
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
+constexpr lv_coord_t kQuickPanelHeight = 320;
+constexpr uint32_t kQuickAnimMs = 200;
 // An lv_anim ready callback runs inside lv_timer_handler, before the display is
 // refreshed, so the animation's final frame is still unpainted at that moment.
 // Doing the Brookesia switch there costs the user that frame and makes the
@@ -49,6 +51,11 @@ bool s_swallow_wake_touch = false;
 CrystalGestureOwner s_gesture_owner = CrystalGestureOwner::None;
 ESP_Brookesia_Gesture *s_gesture = nullptr;
 lv_obj_t *s_page_dots = nullptr;
+lv_obj_t *s_quick_root = nullptr;
+lv_obj_t *s_quick_panel = nullptr;
+lv_obj_t *s_quick_brightness = nullptr;
+lv_obj_t *s_quick_volume = nullptr;
+lv_obj_t *s_quick_message = nullptr;
 
 struct CardPane {
     lv_img_dsc_t *image = nullptr;
@@ -78,8 +85,158 @@ std::vector<CardPane> s_pane_cache;
 CardTransition s_card_transition;
 
 bool start_card(size_t index, bool animate = true);
+lv_img_dsc_t *capture_app_area_full();
 lv_img_dsc_t *downscale_crop(const lv_img_dsc_t *source, const lv_area_t &crop,
                              lv_coord_t dest_w, lv_coord_t dest_h);
+
+void quick_snapshot_cleanup(lv_timer_t *timer)
+{
+    lv_obj_t *root = static_cast<lv_obj_t *>(timer->user_data);
+    if (root != nullptr) {
+        lv_obj_t *image = lv_obj_get_child(root, 0);
+        if (image != nullptr) {
+            auto *src = const_cast<lv_img_dsc_t *>(static_cast<const lv_img_dsc_t *>(lv_img_get_src(image)));
+            if (src != nullptr) lv_img_buf_free(src);
+        }
+        if (root == s_quick_root) {
+            s_quick_root = nullptr;
+            s_quick_panel = nullptr;
+            s_quick_brightness = nullptr;
+            s_quick_volume = nullptr;
+            s_quick_message = nullptr;
+        }
+        lv_obj_del(root);
+    }
+    lv_timer_del(timer);
+}
+
+void quick_anim_y(void *obj, int32_t y)
+{
+    lv_obj_set_y(static_cast<lv_obj_t *>(obj), static_cast<lv_coord_t>(y));
+}
+
+void quick_anim_ready(lv_anim_t *anim)
+{
+    if (anim == nullptr || s_quick_root == nullptr) return;
+    if (lv_obj_get_y(s_quick_root) <= -kQuickPanelHeight + 1) {
+        lv_timer_create(quick_snapshot_cleanup, 1, s_quick_root);
+        s_quick_settings_open = false;
+    }
+}
+
+void quick_set_bar_from_touch(lv_obj_t *bar)
+{
+    if (bar == nullptr) return;
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_get_act(), &point);
+    lv_area_t area;
+    lv_obj_get_coords(bar, &area);
+    const int height = LV_MAX(1, lv_area_get_height(&area));
+    int value = ((area.y2 - point.y) * 100) / height;
+    value = LV_CLAMP(0, value, 100);
+    lv_bar_set_value(bar, value, LV_ANIM_OFF);
+    if (bar == s_quick_brightness) {
+        value = LV_CLAMP(0, value, 95);
+        hal().brightness->set(static_cast<uint8_t>(value));
+        const uint8_t pct = hal().brightness->get();
+        if (hal().storage != nullptr) hal().storage->set("brightness", &pct, sizeof(pct));
+    } else if (bar == s_quick_volume) {
+        (void)crystal_hal_set_volume(value);
+    }
+}
+
+void quick_bar_event(lv_event_t *event)
+{
+    if (event == nullptr) return;
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
+        quick_set_bar_from_touch(static_cast<lv_obj_t *>(lv_event_get_target(event)));
+    }
+}
+
+void quick_show_message(lv_event_t *)
+{
+    if (s_quick_message != nullptr) {
+        lv_label_set_text(s_quick_message, "Settings coming in Phase 11");
+        lv_obj_clear_flag(s_quick_message, LV_OBJ_FLAG_HIDDEN);
+        lv_timer_create([](lv_timer_t *timer) {
+            if (s_quick_message != nullptr) lv_obj_add_flag(s_quick_message, LV_OBJ_FLAG_HIDDEN);
+            lv_timer_del(timer);
+        }, 1400, nullptr);
+    }
+}
+
+bool create_quick_settings()
+{
+    if (s_quick_root != nullptr) return true;
+    lv_img_dsc_t *source = capture_app_area_full();
+    if (source == nullptr) return false;
+    lv_area_t crop{0, 0, static_cast<lv_coord_t>(source->header.w - 1),
+                   static_cast<lv_coord_t>(source->header.h - 1)};
+    const lv_coord_t small_w = LV_MAX(1, static_cast<lv_coord_t>(lv_disp_get_hor_res(nullptr) / 8));
+    const lv_coord_t small_h = LV_MAX(1, static_cast<lv_coord_t>(lv_disp_get_ver_res(nullptr) / 8));
+    lv_img_dsc_t *small = downscale_crop(source, crop, small_w, small_h);
+    lv_snapshot_free(source);
+    if (small == nullptr) return false;
+
+    s_quick_root = lv_obj_create(lv_layer_top());
+    if (s_quick_root == nullptr) { lv_img_buf_free(small); return false; }
+    lv_obj_set_size(s_quick_root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
+    lv_obj_set_pos(s_quick_root, 0, -kQuickPanelHeight);
+    lv_obj_set_style_bg_color(s_quick_root, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_quick_root, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_quick_root, 0, 0);
+    lv_obj_set_style_pad_all(s_quick_root, 0, 0);
+    lv_obj_clear_flag(s_quick_root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *image = lv_img_create(s_quick_root);
+    lv_img_set_src(image, small);
+    lv_img_set_zoom(image, 2048);
+    lv_obj_center(image);
+    lv_obj_set_style_opa(image, LV_OPA_50, 0);
+
+    s_quick_panel = lv_obj_create(s_quick_root);
+    lv_obj_set_size(s_quick_panel, lv_disp_get_hor_res(nullptr), kQuickPanelHeight);
+    lv_obj_set_pos(s_quick_panel, 0, 0);
+    lv_obj_set_style_bg_color(s_quick_panel, lv_color_hex(0x20242c), 0);
+    lv_obj_set_style_bg_opa(s_quick_panel, 242, 0); // ~95%
+    lv_obj_set_style_radius(s_quick_panel, 18, 0);
+    lv_obj_set_style_border_width(s_quick_panel, 0, 0);
+    lv_obj_set_style_pad_all(s_quick_panel, 16, 0);
+
+    lv_obj_t *handle = lv_label_create(s_quick_panel); lv_label_set_text(handle, "――――"); lv_obj_align(handle, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_t *wifi = lv_btn_create(s_quick_panel); lv_obj_set_size(wifi, 190, 62); lv_obj_align(wifi, LV_ALIGN_TOP_LEFT, 10, 32);
+    lv_obj_t *wifi_label = lv_label_create(wifi); lv_label_set_text(wifi_label, "WiFi\nNot Connected"); lv_obj_center(wifi_label);
+    lv_obj_t *bt = lv_btn_create(s_quick_panel); lv_obj_set_size(bt, 190, 62); lv_obj_align(bt, LV_ALIGN_TOP_RIGHT, -10, 32); lv_obj_add_state(bt, LV_STATE_DISABLED);
+    lv_obj_t *bt_label = lv_label_create(bt); lv_label_set_text(bt_label, "Bluetooth\n(disabled)"); lv_obj_center(bt_label);
+
+    s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_size(s_quick_brightness, 56, 130); lv_obj_align(s_quick_brightness, LV_ALIGN_BOTTOM_MID, -55, -42); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, hal().brightness->get(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
+    s_quick_volume = lv_bar_create(s_quick_panel); lv_obj_set_size(s_quick_volume, 56, 130); lv_obj_align(s_quick_volume, LV_ALIGN_BOTTOM_MID, 55, -42); lv_bar_set_range(s_quick_volume, 0, 100); lv_bar_set_value(s_quick_volume, crystal_hal_get_volume(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_volume, quick_bar_event, LV_EVENT_ALL, nullptr);
+    lv_obj_t *bl = lv_label_create(s_quick_panel); lv_label_set_text(bl, "☼  Bright"); lv_obj_align_to(bl, s_quick_brightness, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+    lv_obj_t *vl = lv_label_create(s_quick_panel); lv_label_set_text(vl, "♪  Volume"); lv_obj_align_to(vl, s_quick_volume, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+    lv_obj_t *power = lv_switch_create(s_quick_panel); lv_obj_align(power, LV_ALIGN_BOTTOM_LEFT, 8, -8); lv_obj_t *pl = lv_label_create(s_quick_panel); lv_label_set_text(pl, "Power saving"); lv_obj_align_to(pl, power, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+    lv_obj_t *gear = lv_btn_create(s_quick_panel); lv_obj_set_size(gear, 52, 42); lv_obj_align(gear, LV_ALIGN_BOTTOM_RIGHT, -8, -8); lv_obj_add_event_cb(gear, quick_show_message, LV_EVENT_CLICKED, nullptr); lv_obj_t *gl = lv_label_create(gear); lv_label_set_text(gl, "⚙"); lv_obj_center(gl);
+    s_quick_message = lv_label_create(s_quick_panel); lv_obj_align(s_quick_message, LV_ALIGN_CENTER, 0, 100); lv_obj_add_flag(s_quick_message, LV_OBJ_FLAG_HIDDEN);
+    s_quick_settings_open = true;
+    return true;
+}
+
+void update_quick_settings(const ESP_Brookesia_GestureInfo_t &info)
+{
+    if (s_quick_root == nullptr) return;
+    const int dy = info.stop_y - info.start_y;
+    const lv_coord_t y = LV_CLAMP(-kQuickPanelHeight, static_cast<lv_coord_t>(dy - kQuickPanelHeight), static_cast<lv_coord_t>(0));
+    lv_obj_set_y(s_quick_root, y);
+}
+
+void release_quick_settings(const ESP_Brookesia_GestureInfo_t &info)
+{
+    if (s_quick_root == nullptr) return;
+    const lv_coord_t offset = static_cast<lv_coord_t>(lv_obj_get_y(s_quick_root) + kQuickPanelHeight);
+    const bool open = (info.stop_y - info.start_y) > kQuickPanelHeight / 2 || offset > kQuickPanelHeight / 2;
+    lv_anim_t animation; lv_anim_init(&animation); lv_anim_set_var(&animation, s_quick_root);
+    lv_anim_set_exec_cb(&animation, quick_anim_y); lv_anim_set_values(&animation, lv_obj_get_y(s_quick_root), open ? 0 : -kQuickPanelHeight);
+    lv_anim_set_time(&animation, kQuickAnimMs); lv_anim_set_path_cb(&animation, lv_anim_path_ease_out); lv_anim_set_ready_cb(&animation, quick_anim_ready); lv_anim_start(&animation);
+}
 
 bool crossover_threshold_reached(lv_coord_t progress, lv_coord_t width,
                                  uint32_t percent)
@@ -944,6 +1101,11 @@ void on_gesture_pressing(lv_event_t *event)
         update_card_transition(*info);
         return;
     }
+    if (s_gesture_owner == CrystalGestureOwner::QuickSettings) {
+        if (!s_quick_settings_open) (void)create_quick_settings();
+        update_quick_settings(*info);
+        return;
+    }
     if (s_gesture_owner != CrystalGestureOwner::None ||
             info->direction == ESP_BROOKESIA_GESTURE_DIR_NONE) {
         return;
@@ -990,6 +1152,11 @@ void on_gesture_release(lv_event_t *event)
     s_gesture_owner = CrystalGestureOwner::None;
     if (s_swallow_wake_touch) {
         s_swallow_wake_touch = false;
+        return;
+    }
+    if (owner == CrystalGestureOwner::QuickSettings && info != nullptr) {
+        if (!s_quick_settings_open) (void)create_quick_settings();
+        release_quick_settings(*info);
         return;
     }
     if (owner != CrystalGestureOwner::AppSwitch || info == nullptr || s_phone == nullptr || s_switching ||

@@ -24,6 +24,7 @@
 namespace {
 
 constexpr uint8_t kBrightnessMax = 95;
+constexpr int kVolumeMax = 100;
 constexpr const char *kStorageNamespace = "crystal";
 constexpr uint8_t kRtcAddress = 0x51;
 constexpr uint8_t kAxp2101Address = 0x34;
@@ -307,6 +308,22 @@ DeviceStorage s_storage;
 Pcf85063Rtc s_rtc;
 esp_codec_dev_handle_t s_speaker = nullptr;
 
+bool ensure_speaker()
+{
+    if (s_speaker != nullptr) return true;
+    s_speaker = bsp_audio_codec_speaker_init();
+    if (s_speaker == nullptr) return false;
+    esp_codec_dev_sample_info_t format = {};
+    format.bits_per_sample = 16;
+    format.channel = 1;
+    format.sample_rate = kAlarmSampleRate;
+    if (esp_codec_dev_open(s_speaker, &format) != ESP_CODEC_DEV_OK) {
+        s_speaker = nullptr;
+        return false;
+    }
+    return true;
+}
+
 bool write_alarm_tone(uint32_t frequency_hz, uint32_t duration_ms)
 {
     int16_t samples[256] = {};
@@ -341,6 +358,23 @@ CrystalHal &hal()
     return s_hal;
 }
 
+bool crystal_hal_set_volume(int volume)
+{
+    if (volume < 0) volume = 0;
+    if (volume > kVolumeMax) volume = kVolumeMax;
+    if (!ensure_speaker()) return false;
+    // Same operation as reference bsp_extra_codec_volume_set().
+    return esp_codec_dev_set_out_vol(s_speaker, volume) == ESP_CODEC_DEV_OK;
+}
+
+int crystal_hal_get_volume()
+{
+    if (!ensure_speaker()) return 85;
+    int volume = 85;
+    (void)esp_codec_dev_get_out_vol(s_speaker, &volume);
+    return volume;
+}
+
 void crystal_hal_init()
 {
     // Keep the initial board-selected brightness; later settings may change it.
@@ -354,22 +388,9 @@ void crystal_hal_bind_touch(void *lvgl_input_device)
 
 void crystal_hal_timer_alarm()
 {
-    if (s_speaker == nullptr) {
-        s_speaker = bsp_audio_codec_speaker_init();
-        if (s_speaker == nullptr) {
-            ESP_LOGE(TAG, "speaker initialization failed");
-            return;
-        }
-        esp_codec_dev_sample_info_t format = {};
-        format.bits_per_sample = 16;
-        format.channel = 1;
-        format.sample_rate = kAlarmSampleRate;
-        if (esp_codec_dev_open(s_speaker, &format) != ESP_CODEC_DEV_OK) {
-            ESP_LOGE(TAG, "speaker open failed");
-            s_speaker = nullptr;
-            return;
-        }
-        (void)esp_codec_dev_set_out_vol(s_speaker, 85);
+    if (!ensure_speaker()) {
+        ESP_LOGE(TAG, "speaker initialization failed");
+        return;
     }
 
     (void)bsp_audio_poweramp_enable(true);
