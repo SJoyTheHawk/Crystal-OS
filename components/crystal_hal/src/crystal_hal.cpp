@@ -27,6 +27,7 @@ namespace {
 constexpr uint8_t kBrightnessMax = 95;
 constexpr int kVolumeMax = 100;
 constexpr const char *kStorageNamespace = "crystal";
+constexpr const char *kWifiEnabledKey = "wifi_enabled";
 constexpr uint8_t kRtcAddress = 0x51;
 constexpr uint8_t kAxp2101Address = 0x34;
 constexpr uint32_t kAlarmSampleRate = 22050;
@@ -237,6 +238,7 @@ public:
         (void)esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &DeviceWifi::event_handler, this);
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &DeviceWifi::event_handler, this);
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &DeviceWifi::event_handler, this);
+        enabled_ = read_enabled();
         wifi_config_t saved_config = {};
         const bool have_saved = esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK &&
                                 saved_config.sta.ssid[0] != 0;
@@ -255,25 +257,26 @@ public:
         }
         // Arm the deferred connect before starting: WIFI_EVENT_STA_START can be
         // dispatched from inside esp_wifi_start().
-        pending_connect_ = have_saved;
-        if (esp_wifi_start() != ESP_OK) {
+        started_ = true;
+        pending_connect_ = enabled_ && have_saved;
+        if (enabled_ && esp_wifi_start() != ESP_OK) {
             pending_connect_ = false;
+            started_ = false;
             return;
         }
-        started_ = true;
         if (have_saved) {
             strlcpy(last_ssid_, reinterpret_cast<const char *>(saved_config.sta.ssid), sizeof(last_ssid_));
-            notify(Connecting);
+            notify(enabled_ ? Connecting : Disconnected);
         } else {
-            // The radio is enabled even when no remembered network exists.
-            // Notify the UI so the tile uses the enabled/disconnected color.
+            // Notify the UI so the tile reflects either enabled/disconnected or
+            // the persisted radio-off state when no network is remembered.
             notify(Disconnected);
         }
     }
 
     void scan() override
     {
-        if (started_) {
+        if (started_ && enabled_) {
             (void)esp_wifi_scan_start(nullptr, false);
         }
     }
@@ -287,7 +290,7 @@ public:
 
     void connect(const char *ssid, const char *pass) override
     {
-        if (!started_ || ssid == nullptr || pass == nullptr) {
+        if (!started_ || !enabled_ || ssid == nullptr || pass == nullptr) {
             return;
         }
 
@@ -354,8 +357,12 @@ public:
     bool enabled() const override { return enabled_; }
     void set_enabled(bool enabled) override
     {
-        if (!started_ || enabled == enabled_) return;
+        if (enabled == enabled_) return;
         enabled_ = enabled;
+        write_enabled(enabled_);
+        // The service task starts after the UI. Preserve an early toggle now;
+        // start() will read the same persisted value before touching the radio.
+        if (!started_) return;
         retries_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         if (enabled_) {
@@ -382,6 +389,26 @@ public:
     const char *last_ssid() const override { return last_ssid_; }
 
 private:
+    static bool read_enabled()
+    {
+        nvs_handle_t handle;
+        if (nvs_open(kStorageNamespace, NVS_READONLY, &handle) != ESP_OK) return true;
+        uint8_t value = 1;
+        const esp_err_t err = nvs_get_u8(handle, kWifiEnabledKey, &value);
+        nvs_close(handle);
+        return err == ESP_OK ? value != 0 : true;
+    }
+
+    static void write_enabled(bool enabled)
+    {
+        nvs_handle_t handle;
+        if (nvs_open(kStorageNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
+        if (nvs_set_u8(handle, kWifiEnabledKey, enabled ? 1 : 0) == ESP_OK) {
+            (void)nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+
     static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         auto *self = static_cast<DeviceWifi *>(arg);

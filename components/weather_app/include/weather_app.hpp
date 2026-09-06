@@ -40,7 +40,20 @@ private:
     void request();
     void applyReading(const Reading &reading);
     void showEmpty(const char *headline, const char *detail, const char *city);
-    void setStatus(const Reading &reading, bool expired);
+    // Dims or restores the humidity and wind tiles, captions included, so they
+    // carry the same confidence as the hero rather than contradicting it.
+    void setTileState(bool dimmed);
+    void setStatus(const Reading &reading, bool unconfirmed, bool expired);
+    // False when the reading's age cannot be worked out: either it was stamped
+    // before the clock was set, or the clock is not set now. Age drives both the
+    // status line and the auto-refresh, so neither may assume it is knowable.
+    bool hasKnownAge(const Reading &reading) const;
+    // Age in seconds, or -1 when unknowable. Callers must handle -1 rather than
+    // letting a negative subtraction clamp to zero and read as "just now".
+    int32_t readingAge(const Reading &reading) const;
+    // True when the reading is missing, older than kStaleSeconds, or of unknown
+    // age. Unknown counts as due: a reading we cannot date is one we must refetch.
+    bool needsRefresh(const Reading &reading) const;
 
     lv_obj_t *root_ = nullptr;
     lv_obj_t *glyph_ = nullptr;
@@ -49,6 +62,9 @@ private:
     lv_obj_t *condition_ = nullptr;
     lv_obj_t *humidity_ = nullptr;
     lv_obj_t *wind_ = nullptr;
+    // Held only so the captions can be dimmed with their values.
+    lv_obj_t *humidity_caption_ = nullptr;
+    lv_obj_t *wind_caption_ = nullptr;
     lv_obj_t *location_ = nullptr;
     lv_obj_t *status_ = nullptr;
     lv_obj_t *refresh_button_ = nullptr;
@@ -59,4 +75,8 @@ private:
     // WiFi is down, so a request with no reply has to time out on its own.
     int32_t requested_at_ = 0;
     bool last_fetch_failed_ = false;
+    // Clock validity as of the last tick. SNTP can land at any moment, and the
+    // step it applies retroactively makes a cached reading datable; this is how
+    // the tick notices the transition and re-runs the staleness check once.
+    bool clock_was_valid_ = false;
 };
