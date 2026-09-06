@@ -623,6 +623,12 @@ scope.
 
 ### Phase 9.5 — Weather app
 
+**Status — closed (2026-09-07).** Implemented the Open-Meteo service path,
+resolved location and cached reading, lifecycle-safe UI updates, procedural
+condition glyphs, visible age/staleness qualifiers, dynamic app-area geometry,
+and invalid-clock handling. Device flashing and the hardware exit checklist
+remain the final validation step.
+
 First app with a network dependency, so it lands immediately after WiFi.
 
 **Open-Meteo, not weather.com.** Not a cost decision: any API key compiled into

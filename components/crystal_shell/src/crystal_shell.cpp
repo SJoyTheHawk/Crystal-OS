@@ -359,16 +359,6 @@ void update_page_dots()
 
 bool init_indicator_overlay()
 {
-    lv_obj_t *logo = lv_label_create(lv_layer_top());
-    if (logo == nullptr) {
-        return false;
-    }
-    lv_label_set_text(logo, "C");
-    lv_obj_set_style_text_font(logo, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(logo, lv_color_white(), 0);
-    lv_obj_clear_flag(logo, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(logo, LV_ALIGN_TOP_LEFT, 8, 10);
-
     const size_t count = crystal_registry_installed_count();
     s_page_dots = lv_obj_create(lv_layer_top());
     if (s_page_dots == nullptr) {

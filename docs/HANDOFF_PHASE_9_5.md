@@ -1,7 +1,8 @@
 # Handoff — Phase 9.5 Weather, 2026-09-06
 
 Crystal OS (ESP32-S3, esp-brookesia-based) at `/Users/szemy/Workspace/ESP32 Crystal OS`,
-branch `main`. Mid-Phase 9.5, the Weather app.
+branch `main`. Phase 9.5 Weather is implemented and closed in the plan; this
+document remains as the implementation record and hardware validation checklist.
 
 ## Read first, in this order
 
@@ -23,12 +24,15 @@ The network path is done and validated.
 - `crystal_shell.cpp:1552` `crystal_shell_weather_event()` looks the app up in
   the registry and calls `WeatherApp::update()`.
 - Registered in `main/main.cpp` as `{"weather", make_weather_app, true, 3}`.
-- `components/weather_app/` is still **untracked** in git.
+- `components/weather_app/` is tracked in the Phase 9.5 implementation commits.
 
-## What is placeholder
+## Implementation status
 
-The app is three labels: no icon, no location display, hardcoded coordinates.
-That is the phase's remaining work.
+The former placeholder work is complete: the app has a procedural condition
+glyph, resolved location display, typed cache fields, age and staleness status,
+dynamic app-area geometry, lifecycle-safe asynchronous updates, and an explicit
+warning while the system clock is not synchronized. WiFi enable state is also
+persisted across reboot.
 
 ## Decisions already made — do not reopen
 
@@ -75,10 +79,12 @@ readings. **It does not.** The BSP header declares only QMA7981 (IMU) and OV2640
 line above. Both need updating; they were left untouched because the owner asked
 only for the code guide.
 
-## Not verified
+## Hardware validation remaining
 
-Nothing was built or flashed. Every defect above was found by reading, so the
-list is probably incomplete. `idf.py` is on `PATH` with
+The code has not been built or flashed in this workspace. Run the exit criteria
+in `docs/PHASE_9_5_WEATHER_APP.md` on hardware, including WiFi-off timeout,
+negative temperatures, WMO code 80, app switching, and the unsynchronized-clock
+warning. `idf.py` is expected with
 `IDF_PATH=/Users/szemy/.espressif/v6.1/esp-idf`.
 
 ## Conventions that bite here
