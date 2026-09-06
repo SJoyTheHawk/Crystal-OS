@@ -5,6 +5,9 @@
 #include "lvgl.h"
 #include "weather_glyph.h"
 
+LV_IMG_DECLARE(weather_icon);
+extern "C" void weather_icon_prepare(void);
+
 class WeatherApp final : public CrystalApp {
 public:
     WeatherApp();

@@ -115,7 +115,12 @@ void formatAge(int32_t seconds, char *out, size_t out_size)
 }
 }  // namespace
 
-WeatherApp::WeatherApp() : CrystalApp("Weather") {}
+WeatherApp::WeatherApp() : CrystalApp("Weather", &weather_icon)
+{
+    // The icon bitmap is computed, not stored, so it has to be filled before
+    // the launcher first draws it.
+    weather_icon_prepare();
+}
 
 bool WeatherApp::onCreate()
 {
@@ -142,10 +147,17 @@ bool WeatherApp::onCreate()
     // way a user can tell the guess was wrong, so it is never hidden.
     // Manual refresh. Placed first so the location label can be sized to the
     // space that is left, rather than being overlapped by the button.
+    // kInset keeps the whole button out of the 24 px right-edge gesture band
+    // (main.cpp: gesture.threshold.horizontal_edge). At kPad alone the button's
+    // right columns sat inside the band, so touches there were claimed as an
+    // app-switch swipe and never became a click. ext_click_area gives the touch
+    // target back the width the inset costs, without moving the visible circle.
     constexpr lv_coord_t kButton = 40;
+    constexpr lv_coord_t kInset = 14;
     refresh_button_ = lv_btn_create(root_);
     lv_obj_set_size(refresh_button_, kButton, kButton);
-    lv_obj_align(refresh_button_, LV_ALIGN_TOP_RIGHT, 0, -6);
+    lv_obj_align(refresh_button_, LV_ALIGN_TOP_RIGHT, -kInset, -6);
+    lv_obj_set_ext_click_area(refresh_button_, 6);
     // Low profile: no fill and no border at rest, so the header reads as text
     // with an affordance in it rather than as a toolbar. The pressed state is
     // the only time it draws a background -- which is also the touch feedback.
@@ -163,7 +175,7 @@ bool WeatherApp::onCreate()
 
     location_ = makeLabel(root_, &lv_font_montserrat_20, 0xE6EDF5);
     lv_label_set_long_mode(location_, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(location_, content - kButton - kGap);
+    lv_obj_set_width(location_, content - kButton - kInset - kGap);
     lv_obj_align(location_, LV_ALIGN_TOP_LEFT, 0, 0);
 
     // Hero card: temperature on the left, glyph on the right, condition beneath.

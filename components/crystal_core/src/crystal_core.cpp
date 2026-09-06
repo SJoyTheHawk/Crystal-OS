@@ -481,6 +481,17 @@ void ramp_brightness(uint8_t target)
     }
 }
 
+void dim_brightness()
+{
+    if (hal().brightness == nullptr) return;
+
+    // Energy saving must never make a user-selected low brightness brighter.
+    // Only apply the 20% dim target when the current level is above it.
+    if (hal().brightness->get() > kDimBrightness) {
+        ramp_brightness(kDimBrightness);
+    }
+}
+
 void sntp_synced(struct timeval *tv)
 {
     if (tv != nullptr && hal().rtc != nullptr) {
@@ -526,7 +537,7 @@ void service_task(void *)
         uint32_t command = 0;
         if (xTaskNotifyWait(0, UINT32_MAX, &command, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (command == static_cast<uint32_t>(PowerState::Full)) ramp_brightness(saved_brightness());
-            else if (command == static_cast<uint32_t>(PowerState::Dim)) ramp_brightness(kDimBrightness);
+            else if (command == static_cast<uint32_t>(PowerState::Dim)) dim_brightness();
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
         }
         const int64_t now_epoch = static_cast<int64_t>(time(nullptr));
