@@ -97,6 +97,18 @@ Flash the application, bootloader, partition table, and required data images:
 idf.py -p /dev/cu.usbmodem101 flash
 ```
 
+For the fast development loop, flash only the application image:
+
+```bash
+idf.py -p /dev/cu.usbmodem101 app-flash
+```
+
+`app-flash` preserves NVS, SPIFFS, and other data partitions because it writes
+only the selected OTA application. Use it when testing code changes that do
+not change the partition table, bootloader, or filesystem contents. A normal
+`flash` is required after changing `partitions.csv`, bootloader settings, or
+data/filesystem images.
+
 Build and flash in one command:
 
 ```bash
@@ -189,6 +201,7 @@ cd "/Users/szemy/Workspace/ESP32 Crystal OS"
 idf.py set-target esp32s3       # fresh checkout only
 idf.py build                    # compile
 idf.py -p /dev/cu.usbmodem101 flash
+idf.py -p /dev/cu.usbmodem101 app-flash  # preserve NVS/SPIFFS
 idf.py -p /dev/cu.usbmodem101 monitor -b 2000000
 idf.py -p /dev/cu.usbmodem101 flash monitor -b 2000000
 idf.py fullclean && idf.py build

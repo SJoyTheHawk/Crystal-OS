@@ -1398,6 +1398,14 @@ no `lv_*` call anywhere in the fetch path.
 
 ## Phase 9.6 — Calculator port
 
+**Implementation note (2026-09-07):** `components/calculator_app` now carries
+the port described below. It uses a local app root sized from `getVisualArea()`,
+stores the formula (including its NUL terminator) under the app's
+`CrystalState`, and registers as the default-enabled launcher slot 4. The
+procedural icon avoids the reference's 906KB image array. The ESP-IDF firmware
+build passes; hardware arithmetic and lifecycle checks are still the final
+validation step.
+
 The reference app is `reference/.../components/apps/calculator` (439 lines,
 `Calculator.cpp` + `Calculator.hpp`). Three things in it do not survive the port,
 and they are the whole work of the phase.
