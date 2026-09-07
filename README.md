@@ -67,7 +67,7 @@ validation remains. Details and evidence live in
 - [x] Phase 8.5 — corner-anchored quick panel
 - [x] Phase 9 — Wi-Fi product integration
 - [ ] Phase 9.5 — Weather app hardware validation
-- [ ] Phase 9.6 — Calculator app port
+- [x] Phase 9.6 — Calculator app port
 - [ ] Phase 10 — keyboard overlay
 - [ ] Phase 11 — Settings and power management
 - [ ] Phase 12 — reliability and recovery

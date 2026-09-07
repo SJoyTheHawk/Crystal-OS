@@ -658,11 +658,13 @@ when offline; no LVGL call from the fetch path.
 
 ### Phase 9.6 — Calculator port
 
-**Status — implemented (2026-09-07).** Ported the reference calculator to
+**Status — closed (2026-09-07).** Ported the reference calculator to
 `CrystalApp` with a visual-area root, lifecycle-safe formula persistence in
 `CrystalState`, procedural launcher icon, and the reference arithmetic/input
 guards. The component is registered in launcher slot 4 and the firmware build
-passes; hardware arithmetic and switch-away/switch-back validation remain.
+passes. Hardware validation confirmed arithmetic, division, multiplication,
+percentages, decimal input, clear, and backspace, and confirmed that an
+in-progress formula survives switching away and returning.
 
 Borrow `components/apps/calculator` from the reference (439 lines, self-contained)
 and port it to `CrystalApp`. Third lifecycle conversion test, no network.

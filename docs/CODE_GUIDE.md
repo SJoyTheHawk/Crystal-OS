@@ -1403,8 +1403,9 @@ the port described below. It uses a local app root sized from `getVisualArea()`,
 stores the formula (including its NUL terminator) under the app's
 `CrystalState`, and registers as the default-enabled launcher slot 4. The
 procedural icon avoids the reference's 906KB image array. The ESP-IDF firmware
-build passes; hardware arithmetic and lifecycle checks are still the final
-validation step.
+build passes. Hardware validation on 2026-09-07 confirmed arithmetic and all
+calculator controls, and confirmed that an in-progress formula survives a card
+switch. Phase 9.6 is closed.
 
 The reference app is `reference/.../components/apps/calculator` (439 lines,
 `Calculator.cpp` + `Calculator.hpp`). Three things in it do not survive the port,

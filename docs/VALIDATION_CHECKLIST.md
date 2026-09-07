@@ -280,6 +280,19 @@ original State Test temporary filename exceeded that limit and caused
 `result=open-failed`; short `/spiffs/.tmp_<stable-app-id>` names now avoid the
 limit. The final preview path remains unchanged.
 
+## Phase 9.6: Calculator app
+
+- [x] Calculator opens from launcher slot 4 and all controls respond on the
+  physical panel.
+- [x] Addition, subtraction, multiplication, division, percentages, and decimal
+  input produce the expected results.
+- [x] Clear and backspace update the formula and result correctly.
+- [x] An in-progress formula survives switching to another card and returning.
+- [x] The firmware builds successfully and fits the smallest OTA partition.
+
+Completion gate: arithmetic and controls work on hardware, and calculator state
+survives the destroy-on-switch lifecycle. Phase 9.6 closed on 2026-09-07.
+
 ## Post-cleanup checklist (2026-09-05)
 
 ### Phase 7

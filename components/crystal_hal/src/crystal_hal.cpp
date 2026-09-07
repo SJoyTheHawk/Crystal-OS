@@ -12,11 +12,15 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "bsp/display.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
 #include "nvs.h"
 
@@ -34,6 +38,11 @@ constexpr uint32_t kAlarmSampleRate = 22050;
 constexpr float kPi = 3.14159265358979323846f;
 static const char *TAG = "crystal_hal";
 constexpr size_t kWifiMaxNetworks = 20;
+// The board's only free tactile button. Wired active-low; also the ESP32-S3
+// strapping pin, which is why we only ever read it after boot.
+constexpr gpio_num_t kResetButtonGpio = GPIO_NUM_0;
+constexpr uint32_t kResetHoldMs = 5000;
+constexpr uint32_t kResetPollMs = 100;
 // This buffer is used by the esp_event task; keep it out of that task's stack.
 wifi_ap_record_t s_wifi_records[kWifiMaxNetworks] = {};
 
@@ -627,6 +636,64 @@ bool write_alarm_tone(uint32_t frequency_hz, uint32_t duration_ms)
     }
     return true;
 }
+// Polled rather than interrupt-driven: a 5 s hold needs no debounce, and
+// esp_lcd_touch already owns the shared GPIO ISR service.
+void reset_button_task(void *)
+{
+    uint32_t held_ms = 0;
+    bool armed = false;
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(kResetPollMs));
+
+        if (gpio_get_level(kResetButtonGpio) != 0) {
+            if (held_ms >= kResetPollMs) ESP_LOGI(TAG, "reset button released after %ums", (unsigned)held_ms);
+            held_ms = 0;
+            armed = false;
+            continue;
+        }
+
+        held_ms += kResetPollMs;
+
+        // Log once per press so a partial hold is visible in the console.
+        if (!armed && held_ms >= 1000) {
+            armed = true;
+            ESP_LOGW(TAG, "reset button held, rebooting in %ums unless released",
+                     (unsigned)(kResetHoldMs - held_ms));
+        }
+
+        if (held_ms >= kResetHoldMs) {
+            ESP_LOGW(TAG, "reset button held %ums, restarting", (unsigned)held_ms);
+            // Flush the log line before the reset drops the UART.
+            vTaskDelay(pdMS_TO_TICKS(50));
+            esp_restart();
+        }
+    }
+}
+
+void start_reset_button()
+{
+    gpio_config_t config = {};
+    config.pin_bit_mask = 1ULL << kResetButtonGpio;
+    config.mode = GPIO_MODE_INPUT;
+    config.pull_up_en = GPIO_PULLUP_ENABLE;
+    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    config.intr_type = GPIO_INTR_DISABLE;
+
+    const esp_err_t err = gpio_config(&config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "reset button gpio_config failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    if (xTaskCreate(reset_button_task, "reset_btn", 2560, nullptr, 3, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "reset button task creation failed");
+        return;
+    }
+    ESP_LOGI(TAG, "reset button ready on GPIO%d, hold %ums to reboot",
+             (int)kResetButtonGpio, (unsigned)kResetHoldMs);
+}
+
 DeviceWifi s_wifi;
 DeviceTouch s_touch;
 Axp2101Power s_power;
@@ -676,6 +743,8 @@ void crystal_hal_init()
         volume_len == sizeof(volume)) {
         (void)crystal_hal_set_volume(volume);
     }
+
+    start_reset_button();
 }
 
 void crystal_hal_bind_touch(void *lvgl_input_device)

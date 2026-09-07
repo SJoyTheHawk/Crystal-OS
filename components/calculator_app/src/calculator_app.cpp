@@ -18,7 +18,18 @@ namespace {
 constexpr const char *kFormulaKey = "formula";
 constexpr size_t kFormulaMax = 63;
 constexpr lv_coord_t kPagePad = 16;
-constexpr lv_coord_t kGap = 12;
+constexpr lv_coord_t kGap = 10;
+constexpr lv_coord_t kTopPad = 10;
+// The bottom 20 px of the app area is the vertical gesture edge band, with the
+// 10 px home indicator bar drawn on top of it. A bottom-aligned keyboard put the
+// lower half of the "0 . =" row inside that band, so those presses were taken as
+// the start of a swipe and never became a click. kBottomSafe lifts the whole row
+// clear of the band; the height it costs is taken back from the display panel.
+constexpr lv_coord_t kBottomSafe = 26;
+constexpr lv_coord_t kDisplayHeight = 96;
+constexpr lv_coord_t kDisplayPadHor = 14;
+constexpr lv_coord_t kDisplayPadVer = 8;
+constexpr lv_coord_t kKeyGap = 8;
 
 constexpr uint32_t kPage = 0x11181F;
 constexpr uint32_t kPanel = 0x1C2733;
@@ -60,26 +71,28 @@ bool CalculatorApp::onCreate()
     lv_obj_set_style_radius(root_, 0, 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_bg_color(root_, lv_color_hex(kPage), 0);
-    lv_obj_set_style_pad_all(root_, kPagePad, 0);
+    lv_obj_set_style_pad_hor(root_, kPagePad, 0);
+    lv_obj_set_style_pad_top(root_, kTopPad, 0);
+    lv_obj_set_style_pad_bottom(root_, kBottomSafe, 0);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
     const lv_coord_t content_width = width - 2 * kPagePad;
-    const lv_coord_t content_height = height - 2 * kPagePad;
-    const lv_coord_t display_height = 112;
-    const lv_coord_t keyboard_height = content_height - display_height - kGap;
+    const lv_coord_t content_height = height - kTopPad - kBottomSafe;
+    const lv_coord_t keyboard_height = content_height - kDisplayHeight - kGap;
+    const lv_coord_t label_width = content_width - 2 * kDisplayPadHor;
 
     display_ = lv_obj_create(root_);
-    lv_obj_set_size(display_, content_width, display_height);
+    lv_obj_set_size(display_, content_width, kDisplayHeight);
     lv_obj_align(display_, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(display_, 8, 0);
     lv_obj_set_style_border_width(display_, 0, 0);
     lv_obj_set_style_bg_color(display_, lv_color_hex(kPanel), 0);
-    lv_obj_set_style_pad_hor(display_, 16, 0);
-    lv_obj_set_style_pad_ver(display_, 10, 0);
+    lv_obj_set_style_pad_hor(display_, kDisplayPadHor, 0);
+    lv_obj_set_style_pad_ver(display_, kDisplayPadVer, 0);
     lv_obj_clear_flag(display_, LV_OBJ_FLAG_SCROLLABLE);
 
     history_label_ = lv_label_create(display_);
-    lv_obj_set_width(history_label_, content_width - 32);
+    lv_obj_set_width(history_label_, label_width);
     lv_label_set_long_mode(history_label_, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(history_label_, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(history_label_, &lv_font_montserrat_14, 0);
@@ -88,14 +101,14 @@ bool CalculatorApp::onCreate()
     lv_label_set_text(history_label_, "");
 
     formula_label_ = lv_label_create(display_);
-    lv_obj_set_width(formula_label_, content_width - 32);
+    lv_obj_set_width(formula_label_, label_width);
     lv_label_set_long_mode(formula_label_, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(formula_label_, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(formula_label_, lv_color_hex(kText), 0);
-    lv_obj_align(formula_label_, LV_ALIGN_TOP_RIGHT, 0, 21);
+    lv_obj_align(formula_label_, LV_ALIGN_TOP_RIGHT, 0, 18);
 
     result_label_ = lv_label_create(display_);
-    lv_obj_set_width(result_label_, content_width - 32);
+    lv_obj_set_width(result_label_, label_width);
     lv_label_set_long_mode(result_label_, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(result_label_, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(result_label_, &lv_font_montserrat_20, 0);
@@ -114,8 +127,8 @@ bool CalculatorApp::onCreate()
     lv_obj_set_style_bg_color(keyboard_, lv_color_hex(kPage), 0);
     lv_obj_set_style_bg_opa(keyboard_, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(keyboard_, 0, 0);
-    lv_obj_set_style_pad_row(keyboard_, 8, 0);
-    lv_obj_set_style_pad_column(keyboard_, 8, 0);
+    lv_obj_set_style_pad_row(keyboard_, kKeyGap, 0);
+    lv_obj_set_style_pad_column(keyboard_, kKeyGap, 0);
     lv_obj_set_style_text_font(keyboard_, &lv_font_montserrat_28, LV_PART_ITEMS);
     lv_obj_set_style_text_color(keyboard_, lv_color_hex(kText), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(keyboard_, lv_color_hex(kKey), LV_PART_ITEMS);
@@ -275,9 +288,12 @@ double CalculatorApp::calculate(const char *input) const
 
 void CalculatorApp::updateFormulaFont()
 {
-    const lv_font_t *font = formula_len_ <= 11 ? &lv_font_montserrat_48 :
-                            formula_len_ <= 20 ? &lv_font_montserrat_28 :
-                                                 &lv_font_montserrat_20;
+    // Ceiling is 28, not 48: the display panel gave 16 px of its height to the
+    // bottom safe area, and a 48 px line no longer clears the history line above
+    // it or the result line below it.
+    const lv_font_t *font = formula_len_ <= 20 ? &lv_font_montserrat_28 :
+                            formula_len_ <= 32 ? &lv_font_montserrat_20 :
+                                                 &lv_font_montserrat_16;
     lv_obj_set_style_text_font(formula_label_, font, 0);
 }
 
