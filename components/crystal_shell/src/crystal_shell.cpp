@@ -125,6 +125,7 @@ void quick_snapshot_cleanup(lv_timer_t *timer)
             s_quick_volume = nullptr;
             s_quick_wifi = nullptr;
             s_wifi_dialog = nullptr;
+            crystal_keyboard_set_state_cb(nullptr, nullptr);
             s_quick_catcher = nullptr;
             s_quick_settling = false;
             s_quick_closing = false;
@@ -221,6 +222,9 @@ void close_quick_settings(void (*then)())
 bool create_quick_settings()
 {
     if (s_quick_root != nullptr) return true;
+    // The keyboard also lives on the top layer, so a panel built over it would
+    // leave an orphan that no field owns.
+    crystal_keyboard_hide();
     s_quick_root = lv_obj_create(lv_layer_top());
     if (s_quick_root == nullptr) return false;
     lv_obj_set_size(s_quick_root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
@@ -797,6 +801,10 @@ bool start_card(size_t index, bool animate)
         return false;
     }
 
+    // A paused app is not destroyed, so its field never fires DELETE. Drop the
+    // keyboard here or it survives on the top layer into the next card.
+    crystal_keyboard_hide();
+
     lv_obj_t *cover = nullptr;
     if (animate && s_phone->getManager().getActiveApp() != nullptr &&
             s_phone->getManager().getActiveApp() != app) {
@@ -1324,60 +1332,106 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
     return phone->getManager().getActiveApp() != nullptr && init_indicator_overlay();
 }
 
+constexpr lv_coord_t kWifiDialogHeight = 200;
+constexpr lv_coord_t kWifiDialogGap = 20;
+
+// Centred on the display while the keyboard is away, lifted clear of the band
+// while it is up. Offsets are measured from the parent rather than assumed,
+// because the parent starts below the status bar.
+static void wifi_dialog_place(bool keyboard_open)
+{
+    if (s_wifi_dialog == nullptr) return;
+    lv_obj_t *parent = lv_obj_get_parent(s_wifi_dialog);
+    if (parent == nullptr) return;
+    lv_obj_update_layout(parent);
+    lv_area_t parent_area{};
+    lv_obj_get_coords(parent, &parent_area);
+    const lv_coord_t raised_top = static_cast<lv_coord_t>(crystal_keyboard_reserved_top() -
+                                  kWifiDialogGap - kWifiDialogHeight);
+    const lv_coord_t centred_top = static_cast<lv_coord_t>((lv_disp_get_ver_res(nullptr) -
+                                   kWifiDialogHeight) / 2);
+    const lv_coord_t top = keyboard_open ? LV_MIN(raised_top, centred_top) : centred_top;
+    lv_obj_align(s_wifi_dialog, LV_ALIGN_TOP_MID, 0,
+                 LV_MAX(0, static_cast<lv_coord_t>(top - parent_area.y1)));
+}
+
+// Clearing the hook first keeps the hide from repositioning a dialog that is
+// about to be deleted.
+static void wifi_close_credentials()
+{
+    crystal_keyboard_set_state_cb(nullptr, nullptr);
+    crystal_keyboard_hide();
+    if (s_wifi_dialog != nullptr) {
+        lv_obj_del(s_wifi_dialog);
+        s_wifi_dialog = nullptr;
+    }
+    crystal_shell_set_modal_open(false);
+}
+
 static void wifi_open_credentials(const char *ssid)
 {
     lv_obj_t *parent = s_wifi_page != nullptr ? s_wifi_page : s_quick_panel;
     if (ssid == nullptr || parent == nullptr) return;
     strlcpy(s_wifi_selected, ssid, sizeof(s_wifi_selected));
-    if (s_wifi_dialog != nullptr) lv_obj_del(s_wifi_dialog);
+    if (s_wifi_dialog != nullptr) wifi_close_credentials();
     s_wifi_dialog = lv_obj_create(parent);
-    lv_obj_set_size(s_wifi_dialog, 450, 395);
-    lv_obj_center(s_wifi_dialog);
+    lv_obj_set_size(s_wifi_dialog, 450, kWifiDialogHeight);
+    wifi_dialog_place(crystal_keyboard_is_open());
     lv_obj_set_style_bg_color(s_wifi_dialog, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(s_wifi_dialog, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_wifi_dialog, lv_color_hex(0x59636e), 0);
     lv_obj_set_style_border_width(s_wifi_dialog, 1, 0);
+    lv_obj_set_style_pad_all(s_wifi_dialog, 0, 0);
     lv_obj_clear_flag(s_wifi_dialog, LV_OBJ_FLAG_SCROLLABLE);
     crystal_shell_set_modal_open(true);
-
-    lv_obj_t *back = lv_btn_create(s_wifi_dialog);
-    lv_obj_set_size(back, 78, 34);
-    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 8);
-    lv_obj_t *back_label = lv_label_create(back);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_style_text_color(back_label, lv_color_white(), 0);
-    lv_obj_center(back_label);
-    lv_obj_add_event_cb(back, [](lv_event_t *) {
-        if (s_wifi_dialog != nullptr) {
-            lv_obj_del(s_wifi_dialog);
-            s_wifi_dialog = nullptr;
-            crystal_shell_set_modal_open(false);
-        }
-    }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *title = lv_label_create(s_wifi_dialog);
     lv_label_set_text(title, "Enter WiFi password");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 28, 8);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
 
     lv_obj_t *network = lv_label_create(s_wifi_dialog);
     char network_text[48];
     snprintf(network_text, sizeof(network_text), "Network: %.32s", s_wifi_selected);
     lv_label_set_text(network, network_text);
     lv_obj_set_style_text_color(network, lv_color_hex(0xcbd5e1), 0);
-    lv_obj_align(network, LV_ALIGN_TOP_MID, 0, 38);
+    lv_obj_align(network, LV_ALIGN_TOP_MID, 0, 46);
 
+    // Field and Show share one row, both 44 tall so their centres line up.
     lv_obj_t *input = lv_textarea_create(s_wifi_dialog);
-    lv_obj_set_size(input, 400, 44);
-    lv_obj_align(input, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_set_size(input, 300, 44);
+    lv_obj_align(input, LV_ALIGN_TOP_LEFT, 20, 76);
     lv_textarea_set_password_mode(input, true);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_placeholder_text(input, "Password");
+    // Without this the field is dead after the first dismissal.
+    lv_obj_add_event_cb(input, [](lv_event_t *event) {
+        lv_obj_t *field = static_cast<lv_obj_t *>(lv_event_get_target(event));
+        if (s_wifi_dialog != nullptr) (void)crystal_keyboard_show(field, s_wifi_dialog);
+    }, LV_EVENT_CLICKED, nullptr);
 
+    lv_obj_t *reveal = lv_btn_create(s_wifi_dialog);
+    lv_obj_set_size(reveal, 90, 44);
+    lv_obj_align(reveal, LV_ALIGN_TOP_RIGHT, -20, 76);
+    lv_obj_t *reveal_label = lv_label_create(reveal);
+    lv_label_set_text(reveal_label, "Show");
+    lv_obj_center(reveal_label);
+    lv_obj_add_event_cb(reveal, [](lv_event_t *event) {
+        auto *password = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+        if (password == nullptr) return;
+        const bool masked = lv_textarea_get_password_mode(password);
+        lv_textarea_set_password_mode(password, !masked);
+        lv_obj_t *button = static_cast<lv_obj_t *>(lv_event_get_target(event));
+        lv_obj_t *label = lv_obj_get_child(button, 0);
+        if (label != nullptr) lv_label_set_text(label, masked ? "Hide" : "Show");
+    }, LV_EVENT_CLICKED, input);
+
+    // Keep the same 54 px gap as the 350 px forget-network box. This dialog is
+    // 100 px wider, so add half of that difference to each edge offset.
     lv_obj_t *connect = lv_btn_create(s_wifi_dialog);
-    lv_obj_set_size(connect, 130, 40);
-    lv_obj_align(connect, LV_ALIGN_TOP_MID, 0, 116);
+    lv_obj_set_size(connect, 120, 38);
+    lv_obj_align(connect, LV_ALIGN_BOTTOM_LEFT, 78, -14);
     lv_obj_t *label = lv_label_create(connect);
     lv_label_set_text(label, "Connect");
     lv_obj_center(label);
@@ -1387,17 +1441,23 @@ static void wifi_open_credentials(const char *ssid)
         if (hal().wifi != nullptr && password != nullptr) {
             hal().wifi->connect(s_wifi_selected, lv_textarea_get_text(password));
         }
-        lv_obj_del(s_wifi_dialog);
-        s_wifi_dialog = nullptr;
-        crystal_shell_set_modal_open(false);
+        wifi_close_credentials();
     }, LV_EVENT_CLICKED, input);
 
-    lv_obj_t *keyboard = lv_keyboard_create(s_wifi_dialog);
-    lv_obj_set_size(keyboard, 420, 190);
-    lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_keyboard_set_textarea(keyboard, input);
+    lv_obj_t *cancel = lv_btn_create(s_wifi_dialog);
+    lv_obj_set_size(cancel, 120, 38);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -78, -14);
+    lv_obj_t *cancel_label = lv_label_create(cancel);
+    lv_label_set_text(cancel_label, "Cancel");
+    lv_obj_set_style_text_color(cancel_label, lv_color_white(), 0);
+    lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(cancel, [](lv_event_t *) { wifi_close_credentials(); },
+                        LV_EVENT_CLICKED, nullptr);
+
     lv_textarea_set_cursor_click_pos(input, true);
     lv_group_t *group = lv_group_get_default(); if (group != nullptr) lv_group_focus_obj(input);
+    crystal_keyboard_set_state_cb([](bool open, void *) { wifi_dialog_place(open); }, nullptr);
+    (void)crystal_keyboard_show(input, s_wifi_dialog);
 }
 
 static void wifi_open_forget_confirm(const char *ssid)
@@ -1439,6 +1499,8 @@ void wifi_tile_text(char *out, size_t size)
 void wifi_page_close()
 {
     if (s_wifi_page == nullptr) return;
+    crystal_keyboard_set_state_cb(nullptr, nullptr);
+    crystal_keyboard_hide();
     lv_obj_del(s_wifi_page);
     s_wifi_page = nullptr;
     s_wifi_page_list = nullptr;
@@ -1492,8 +1554,12 @@ static void wifi_page_fill_list()
             lv_obj_set_style_text_color(button, lv_color_white(), 0);
             lv_obj_set_style_bg_color(button, lv_color_hex(0x252a30), 0);
             lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-            if (attempting) {
-                lv_obj_set_style_bg_color(button, lv_color_hex(0x2563eb), 0);
+            // The old grey highlight sat a few shades off the row colour and read as
+            // flat. Blue matches the accent used by the quick-settings toggles.
+            lv_obj_set_style_bg_color(button, lv_color_hex(0x3b82f6), LV_STATE_PRESSED);
+            lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
+            if (connected || attempting) {
+                lv_obj_set_style_bg_color(button, lv_color_hex(0x3b82f6), 0);
                 lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
             }
             for (uint32_t child_index = 0; ; ++child_index) {

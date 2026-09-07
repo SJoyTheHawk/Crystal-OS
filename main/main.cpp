@@ -11,8 +11,7 @@
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
 #include "esp_brookesia.hpp"
-#include "hello_app.hpp"
-#include "state_test_app.hpp"
+#include "dev_tester_app.hpp"
 #include "clock_app.hpp"
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
@@ -26,15 +25,13 @@
 static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
 
-static CrystalApp *make_hello_app() { return new HelloApp(); }
-static CrystalApp *make_state_test_app() { return new StateTestApp(); }
+static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
 static CrystalApp *make_weather_app() { return new WeatherApp(); }
 static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
 
 static const CrystalAppEntry kApps[] = {
-    {"hello", make_hello_app, true, 0},
-    {"state_test", make_state_test_app, true, 1},
+    {"dev_tester", make_dev_tester_app, true, 0},
     {"clock", make_clock_app, true, 2},
     {"weather", make_weather_app, true, 3},
     {"calculator", make_calculator_app, true, 4},
@@ -140,9 +137,6 @@ extern "C" void app_main(void)
         "Failed to start Crystal core services"
     );
 
-    ESP_LOGI(TAG, "Hello icon: %ux%u, data=%u bytes, ptr=%p",
-             hello_icon.header.w, hello_icon.header.h,
-             static_cast<unsigned>(hello_icon.data_size), hello_icon.data);
     require_boot_step(
         crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0])),
         "Failed to install app registry"

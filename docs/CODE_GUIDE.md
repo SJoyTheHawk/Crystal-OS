@@ -1500,29 +1500,26 @@ back.
 
 ## Phase 10 — keyboard overlay
 
-Half of this already exists and is worth reading before writing anything. The
-WiFi password dialog (`crystal_shell.cpp:1371`) builds a real
-`lv_textarea` + `lv_keyboard` pair:
+Phase 10 replaces the WiFi dialog's private keyboard with the shell-owned
+`crystal_keyboard_show()` overlay. Apps supply the focused `lv_textarea` and the
+viewport whose bottom should bind to the keyboard:
 
 ```cpp
-lv_obj_t *keyboard = lv_keyboard_create(s_wifi_dialog);
-lv_obj_set_size(keyboard, 420, 190);
-lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-lv_keyboard_set_textarea(keyboard, input);
-lv_textarea_set_cursor_click_pos(input, true);
+crystal_keyboard_show(input, form_viewport);
 ```
 
-Two facts about the current state:
+Implementation details that carry the design:
 
-- `crystal_shell_set_keyboard_open()` is **declared, wired into the arbiter, and
-  never called.** The arbiter already yields to the app whenever `s_keyboard_open`
-  is set (`crystal_shell.cpp:1211`), so the shell-level gating is done; Phase 10
-  is what finally calls the setter. The WiFi dialog currently uses
-  `crystal_shell_set_modal_open()` instead, which is why its keyboard does not
-  suppress the pull-down today.
-- The dialog hardcodes `420x190`. A shared overlay must derive its width from the
-  display and its height from the keyboard, then publish the resulting top edge —
-  nothing else can compute the free band.
+- The shell overlay calls `crystal_shell_set_keyboard_open()` for its entire
+  lifetime, so the arbiter suppresses card switching until teardown.
+- The keyboard derives its width from the display and publishes its top through
+  `crystal_keyboard_top()`; callers do not duplicate a hardcoded dialog rect.
+- Its 200px reserved band uses Calculator's 26px bottom safe inset, preserving
+  the top position while keeping keys out of Brookesia's navigation gesture zone.
+- Letter, shift, and symbol maps keep identical row geometry. LVGL still owns
+  character insertion, cursor movement, deletion, and ready/cancel events.
+- The WiFi password field and Dev Tester use the same overlay and both provide a
+  reveal control for masked input.
 
 The centering rule, which is the exit criterion:
 

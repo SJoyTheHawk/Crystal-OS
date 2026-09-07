@@ -676,6 +676,18 @@ Exit: arithmetic correct, state survives a switch away and back.
 
 ### Phase 10 — Keyboard overlay
 
+**Status — implemented, pending hardware validation (2026-09-07).** The private
+WiFi `lv_keyboard` has been replaced by a shell-owned overlay with iOS-inspired
+key styling and fixed control-key geometry across letter, shift, and symbol
+planes. `crystal_keyboard_show()` publishes the keyboard top, reduces the owning
+viewport, and applies the no-move/covered-field centering rule. A bundled Dev
+Tester app replaces the temporary Hello and Phase 1 state-test launcher entries
+and exercises visible, covered, and password fields. Hardware validation of the
+250 ms reveal animation and touch targets remains before this phase is closed.
+The overlay reserves the same 200 px band while applying Calculator's 26 px
+bottom safe inset, keeping its top stable and clear of Brookesia's navigation
+gesture zone.
+
 App viewport bottom binds to the keyboard top. If the focused field is already
 visible, leave it; if the keyboard would cover it, animate it to the midpoint
 between keyboard top and indicator bar.

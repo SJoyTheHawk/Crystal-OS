@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "crystal_core.hpp"
+#include "lvgl.h"
 
 class ESP_Brookesia_Phone;
 
@@ -20,6 +21,21 @@ void crystal_shell_set_quick_settings_open(bool open);
 void crystal_shell_set_keyboard_open(bool open);
 void crystal_shell_set_settings_open(bool open);
 void crystal_shell_set_modal_open(bool open);
+
+// Shell-owned text input overlay. The viewport is clipped to the free band
+// while open and scrolled only when the focused field would be obscured.
+bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport);
+void crystal_keyboard_hide();
+bool crystal_keyboard_is_open();
+lv_coord_t crystal_keyboard_top();
+// Top of the reserved keyboard band whether or not the keyboard is open. Use
+// this to lay out dialogs that must never sit under the keyboard.
+lv_coord_t crystal_keyboard_reserved_top();
+
+// Fires whenever the keyboard opens or closes, including the paths that close it
+// without the caller asking. Only one listener is held; pass nullptr to clear it.
+using crystal_keyboard_state_cb_t = void (*)(bool open, void *user_data);
+void crystal_keyboard_set_state_cb(crystal_keyboard_state_cb_t callback, void *user_data);
 
 // Called on the LVGL task when the WiFi adapter posts a state/scan event.
 void crystal_shell_wifi_event(uint8_t event);
