@@ -7,6 +7,12 @@
 
 #include "esp_brookesia.hpp"
 
+// Returns true when the shell dismissed a layer of its own and the app should
+// stay open. crystal_app cannot call crystal_shell directly because the shell
+// already depends on crystal_app, so the shell installs this hook at init.
+using crystal_shell_back_hook_t = bool (*)();
+void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook);
+
 class CrystalState final {
 public:
     explicit CrystalState(const char *app_name);
@@ -64,7 +70,7 @@ protected:
     virtual bool onResume() { return true; }
     virtual bool onStop() { return true; }
     virtual bool onDestroy() { return true; }
-    virtual bool onBack() { return notifyCoreClosed(); }
+    virtual bool onBack();
 
 private:
     bool is_active() const;

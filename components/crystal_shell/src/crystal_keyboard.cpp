@@ -141,9 +141,18 @@ void watched_object_deleted(lv_event_t *event)
     if (!s_hiding) crystal_keyboard_hide();
 }
 
-void keyboard_close_event(lv_event_t *)
+// Deleting the keyboard inside its own READY/CANCEL makes lv_event_send return
+// LV_RES_INV, and LVGL then skips the matching send to the textarea. Field-level
+// listeners depend on that second send, so the delete has to happen after the
+// dispatch unwinds.
+void keyboard_close_async(void *)
 {
     crystal_keyboard_hide();
+}
+
+void keyboard_close_event(lv_event_t *)
+{
+    lv_async_call(keyboard_close_async, nullptr);
 }
 
 void viewport_click_event(lv_event_t *event)

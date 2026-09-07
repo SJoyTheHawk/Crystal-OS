@@ -20,7 +20,9 @@
 static const char *TAG = "crystal_shell";
 
 void wifi_page_open();
+void wifi_page_close();
 void wifi_tile_text(char *out, size_t size);
+bool shell_consume_back();
 
 namespace {
 constexpr int kTopBand = 20;
@@ -222,11 +224,11 @@ void close_quick_settings(void (*then)())
 bool create_quick_settings()
 {
     if (s_quick_root != nullptr) return true;
-    // The keyboard also lives on the top layer, so a panel built over it would
-    // leave an orphan that no field owns.
-    crystal_keyboard_hide();
     s_quick_root = lv_obj_create(lv_layer_top());
     if (s_quick_root == nullptr) return false;
+    // Both overlays live on the top layer. Keep the keyboard alive underneath
+    // and put the panel in front so dismissing it reveals the same input state.
+    lv_obj_move_foreground(s_quick_root);
     lv_obj_set_size(s_quick_root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
     s_quick_y_rest = active_app_area().y1 + kQuickGapTop;
     s_quick_y_hidden = s_quick_y_rest - kQuickPanelSize;
@@ -1216,7 +1218,7 @@ void on_gesture_pressing(lv_event_t *event)
                                   info->start_y >= panel_area.y1 && info->start_y <= panel_area.y2;
         s_gesture_owner = (inside_panel || info->direction == ESP_BROOKESIA_GESTURE_DIR_UP)
             ? CrystalGestureOwner::QuickSettings : CrystalGestureOwner::App;
-    } else if (s_keyboard_open || s_settings_open || s_switching ||
+    } else if (s_settings_open || s_switching ||
                s_card_transition.phase != CardTransitionPhase::Idle) {
         s_gesture_owner = CrystalGestureOwner::App;
     } else {
@@ -1228,10 +1230,12 @@ void on_gesture_pressing(lv_event_t *event)
         const bool in_quick_corner = info->start_x >= lv_disp_get_hor_res(nullptr) - kQuickCornerWidth;
         const bool top_pull = info->start_y < kTopBand && in_quick_corner &&
                               info->direction == ESP_BROOKESIA_GESTURE_DIR_DOWN;
-        if (horizontal_edge) {
-            s_gesture_owner = CrystalGestureOwner::AppSwitch;
-        } else if (top_pull) {
+        if (top_pull) {
             s_gesture_owner = CrystalGestureOwner::QuickSettings;
+        } else if (s_keyboard_open) {
+            s_gesture_owner = CrystalGestureOwner::App;
+        } else if (horizontal_edge) {
+            s_gesture_owner = CrystalGestureOwner::AppSwitch;
         } else {
             s_gesture_owner = CrystalGestureOwner::App;
         }
@@ -1310,6 +1314,7 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
 
     s_phone = phone;
     s_gesture = gesture;
+    crystal_app_set_shell_back_hook(shell_consume_back);
     s_current_index = load_current_index();
     s_pane_cache.resize(crystal_registry_installed_count());
     lv_obj_add_event_cb(gesture->getEventObj(), on_gesture_press,
@@ -1346,13 +1351,20 @@ static void wifi_dialog_place(bool keyboard_open)
     lv_obj_update_layout(parent);
     lv_area_t parent_area{};
     lv_obj_get_coords(parent, &parent_area);
-    const lv_coord_t raised_top = static_cast<lv_coord_t>(crystal_keyboard_reserved_top() -
-                                  kWifiDialogGap - kWifiDialogHeight);
     const lv_coord_t centred_top = static_cast<lv_coord_t>((lv_disp_get_ver_res(nullptr) -
                                    kWifiDialogHeight) / 2);
-    const lv_coord_t top = keyboard_open ? LV_MIN(raised_top, centred_top) : centred_top;
-    lv_obj_align(s_wifi_dialog, LV_ALIGN_TOP_MID, 0,
-                 LV_MAX(0, static_cast<lv_coord_t>(top - parent_area.y1)));
+    lv_coord_t top = centred_top;
+    if (keyboard_open) {
+        const lv_coord_t overlap = static_cast<lv_coord_t>(centred_top + kWifiDialogHeight +
+                                   kWifiDialogGap - crystal_keyboard_reserved_top());
+        if (overlap > 0) top = static_cast<lv_coord_t>(top - overlap);
+    }
+    lv_coord_t relative_top = static_cast<lv_coord_t>(top - parent_area.y1);
+    if (relative_top < 0) {
+        ESP_LOGW(TAG, "WiFi dialog cannot fully clear keyboard band; clamping top");
+        relative_top = 0;
+    }
+    lv_obj_align(s_wifi_dialog, LV_ALIGN_TOP_MID, 0, relative_top);
 }
 
 // Clearing the hook first keeps the hide from repositioning a dialog that is
@@ -1510,6 +1522,29 @@ void wifi_page_close()
         crystal_shell_set_modal_open(false);
     }
     crystal_shell_set_settings_open(false);
+}
+
+// One Back dismisses one shell layer. Returning false means the app is now the
+// topmost layer and its normal Back behaviour should run.
+bool shell_consume_back()
+{
+    if (crystal_keyboard_is_open()) {
+        crystal_keyboard_hide();
+        return true;
+    }
+    if (s_wifi_dialog != nullptr) {
+        wifi_close_credentials();
+        return true;
+    }
+    if (s_wifi_page != nullptr) {
+        wifi_page_close();
+        return true;
+    }
+    if (s_quick_settings_open) {
+        close_quick_settings(nullptr);
+        return true;
+    }
+    return false;
 }
 
 void wifi_page_open()

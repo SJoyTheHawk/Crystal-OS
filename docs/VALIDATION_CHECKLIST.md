@@ -293,6 +293,30 @@ limit. The final preview path remains unchanged.
 Completion gate: arithmetic and controls work on hardware, and calculator state
 survives the destroy-on-switch lifecycle. Phase 9.6 closed on 2026-09-07.
 
+## Phase 10: Keyboard overlay
+
+- [ ] Every key is comfortably tappable; check the outer columns and the
+  four-row bottom controls specifically.
+- [ ] Typing near the bottom row does not trigger Brookesia's bottom navigation
+  gesture.
+- [ ] A covered field animates to the available area's midpoint in about 250 ms,
+  ease-out, once, with no double-scroll or overshoot.
+- [ ] A field that is already fully visible does not move at all.
+- [ ] The WiFi dialog lifts only as far as the keyboard band requires, and the
+  Connect and Cancel buttons remain visible without scrolling the dialog.
+- [ ] Opening and closing the keyboard ten times from the WiFi dialog leaves no
+  orphaned keyboard or dimmed background and restores viewport height and
+  scrollability every time.
+- [ ] Switching among abc, ABC, 123, and #+= never moves Delete, Space, the
+  cursor arrows, or Done.
+- [ ] Back over Clock, Weather, and Calculator dismisses one layer per press and
+  leaves the app running until all shell layers are gone.
+- [ ] Quick Settings opens over the keyboard; dismissing the panel reveals the
+  keyboard still open with its caret and typed text intact.
+
+Before evaluating these visual checks, confirm the generated `sdkconfig`
+contains the intended display options.
+
 ## Post-cleanup checklist (2026-09-05)
 
 ### Phase 7

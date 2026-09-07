@@ -157,12 +157,3 @@ bool DevTesterApp::onDestroy()
     output_ = nullptr;
     return true;
 }
-
-bool DevTesterApp::onBack()
-{
-    if (crystal_keyboard_is_open()) {
-        crystal_keyboard_hide();
-        return true;
-    }
-    return notifyCoreClosed();
-}

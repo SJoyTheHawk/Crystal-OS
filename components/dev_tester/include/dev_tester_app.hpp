@@ -19,7 +19,6 @@ public:
 protected:
     bool onCreate() override;
     bool onDestroy() override;
-    bool onBack() override;
 
 private:
     lv_obj_t *add_field(const char *label, const char *placeholder, lv_coord_t y,

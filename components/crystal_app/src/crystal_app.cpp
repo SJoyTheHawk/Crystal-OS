@@ -15,6 +15,12 @@ static const char *TAG = "crystal_app";
 namespace {
 constexpr size_t kMaxStateBytes = 2048;
 constexpr size_t kMaxKeyBytes = 7;
+crystal_shell_back_hook_t s_shell_back_hook = nullptr;
+}
+
+void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook)
+{
+    s_shell_back_hook = hook;
 }
 
 CrystalState::CrystalState(const char *app_name)
@@ -171,6 +177,12 @@ bool CrystalApp::back()
     assert(is_active());
     ESP_LOGI(TAG, "%s lifecycle: onBack", app_name_.c_str());
     return onBack();
+}
+
+bool CrystalApp::onBack()
+{
+    if (s_shell_back_hook != nullptr && s_shell_back_hook()) return true;
+    return notifyCoreClosed();
 }
 
 bool CrystalApp::is_active() const
