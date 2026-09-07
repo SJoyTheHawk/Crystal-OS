@@ -785,43 +785,6 @@ text stays wherever more than two states exist — off and unavailable both rend
 dim, so a colour-only Bluetooth tile is indistinguishable from Energy Saving being
 off.
 
-## Phase 10 — keyboard field centering
-
-```cpp
-static void on_keyboard_shown(lv_obj_t *field, int kb_top)
-{
-    lv_area_t f;
-    lv_obj_get_coords(field, &f);
-
-    if (f.y2 < kb_top) return;      // already visible — leave it exactly where it is
-
-    int target = (kb_top + INDICATOR_H) / 2;    // midpoint of the free band
-    int delta  = (f.y1 + (f.y2 - f.y1) / 2) - target;
-    lv_obj_scroll_by(lv_obj_get_parent(field), 0, -delta, LV_ANIM_ON);
-}
-```
-
-The early return is the requirement: a field that is already visible must not
-jump, even when the keyboard is not covering it.
-
-## Phase 12 — coredump
-
-```cpp
-void crystal_coredump_check(void)
-{
-    esp_core_dump_summary_t s;
-    if (esp_core_dump_get_summary(&s) != ESP_OK) return;
-
-    ESP_LOGE(TAG, "coredump: PC=0x%08lx task=%s", s.exc_pc, s.exc_task);
-    crystal_nvs_set_bool("recovered", true);   // surfaced quietly after boot
-    esp_core_dump_image_erase();               // so it reports once
-}
-```
-
-Decode with `idf.py coredump-info` / `coredump-debug`. **This only works against
-the exact ELF that crashed** — archive `build/crystal_os.elf` alongside every
-image handed to anyone, or the dump is unreadable hex.
-
 ## Phase 5.5 — timer that outlives its app
 
 The pattern that makes destroy-on-switch survivable for time-based apps. Store
@@ -1433,6 +1396,303 @@ Exit criteria for the phase: correct conditions and icon with WiFi up; the
 resolved location visible; a cached reading with a visible age when offline; and
 no `lv_*` call anywhere in the fetch path.
 
+## Phase 9.6 — Calculator port
+
+The reference app is `reference/.../components/apps/calculator` (439 lines,
+`Calculator.cpp` + `Calculator.hpp`). Three things in it do not survive the port,
+and they are the whole work of the phase.
+
+**It overrides the wrong methods.** The reference derives from
+`ESP_Brookesia_PhoneApp` and overrides `run()`, `close()`, `back()`, and
+`init()`. In `CrystalApp` all five of those are `final` (`crystal_app.hpp:44`) —
+they are the adapter that dispatches the Android hooks. The port overrides
+`onCreate()` / `onPause()` / `onResume()` / `onDestroy()` / `onBack()` instead,
+exactly as `WeatherApp` does:
+
+```cpp
+class CalculatorApp final : public CrystalApp {
+public:
+    CalculatorApp();
+    bool onCreate() override;
+    bool onPause() override;
+    bool onDestroy() override;
+};
+```
+
+`run()` becomes `onCreate()`, `close()` becomes `onDestroy()`. Do not keep
+`init()` — once-per-boot setup goes in `onCreate()` guarded by the app.
+
+**It parents to the active screen.** Every widget in `Calculator::run()` is
+created on `lv_scr_act()`:
+
+```cpp
+keyboard   = lv_btnmatrix_create(lv_scr_act());   // reference — do not copy
+label_obj  = lv_obj_create(lv_scr_act());
+```
+
+That puts the button matrix outside the app's own root, so it survives nothing
+and is positioned against the display rather than the app area. Build one root
+sized from `getVisualArea()` and positioned at `(0,0)`, as `weather_app.cpp:144`
+does, then parent everything to it:
+
+```cpp
+const lv_area_t area = getVisualArea();
+root_ = lv_obj_create(lv_scr_act());
+lv_obj_set_size(root_, lv_area_get_width(&area), lv_area_get_height(&area));
+lv_obj_set_pos(root_, 0, 0);            // not area.x1/area.y1 — see below
+```
+
+The offset trap is documented under Phase 9.5: `getVisualArea()` returns display
+coordinates, but the app root is already parented inside the app container, so
+adding `area.x1/y1` double-counts the status bar and produces a page that
+scrolls.
+
+**Its state is in members, so a switch away erases it.** `formula_len`,
+`formula_label`, and `history_label` are plain fields. Cards are destroyed on
+switch, so the accumulator has to be in `CrystalState`. It is a string, so use
+the byte API — `CrystalState` has `get`/`set`/`erase`/`get_u32`/`set_u32` and
+nothing else:
+
+```cpp
+// onPause: the formula text is the state. Store the NUL as well.
+const char *text = lv_label_get_text(formula_label_);
+state().set("formula", text, strlen(text) + 1);
+
+// onCreate: restore before the first paint, not after.
+char formula[64] = {};
+size_t len = sizeof(formula);
+if (state().get("formula", formula, &len) && len > 0 && len <= sizeof(formula)) {
+    formula[len - 1] = '\0';
+} else {
+    formula[0] = '0'; formula[1] = '\0';
+}
+```
+
+Register it in `main.cpp` beside the others — a factory and a row in `kApps`
+(`main/main.cpp:33`), which is what makes the registry's enabled/slot flags apply
+to it:
+
+```cpp
+static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
+{"calculator", make_calculator_app, true, 4},
+```
+
+**The icon.** `img_app_calculator.c` is 906,288 bytes for a 2,951-byte PNG. Do
+not take it. Follow `clock_icon.c` and `weather_icon.c`: a procedural
+`lv_img_dsc_t` filled at boot by a `*_prepare()` function, ~1-5KB of code and one
+64x64 buffer. See "Assets" below for why this, and not SPIFFS, is the pattern in
+this tree today.
+
+`calculate()` and the `isStartZero()` / `isStartNum()` / `isStartPercent()` /
+`isLegalDot()` input guards port unchanged. That is the point of borrowing it.
+
+Exit: arithmetic correct, and the in-progress formula survives a swipe away and
+back.
+
+## Phase 10 — keyboard overlay
+
+Half of this already exists and is worth reading before writing anything. The
+WiFi password dialog (`crystal_shell.cpp:1371`) builds a real
+`lv_textarea` + `lv_keyboard` pair:
+
+```cpp
+lv_obj_t *keyboard = lv_keyboard_create(s_wifi_dialog);
+lv_obj_set_size(keyboard, 420, 190);
+lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+lv_keyboard_set_textarea(keyboard, input);
+lv_textarea_set_cursor_click_pos(input, true);
+```
+
+Two facts about the current state:
+
+- `crystal_shell_set_keyboard_open()` is **declared, wired into the arbiter, and
+  never called.** The arbiter already yields to the app whenever `s_keyboard_open`
+  is set (`crystal_shell.cpp:1211`), so the shell-level gating is done; Phase 10
+  is what finally calls the setter. The WiFi dialog currently uses
+  `crystal_shell_set_modal_open()` instead, which is why its keyboard does not
+  suppress the pull-down today.
+- The dialog hardcodes `420x190`. A shared overlay must derive its width from the
+  display and its height from the keyboard, then publish the resulting top edge —
+  nothing else can compute the free band.
+
+The centering rule, which is the exit criterion:
+
+```cpp
+static void center_focused_field(lv_obj_t *field, lv_coord_t kb_top)
+{
+    lv_area_t f{};
+    lv_obj_get_coords(field, &f);           // display coords, same as kb_top
+
+    if (f.y2 < kb_top) return;              // already visible — do not move it
+
+    const lv_area_t area = getVisualArea(); // app band bottom, not a constant
+    const lv_coord_t target = (kb_top + area.y1) / 2;
+    const lv_coord_t delta  = (f.y1 + (f.y2 - f.y1) / 2) - target;
+    lv_obj_scroll_by(lv_obj_get_parent(field), 0, -delta, LV_ANIM_ON);
+}
+```
+
+The early return *is* the requirement: a field that is already fully visible must
+not move, even by a pixel, even when the keyboard is nowhere near it. Both
+coordinate sources have to be in the same space — mixing `lv_obj_get_coords()`
+(display) with an area-relative keyboard top is the same class of bug as the
+Phase 9.5 offset trap.
+
+Dismissal has three paths (return/done, tap outside a field, back gesture) and
+all three must clear `s_keyboard_open`, or the pull-down stays dead for the rest
+of the session. Clear it in one place — the overlay's own teardown — not at each
+call site.
+
+## Phase 11 — Settings and power
+
+The power state machine is already built; Phase 11 is mostly UI over values that
+are currently constants. Know which is which before starting.
+
+**Already in `crystal_core.cpp`:**
+
+```cpp
+constexpr uint32_t kDimTimeoutMs = 30000;   // line 31
+constexpr uint32_t kOffTimeoutMs = 60000;   // line 32
+constexpr uint8_t  kDimBrightness = 20;     // line 34
+enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3 };
+```
+
+Transitions are decided from `lv_disp_get_inactive_time()` and executed on the
+service task via `xTaskNotify`, never inline — `ramp_brightness()` sleeps in 25ms
+steps and would stall the LVGL task. `dim_brightness()` deliberately refuses to
+*raise* brightness: if the user already sits below 20%, dimming is a no-op.
+
+Two behaviours in the code that Phase 11 has to reconcile with §8 of the design:
+
+1. **Dim and off are gated on energy saving.** `update_power_state()` only
+   considers Dim/Off when `energy_saving_enabled()` is true, so with the toggle
+   off the panel never dims at all. The design describes full → dim → off as the
+   normal screen lifecycle with power saving as a separate flag. Pick one and
+   make both documents say it; the safer reading is that timeouts always apply
+   and power saving only shortens them.
+2. **The wake touch is already handled.** `crystal_core_consume_wake_touch()`
+   exists for exactly this, and the arbiter calls it on touch-down. Do not add a
+   second swallow path in Settings.
+
+**Storage keys already in use** — Settings must read and write these, not invent
+parallel ones:
+
+| Key | Written by | Type |
+|---|---|---|
+| `brightness` | quick panel slider | `uint8_t` |
+| `volume` | quick panel slider | `uint8_t` |
+| `power.saving` | quick panel Energy tile | `uint8_t` 0/1 |
+| `timezone` | first-boot default `"HKT-8"` | string |
+| `wifi.enabled` | WiFi adapter | `uint8_t` |
+
+These go through `hal().storage` (the shell's own namespace), *not* through
+`CrystalState` — `CrystalState` prefixes per app and is for app data only.
+
+**Timezone is not optional.** `crystal_time_init()` (`crystal_core.cpp:638`)
+reads the `timezone` key, defaults to `"HKT-8"`, and calls `setenv`/`tzset`
+before the UI starts. Changing it at runtime means re-running both, and
+`localtime_r` results cached anywhere become wrong until the next tick. Store the
+POSIX string, not an offset or a city name.
+
+**Static IP.** `IWifi` has no static-address API today (`crystal_hal.hpp:23`) —
+it is `start`/`scan`/`connect`/`forget` plus queries. DHCP-vs-static needs a new
+HAL method so the simulator can stub it; do not reach for `esp_netif_*` from the
+shell. Validate on commit, not per keystroke, and keep the fields disabled while
+DHCP is on.
+
+**`CONFIG_PM_ENABLE=y` is already set** in `sdkconfig.defaults`. Do **not** enable
+automatic light sleep: the RGB panel is a continuous DMA scan-out and will blank
+or tear. Power saving is one flag with several effects — CPU ceiling, 
+`WIFI_PS_MAX_MODEM`, brightness ceiling, shorter timeouts.
+
+Exit: static IP survives a reboot; timezone change moves the indicator bar hour
+without a reboot; power saving measurably lowers current draw.
+
+## Phase 12 — reliability
+
+The sdkconfig side is done. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`,
+`_DATA_FORMAT_ELF`, and `_CHECKSUM_CRC32` are in `sdkconfig.defaults`, and
+`CONFIG_ESP_COREDUMP_CHECK_BOOT=y` is set, so a corrupt image is rejected before
+you try to read it. What is missing is the boot-time check and the quiet
+surfacing.
+
+```cpp
+void crystal_coredump_check(void)
+{
+    esp_core_dump_summary_t summary = {};
+    if (esp_core_dump_get_summary(&summary) != ESP_OK) return;   // ELF format only
+
+    ESP_LOGE(TAG, "coredump: PC=0x%08lx task=%s",
+             (unsigned long)summary.exc_pc, summary.exc_task);
+
+    const uint8_t recovered = 1;
+    if (hal().storage != nullptr) {
+        hal().storage->set("recovered", &recovered, sizeof(recovered));
+    }
+    (void)esp_core_dump_image_erase();      // so it reports exactly once
+}
+```
+
+Note the storage call: there is no `crystal_nvs_*` API in this tree. Shell-level
+state is `hal().storage`, app state is `CrystalState`.
+
+Log `esp_reset_reason()` alongside it — it is the only cheap way to separate a
+panic from a brownout or a watchdog reset, and brownouts on this board look like
+random reboots.
+
+Decode with `idf.py coredump-info` / `coredump-debug`. **This works only against
+the exact ELF that produced the dump.** Archive `build/crystal_os.elf` with every
+image handed to anyone; without that habit the dump is unreadable hex.
+
+Watch `CONFIG_ESP_TASK_WDT_TIMEOUT_S` with panic disabled: the likeliest trip is
+a slow `onResume()` holding the LVGL lock. Since `onResume()` runs on the LVGL
+task, anything blocking there — a storage read loop, a fetch — is a watchdog
+candidate. Post to the service task instead.
+
+OTA over WiFi plus the USB wrapper as recovery transport: same image, two paths.
+The dual 5M slots have existed since Phase 0 precisely so this phase does not
+need a repartition.
+
+Exit: a deliberate crash produces a symbolised backtrace; a bad OTA rolls back.
+
+## Phase 13 — app catalog
+
+Everything needed is already in `crystal_registry.hpp` — this phase is the
+user-facing face of it:
+
+```cpp
+bool     crystal_registry_enabled(const char *id, bool default_value);
+uint16_t crystal_registry_slot(const char *id, uint16_t default_value);
+bool     crystal_registry_set_enabled(const char *id, bool enabled);
+bool     crystal_registry_set_slot(const char *id, uint16_t slot);
+size_t   crystal_registry_installed_count();
+const char *crystal_registry_installed_id(size_t index);
+```
+
+Install is `set_enabled(id, true)`; reorder is `set_slot`. Iterate with
+`installed_count()` / `installed_id()` — do not keep a second list of app ids in
+the catalog UI, or it drifts from `kApps` the first time an app is added.
+
+**One thing does not exist yet: clear-data.** `CrystalState` exposes
+`get`/`set`/`erase`/`get_u32`/`set_u32` and no `clear()`. Erasing one app's data
+means either adding `CrystalState::clear()` (which knows its own `prefix_` and
+can iterate that namespace) or an explicit key list per app. Prefer the former —
+a per-app key list in the catalog is a list that goes stale silently. The design
+doc's Manage Apps section refers to `CrystalState::clear()` as though it exists;
+it is a to-build, not a call site.
+
+**Disabled apps are never constructed**, so a hidden app costs flash and no RAM.
+That also means toggling one on cannot instantiate it retroactively — decide
+whether enabling takes effect at once (construct and install into the phone now)
+or at next boot, and say which in the UI copy. Silently doing neither is the
+failure mode.
+
+The honest limit belongs in the UI, not just the docs: users install only what
+shipped in the firmware, and the catalog grows when the OS updates.
+
+Exit: a non-developer can install, remove, reorder, and clear app data without a
+firmware change.
+
 ## Assets: never compile images in
 
 The reference makes the cost concrete — same image, two forms:
@@ -1444,12 +1704,35 @@ img_app_drawpanel.png        21,734 bytes
 img_app_drawpanel.c        906,282 bytes
 ```
 
-Two icons in C-array form would spend ~1.8MB of a 5M app slot. Convert to LVGL
-binary images and load from SPIFFS:
+Two icons in C-array form would spend ~1.8MB of a 5M app slot.
+
+**What this tree actually does: procedural icons.** Every app icon so far is drawn
+into a static buffer at boot and exposed as an `lv_img_dsc_t` — `clock_icon.c`
+(1,198 bytes), `hello_icon.c` (1,994), `weather_icon.c` (5,054). One 64x64 RGB565
+buffer is 8KB of BSS, and the drawing code is a few dozen lines:
 
 ```cpp
-lv_img_set_src(icon, "S:/assets/clock/icon.bin");   // not LV_IMG_DECLARE
+// clock_icon.c — filled once, from main, before the icon is used
+static lv_color_t clock_icon_map[ICON_SIZE * ICON_SIZE];
+void clock_icon_prepare(void);
+extern const lv_img_dsc_t clock_icon;
 ```
+
+Keep to this for icons. It costs less flash than either alternative, needs no
+filesystem, and cannot fail at runtime the way a missing file can.
+
+**SPIFFS is not mounted yet.** The `storage` partition exists in
+`partitions.csv` and `assets/` is empty; nothing calls `esp_vfs_spiffs_register`.
+So `lv_img_set_src(icon, "S:/...")` will not work today — it needs a mount first.
+The SPIFFS route stays the right answer for genuine bitmap content (photos,
+multi-frame art, anything a loop cannot draw), and when the first such asset
+lands, mounting is part of that work:
+
+```cpp
+lv_img_set_src(icon, "S:/assets/foo/art.bin");   // requires the mount to exist
+```
+
+The rule that does not bend either way: no image is ever a compiled-in C array.
 
 ## Conventions
 

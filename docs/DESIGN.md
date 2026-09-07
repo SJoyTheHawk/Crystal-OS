@@ -507,6 +507,12 @@ Field positioning — the whole rule:
 Dismiss: return/done key, tapping outside any field, or the OS back gesture. The
 pull-down covers the keyboard rather than closing it (§1).
 
+Partly built already: the WiFi password dialog carries its own
+`lv_textarea` + `lv_keyboard` at a hardcoded 420x190, and the gesture arbiter
+already yields to the app while a keyboard is open. What Phase 10 adds is the
+shared overlay — one keyboard whose top edge is published so the free band can be
+computed, replacing the dialog's private copy.
+
 ## 8. Settings
 
 | Category | Rows |
@@ -531,12 +537,25 @@ Notes:
   timeout). Any touch restores full brightness and **is swallowed**, not
   delivered to the app. No automatic light sleep in v1 — the RGB panel is a
   continuous DMA scan-out and will blank or tear.
+- **Divergence to settle in Phase 11.** As built, dim and off happen *only while
+  power saving is on* — the timeout check is gated on the energy-saving flag, so
+  with the toggle off the panel stays at full brightness indefinitely. The
+  intent above is that timeouts always apply and power saving merely shortens
+  them. Phase 11 owns resolving this; whichever way it goes, the four timeout
+  and dim-level rows above become the stored values that today are compile-time
+  constants (30s dim, 60s off, 20% dim level).
 
 ## 9. Manage Apps
 
 The user-facing face of the NVS registry. To the user this is installing and
-removing apps; underneath, install is `app.<id>.enabled = 1`, reorder is
-`app.<id>.slot`, and clear-data is `CrystalState::clear()`.
+removing apps; underneath, install is `app.<id>.enabled = 1` and reorder is
+`app.<id>.slot` — both already exist as `crystal_registry_set_enabled()` and
+`crystal_registry_set_slot()`.
+
+Clear-data is the one piece with no implementation behind it. `CrystalState`
+offers `get`/`set`/`erase`/`get_u32`/`set_u32` and no `clear()`, so Phase 13 has
+to add one that iterates the app's own key prefix. A per-app key list in the
+catalog instead would go stale the first time an app adds a key.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -666,7 +685,10 @@ GET https://api.open-meteo.com/v1/forecast
 - **HTTPS cost:** a TLS handshake needs roughly 30-45KB of heap. Fine with PSRAM,
   but the certificate bundle is a flash cost and the fetch must never run on the
   LVGL task — it goes on `crystal_service`, results via the UI queue.
-- **Icons:** eight condition glyphs, in SPIFFS, mapped from WMO codes.
+- **Icons:** eight condition glyphs mapped from WMO codes, drawn procedurally
+  (`weather_glyph.c`) rather than loaded from SPIFFS. Same reasoning as the clock
+  face: a loop that draws it costs less flash than any stored bitmap and cannot
+  fail on a missing file.
 
 States: no WiFi → cached reading plus "Offline"; no location set → prompt
 pointing at Settings; fetch failed → keep the cache and show the stale age;
@@ -679,9 +701,15 @@ outdoor Open-Meteo reading only.
 ### Calculator
 
 Borrowed from the reference (`components/apps/calculator`, 439 lines,
-Apache/CC0 per its headers). Ported to `CrystalApp`, with the icon moved from the
-906KB C array to a SPIFFS binary. Serves as the third lifecycle conversion test
-and needs no network.
+Apache/CC0 per its headers). Ported to `CrystalApp`, with the 906KB icon C array
+replaced by a procedural icon like the clock's. Serves as the third lifecycle
+conversion test and needs no network.
+
+Three things change in the port, none of them cosmetic: the reference overrides
+`run()`/`close()`/`back()`, which are `final` in `CrystalApp`; it parents its
+widgets to `lv_scr_act()` rather than an app root; and it keeps the working
+formula in a member, which destroy-on-switch erases. The formula belongs in
+`CrystalState`, so a swipe away and back resumes mid-calculation.
 
 ## 10. Motion and type
 
