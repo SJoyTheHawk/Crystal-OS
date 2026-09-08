@@ -32,6 +32,17 @@ lv_coord_t crystal_keyboard_top();
 // this to lay out dialogs that must never sit under the keyboard.
 lv_coord_t crystal_keyboard_reserved_top();
 
+// Call this when the frontmost full-screen layer changes -- a card switch, or a
+// settings page opening or closing. The keyboard holds pointers into the layer
+// that owned its field (s_field, s_viewport, and that viewport's saved height and
+// scroll flag), so it cannot survive a switch to a different layer.
+//
+// This is deliberately NOT called for overlays. Quick Settings slides over the
+// keyboard and leaves it running underneath (DESIGN.md 1), so the panel is not a
+// front-layer change. The distinction is whether the outgoing layer is being
+// replaced or merely covered.
+void crystal_shell_front_layer_changed();
+
 // Fires whenever the keyboard opens or closes, including the paths that close it
 // without the caller asking. Only one listener is held; pass nullptr to clear it.
 using crystal_keyboard_state_cb_t = void (*)(bool open, void *user_data);

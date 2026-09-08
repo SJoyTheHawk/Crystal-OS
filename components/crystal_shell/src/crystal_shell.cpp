@@ -803,9 +803,9 @@ bool start_card(size_t index, bool animate)
         return false;
     }
 
-    // A paused app is not destroyed, so its field never fires DELETE. Drop the
-    // keyboard here or it survives on the top layer into the next card.
-    crystal_keyboard_hide();
+    // The outgoing card is paused, not destroyed, so its field never fires
+    // DELETE and the keyboard would survive on the top layer into the next card.
+    crystal_shell_front_layer_changed();
 
     lv_obj_t *cover = nullptr;
     if (animate && s_phone->getManager().getActiveApp() != nullptr &&
@@ -1511,8 +1511,11 @@ void wifi_tile_text(char *out, size_t size)
 void wifi_page_close()
 {
     if (s_wifi_page == nullptr) return;
+    // Clear the hook before the hide so the keyboard cannot reposition a dialog
+    // that is inside the tree about to be deleted.
     crystal_keyboard_set_state_cb(nullptr, nullptr);
-    crystal_keyboard_hide();
+    // Closing the page hands the front layer back to the app underneath.
+    crystal_shell_front_layer_changed();
     lv_obj_del(s_wifi_page);
     s_wifi_page = nullptr;
     s_wifi_page_list = nullptr;
@@ -1550,6 +1553,12 @@ bool shell_consume_back()
 void wifi_page_open()
 {
     if (s_wifi_page != nullptr) return;
+    // The page replaces the app as the frontmost layer, so a keyboard the app
+    // still owns must go. Quick Settings no longer drops it on the way here --
+    // it deliberately keeps the keyboard alive underneath the panel -- so
+    // without this the app's keyboard is orphaned behind the page and
+    // shell_consume_back() closes it instead of the page.
+    crystal_shell_front_layer_changed();
     s_wifi_page = lv_obj_create(lv_layer_top());
     lv_area_t area = active_app_area();
     lv_obj_set_size(s_wifi_page, lv_area_get_width(&area), lv_area_get_height(&area));
@@ -1650,6 +1659,14 @@ void crystal_shell_weather_event(const CrystalWeatherReading *reading)
             break;
         }
     }
+}
+
+// A paused app is not destroyed and a covered page is not deleted, so neither
+// fires DELETE and watched_object_deleted never runs. The outgoing layer's field
+// has to be released here instead.
+void crystal_shell_front_layer_changed()
+{
+    crystal_keyboard_hide();
 }
 
 CrystalGestureOwner crystal_shell_gesture_owner() { return s_gesture_owner; }
