@@ -69,6 +69,18 @@ std::atomic<int64_t> s_weather_last_fetch{0};
 // must not jump when SNTP steps the wall clock mid-backoff.
 constexpr uint32_t kWeatherRetryMinMs = 60 * 1000;
 constexpr uint32_t kWeatherRetryMaxMs = 30 * 60 * 1000;
+constexpr uint32_t weather_retry_next(uint32_t wait_ms)
+{
+    // Keep automatic network work quiet for progressively longer periods:
+    // 1, 3, 5, 10, then 30 minutes (and remain capped there).
+    switch (wait_ms) {
+    case 1 * 60 * 1000: return 3 * 60 * 1000;
+    case 3 * 60 * 1000: return 5 * 60 * 1000;
+    case 5 * 60 * 1000: return 10 * 60 * 1000;
+    case 10 * 60 * 1000: return 30 * 60 * 1000;
+    default: return kWeatherRetryMaxMs;
+    }
+}
 std::atomic<uint32_t> s_weather_retry_ms{kWeatherRetryMinMs};
 std::atomic<TickType_t> s_weather_next_try{0};
 // Location resolution needs the same treatment: it is one TLS handshake per
@@ -682,8 +694,7 @@ void service_task(void *)
                 else {
                     const uint32_t wait = s_weather_locate_ms.load();
                     s_weather_next_locate.store(tick_now + pdMS_TO_TICKS(wait));
-                    s_weather_locate_ms.store(wait >= kWeatherRetryMaxMs / 2 ? kWeatherRetryMaxMs
-                                                                            : wait * 2);
+                    s_weather_locate_ms.store(weather_retry_next(wait));
                     ESP_LOGW(TAG, "weather location retry in %u s", (unsigned)(wait / 1000));
                 }
             }
@@ -706,8 +717,7 @@ void service_task(void *)
                 // responsive while an idle device stops hammering the network.
                 const uint32_t wait = s_weather_retry_ms.load();
                 s_weather_next_try.store(tick_now + pdMS_TO_TICKS(wait));
-                s_weather_retry_ms.store(wait >= kWeatherRetryMaxMs / 2 ? kWeatherRetryMaxMs
-                                                                        : wait * 2);
+                s_weather_retry_ms.store(weather_retry_next(wait));
                 ESP_LOGW(TAG, "weather fetch failed; next automatic try in %u s",
                          (unsigned)(wait / 1000));
             }

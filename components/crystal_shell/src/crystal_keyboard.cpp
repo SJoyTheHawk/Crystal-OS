@@ -65,9 +65,15 @@ lv_obj_t *s_keyboard = nullptr;
 lv_obj_t *s_field = nullptr;
 lv_obj_t *s_viewport = nullptr;
 lv_coord_t s_viewport_height = 0;
+// Phase 11 edit begin: preserve viewport state while the keyboard owns the layout.
+lv_coord_t s_viewport_scroll_y = 0;
 bool s_viewport_was_scrollable = false;
 bool s_viewport_resized = false;
+lv_dir_t s_viewport_scroll_dir = LV_DIR_NONE;
+bool s_viewport_was_elastic = false;
+bool s_viewport_was_momentum = false;
 bool s_hiding = false;
+// Phase 11 edit end.
 
 // Lets a caller re-lay out around the keyboard band. The keyboard closes through
 // several paths (Done, Cancel, background tap, field deletion), so a dialog that
@@ -164,18 +170,35 @@ void center_covered_field()
 {
     if (s_field == nullptr || s_viewport == nullptr || s_keyboard == nullptr) return;
     lv_obj_update_layout(s_keyboard);
+    // Phase 11 edit begin: calculate a bounded reveal from the real top of the form.
+    // Start from the real top of the form. Focus events can leave LVGL's
+    // automatic scroll position at the bottom after the viewport is resized;
+    // using that position as the basis for another delta hides the whole form.
+    lv_obj_scroll_to_y(s_viewport, 0, LV_ANIM_OFF);
+    lv_obj_update_layout(s_viewport);
     lv_area_t field_area{};
     lv_area_t keyboard_area{};
     lv_obj_get_coords(s_field, &field_area);
     lv_obj_get_coords(s_keyboard, &keyboard_area);
-    if (field_area.y2 < keyboard_area.y1) return;
-
     lv_area_t viewport_area{};
     lv_obj_get_coords(s_viewport, &viewport_area);
-    const lv_coord_t target = static_cast<lv_coord_t>((viewport_area.y1 + keyboard_area.y1) / 2);
-    const lv_coord_t field_mid = static_cast<lv_coord_t>(field_area.y1 + lv_area_get_height(&field_area) / 2);
+    const lv_coord_t margin = 8;
+    const lv_coord_t safe_top = viewport_area.y1 + margin;
+    const lv_coord_t safe_bottom = keyboard_area.y1 - margin;
+    lv_coord_t delta = 0;
+    if (field_area.y2 > safe_bottom) delta = static_cast<lv_coord_t>(field_area.y2 - safe_bottom);
+    else if (field_area.y1 < safe_top) delta = static_cast<lv_coord_t>(field_area.y1 - safe_top);
+    if (delta == 0) return;
+
+    const lv_coord_t current = lv_obj_get_scroll_y(s_viewport);
+    // LVGL exposes scroll_top as the current offset and scroll_bottom as the
+    // remaining range. Their sum is the actual maximum scroll position.
+    const lv_coord_t maximum = LV_MAX(0, static_cast<lv_coord_t>(
+        lv_obj_get_scroll_top(s_viewport) + lv_obj_get_scroll_bottom(s_viewport)));
+    const lv_coord_t target = LV_CLAMP(0, static_cast<lv_coord_t>(current + delta), maximum);
     lv_obj_set_style_anim_time(s_viewport, kRevealAnimMs, LV_PART_MAIN);
-    lv_obj_scroll_by(s_viewport, 0, static_cast<lv_coord_t>(target - field_mid), LV_ANIM_ON);
+    lv_obj_scroll_to_y(s_viewport, target, LV_ANIM_ON);
+    // Phase 11 edit end.
 }
 } // namespace
 
@@ -187,8 +210,13 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
 
     s_field = field;
     s_viewport = viewport;
+    // Phase 11 edit begin: save all viewport state before keyboard rebinding.
     s_viewport_height = lv_obj_get_height(viewport);
+    s_viewport_scroll_y = lv_obj_get_scroll_y(viewport);
     s_viewport_was_scrollable = lv_obj_has_flag(viewport, LV_OBJ_FLAG_SCROLLABLE);
+    s_viewport_scroll_dir = lv_obj_get_scroll_dir(viewport);
+    s_viewport_was_elastic = lv_obj_has_flag(viewport, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    s_viewport_was_momentum = lv_obj_has_flag(viewport, LV_OBJ_FLAG_SCROLL_MOMENTUM);
     s_viewport_resized = false;
 
     // Announced before the viewport is measured so a listener that moves itself
@@ -215,6 +243,8 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
         }
         lv_obj_add_flag(viewport, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(viewport, LV_DIR_VER);
+        // Prevent elastic/momentum effects while revealing a field.
+        lv_obj_clear_flag(viewport, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
         s_viewport_resized = true;
     }
 
@@ -265,8 +295,19 @@ void crystal_keyboard_hide()
         if (s_viewport_resized) {
             lv_obj_set_height(s_viewport, s_viewport_height);
             if (!s_viewport_was_scrollable) lv_obj_clear_flag(s_viewport, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_scroll_dir(s_viewport, s_viewport_scroll_dir);
+            if (s_viewport_was_elastic) lv_obj_add_flag(s_viewport, LV_OBJ_FLAG_SCROLL_ELASTIC);
+            else lv_obj_clear_flag(s_viewport, LV_OBJ_FLAG_SCROLL_ELASTIC);
+            if (s_viewport_was_momentum) lv_obj_add_flag(s_viewport, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+            else lv_obj_clear_flag(s_viewport, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+            // Restore the original scroll position after teardown.
+            lv_obj_update_layout(s_viewport);
+            const lv_coord_t maximum = LV_MAX(0, static_cast<lv_coord_t>(
+                lv_obj_get_scroll_top(s_viewport) + lv_obj_get_scroll_bottom(s_viewport)));
+            lv_obj_scroll_to_y(s_viewport, LV_CLAMP(0, s_viewport_scroll_y, maximum), LV_ANIM_OFF);
         }
     }
+    // Phase 11 edit end.
     s_viewport_resized = false;
     if (s_field != nullptr && s_field != s_viewport) {
         lv_obj_remove_event_cb(s_field, watched_object_deleted);

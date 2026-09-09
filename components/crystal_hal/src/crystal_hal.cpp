@@ -5,6 +5,7 @@
 #include "crystal_hal.hpp"
 
 #include <string.h>
+#include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -99,14 +100,46 @@ public:
 
         nvs_handle_t handle;
         if (nvs_open(kStorageNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+            ESP_LOGE(TAG, "NVS set key=%s open failed", key);
             return false;
         }
+
+        // Phase 11 edit begin: verify and log every shell/core NVS write.
+        uint8_t old_value[32] = {};
+        size_t old_length = sizeof(old_value);
+        const esp_err_t old_err = nvs_get_blob(handle, key, old_value, &old_length);
+        const bool old_present = old_err == ESP_OK;
+        if (!old_present) old_length = 0;
         esp_err_t err = nvs_set_blob(handle, key, value, length);
         if (err == ESP_OK) {
             err = nvs_commit(handle);
         }
+        bool readback_ok = false;
+        if (err == ESP_OK) {
+            size_t verify_length = length;
+            uint8_t verify_value[32] = {};
+            void *verify_buffer = length <= sizeof(verify_value) ? verify_value : nullptr;
+            if (verify_buffer != nullptr && nvs_get_blob(handle, key, verify_buffer, &verify_length) == ESP_OK) {
+                readback_ok = verify_length == length && memcmp(verify_buffer, value, length) == 0;
+            } else if (verify_buffer == nullptr) {
+                // Large values are uncommon in shell settings. The successful
+                // commit is still useful to report when an inline comparison
+                // would require an allocation on the LVGL task.
+                readback_ok = true;
+            }
+        }
+        char old_hex[65] = {};
+        char new_hex[65] = {};
+        const size_t old_dump = old_length < 32 ? old_length : 32;
+        const size_t new_dump = length < 32 ? length : 32;
+        for (size_t i = 0; i < old_dump; ++i) snprintf(old_hex + i * 2, 3, "%02x", old_value[i]);
+        for (size_t i = 0; i < new_dump; ++i) snprintf(new_hex + i * 2, 3, "%02x", static_cast<const uint8_t *>(value)[i]);
+        ESP_LOGI(TAG, "NVS set key=%s old=%s requested=%s write=%s readback=%s",
+                 key, old_present ? old_hex : "<unset>", new_hex,
+                 err == ESP_OK ? "ok" : esp_err_to_name(err), readback_ok ? "ok" : "failed");
         nvs_close(handle);
-        return err == ESP_OK;
+        // Phase 11 edit end.
+        return err == ESP_OK && readback_ok;
     }
 
     bool erase(const char *key) override
@@ -250,6 +283,11 @@ public:
             esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) {
             return;
         }
+        // The IDF driver emits a warning whenever a connect request arrives
+        // while its scan has not found a matching AP. That is expected during
+        // our paced reconnects and is not actionable; keep the HAL's own
+        // disconnect diagnostics while silencing the driver's warning stream.
+        esp_log_level_set("wifi", ESP_LOG_ERROR);
         (void)esp_wifi_set_storage(WIFI_STORAGE_FLASH);
         (void)esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &DeviceWifi::event_handler, this);
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &DeviceWifi::event_handler, this);
@@ -328,6 +366,7 @@ public:
         has_ip_ = false;
         pending_connect_ = false;
         retries_ = 0;
+        backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         // Cancel any in-flight scan; esp_wifi_connect() fails while one is running.
         (void)esp_wifi_scan_stop();
@@ -348,6 +387,7 @@ public:
         if (!started_) return;
         pending_connect_ = false;
         retries_ = 0;
+        backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         last_ssid_[0] = '\0';
         (void)esp_wifi_disconnect();
@@ -382,6 +422,7 @@ public:
         // start() will read the same persisted value before touching the radio.
         if (!started_) return;
         retries_ = 0;
+        backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         if (enabled_) {
             // Connect from WIFI_EVENT_STA_START, not here: right after
@@ -446,7 +487,10 @@ public:
             (void)esp_netif_set_dns_info(netif_, ESP_NETIF_DNS_BACKUP, &dns);
         }
         dhcp_enabled_ = config.dhcp;
-        persist_ip_config(config);
+        if (!persist_ip_config(config)) {
+            ESP_LOGE(TAG, "WiFi IP configuration applied but NVS persistence failed");
+            return false;
+        }
         if (started_ && enabled_ && last_ssid_[0] != '\0') {
             (void)esp_wifi_disconnect();
             pending_connect_ = false;
@@ -487,15 +531,15 @@ private:
         return s_storage.get(key, value, &length) && length == size;
     }
 
-    static void persist_ip_config(const IpConfig &config)
+    static bool persist_ip_config(const IpConfig &config)
     {
         const uint8_t dhcp = config.dhcp ? 1 : 0;
-        (void)s_storage.set(kDhcpKey, &dhcp, sizeof(dhcp));
-        (void)s_storage.set("net.ip", &config.ip, sizeof(config.ip));
-        (void)s_storage.set("net.mask", &config.mask, sizeof(config.mask));
-        (void)s_storage.set("net.gw", &config.gateway, sizeof(config.gateway));
-        (void)s_storage.set("net.dns1", &config.dns1, sizeof(config.dns1));
-        (void)s_storage.set("net.dns2", &config.dns2, sizeof(config.dns2));
+        return s_storage.set(kDhcpKey, &dhcp, sizeof(dhcp)) &&
+               s_storage.set("net.ip", &config.ip, sizeof(config.ip)) &&
+               s_storage.set("net.mask", &config.mask, sizeof(config.mask)) &&
+               s_storage.set("net.gw", &config.gateway, sizeof(config.gateway)) &&
+               s_storage.set("net.dns1", &config.dns1, sizeof(config.dns1)) &&
+               s_storage.set("net.dns2", &config.dns2, sizeof(config.dns2));
     }
 
     void apply_stored_ip_config()
@@ -527,12 +571,25 @@ private:
 
     static void write_enabled(bool enabled)
     {
+        // Phase 11 edit begin: preserve the legacy u8 Wi-Fi key while verifying it.
         nvs_handle_t handle;
-        if (nvs_open(kStorageNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
-        if (nvs_set_u8(handle, kWifiEnabledKey, enabled ? 1 : 0) == ESP_OK) {
-            (void)nvs_commit(handle);
+        if (nvs_open(kStorageNamespace, NVS_READWRITE, &handle) != ESP_OK) {
+            ESP_LOGE(TAG, "NVS set key=%s open failed", kWifiEnabledKey);
+            return;
         }
+        uint8_t old_value = 0;
+        const bool old_present = nvs_get_u8(handle, kWifiEnabledKey, &old_value) == ESP_OK;
+        const uint8_t value = enabled ? 1 : 0;
+        esp_err_t err = nvs_set_u8(handle, kWifiEnabledKey, value);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        uint8_t verify = 0;
+        const bool readback_ok = err == ESP_OK && nvs_get_u8(handle, kWifiEnabledKey, &verify) == ESP_OK && verify == value;
+        ESP_LOGI(TAG, "NVS set key=%s old=%s requested=%u write=%s readback=%s",
+                 kWifiEnabledKey, old_present ? (old_value ? "1" : "0") : "<unset>",
+                 static_cast<unsigned>(value), err == ESP_OK ? "ok" : esp_err_to_name(err),
+                 readback_ok ? "ok" : "failed");
         nvs_close(handle);
+        // Phase 11 edit end.
     }
 
     static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -562,12 +619,18 @@ private:
             if (disconnected != nullptr) ESP_LOGW(TAG, "WiFi disconnected, reason=%u", reason);
             // AUTH_EXPIRE / handshake timeouts are routinely transient, especially
             // on the first attempt after boot while the panel and PSRAM are still
-            // settling. Retry a few times before telling the UI it failed.
-            if (self->enabled_ && self->last_ssid_[0] != 0 && reason != WIFI_REASON_AUTH_FAIL &&
-                reason != WIFI_REASON_NO_AP_FOUND && self->retries_ < kMaxRetries) {
+            // settling. Retry ten times before moving to the long reconnect
+            // backoff. A missing AP is also retried: it may simply be out of
+            // range temporarily and should not disable automatic recovery.
+            if (self->enabled_ && self->last_ssid_[0] != 0) {
                 ++self->retries_;
-                ESP_LOGW(TAG, "Retrying connect (%u/%u)", self->retries_, kMaxRetries);
-                self->schedule_retry();
+                if (self->retries_ <= kMaxRetries) {
+                    ESP_LOGW(TAG, "Retrying connect (%u/%u)", self->retries_, kMaxRetries);
+                    self->schedule_retry();
+                } else {
+                    self->retries_ = 0;
+                    self->schedule_backoff();
+                }
                 self->notify(Connecting);
                 return;
             }
@@ -632,8 +695,30 @@ private:
             if (esp_timer_create(&args, &retry_timer_) != ESP_OK) return;
         }
         (void)esp_timer_stop(retry_timer_);
-        // Linear backoff: 1s, 2s, 3s ...
+        // Keep the first ten attempts responsive; the long backoff starts only
+        // after all ten have failed.
         (void)esp_timer_start_once(retry_timer_, static_cast<uint64_t>(retries_) * 1000000ULL);
+    }
+
+    void schedule_backoff()
+    {
+        if (retry_timer_ == nullptr) {
+            const esp_timer_create_args_t args = {
+                .callback = &DeviceWifi::retry_cb,
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "wifi_retry",
+                .skip_unhandled_events = true,
+            };
+            if (esp_timer_create(&args, &retry_timer_) != ESP_OK) return;
+        }
+        static constexpr uint32_t kBackoffMinutes[] = {1, 3, 5, 10, 30};
+        const uint32_t minutes = kBackoffMinutes[backoff_index_];
+        backoff_index_ = (backoff_index_ + 1) % (sizeof(kBackoffMinutes) / sizeof(kBackoffMinutes[0]));
+        ESP_LOGW(TAG, "WiFi retries exhausted; reconnecting in %u minute%s",
+                 minutes, minutes == 1 ? "" : "s");
+        (void)esp_timer_stop(retry_timer_);
+        (void)esp_timer_start_once(retry_timer_, static_cast<uint64_t>(minutes) * 60ULL * 1000000ULL);
     }
 
     static void retry_cb(void *arg)
@@ -649,10 +734,10 @@ private:
 
     void notify(Event event)
     {
-        if (event == GotIp) { has_connected_ = true; retries_ = 0; }
+        if (event == GotIp) { has_connected_ = true; retries_ = 0; backoff_index_ = 0; }
         if (callback_ != nullptr) callback_(event, callback_context_);
     }
-    static constexpr uint8_t kMaxRetries = 5;
+    static constexpr uint8_t kMaxRetries = 10;
     esp_netif_t *netif_ = nullptr;
     bool started_ = false;
     bool enabled_ = true;
@@ -667,6 +752,7 @@ private:
     bool dhcp_enabled_ = true;
     volatile bool pending_connect_ = false;
     uint8_t retries_ = 0;
+    uint8_t backoff_index_ = 0;
     esp_timer_handle_t retry_timer_ = nullptr;
     char last_ssid_[33] = {};
 };

@@ -99,6 +99,22 @@ lv_obj_t *s_system_page_stack[kSystemPageDepthMax] = {};
 size_t s_system_page_depth = 0;
 lv_obj_t *s_ip_fields[5] = {};
 lv_obj_t *s_ip_apply_status = nullptr;
+lv_obj_t *s_root_network_row = nullptr;
+lv_obj_t *s_root_settings_page = nullptr;
+lv_obj_t *s_root_power_row = nullptr;
+lv_obj_t *s_root_sound_row = nullptr;
+lv_obj_t *s_root_region_row = nullptr;
+lv_obj_t *s_network_wifi_row = nullptr;
+lv_obj_t *s_network_details_row = nullptr;
+lv_obj_t *s_network_page = nullptr;
+lv_obj_t *s_connection_details_content = nullptr;
+lv_obj_t *s_power_auto_dim_row = nullptr;
+lv_obj_t *s_sound_alerts_row = nullptr;
+lv_obj_t *s_region_auto_time_row = nullptr;
+lv_obj_t *s_region_timezone_row = nullptr;
+lv_obj_t *s_region_format_row = nullptr;
+lv_obj_t *s_region_manual_time_row = nullptr;
+lv_obj_t *s_region_location_row = nullptr;
 char s_wifi_selected[33] = {};
 char s_wifi_connecting[33] = {};
 void (*s_quick_after_close)() = nullptr;
@@ -1748,12 +1764,21 @@ lv_obj_t *system_page_push(const char *title)
 
     lv_obj_t *content = lv_obj_create(page);
     lv_obj_set_size(content, LV_PCT(100), lv_area_get_height(&area) - 52);
-    lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Phase 11 edit begin: keep the form's top edge stable when the keyboard reduces
+    // the viewport height. A bottom anchor would move every child downward as
+    // soon as the viewport is resized.
+    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 52);
     lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(content, 0, 0);
     lv_obj_set_style_pad_all(content, 10, 0);
     lv_obj_set_style_pad_row(content, 1, 0);
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    // Remove Settings overscroll and throw lag. LVGL's default elastic
+    // overscroll exposes blank bands and its throw animation makes this dense
+    // page feel delayed on the panel.
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    // Phase 11 edit end.
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
     update_home_pill();
     // Explicitly ensure pill is on top of the Settings page
@@ -1766,6 +1791,19 @@ lv_obj_t *system_page_push(const char *title)
 
 void clear_page_cache(lv_obj_t *page)
 {
+    if (s_root_settings_page == page) {
+        s_root_settings_page = nullptr;
+        s_root_network_row = nullptr;
+    }
+    if (s_network_page == page) {
+        s_network_page = nullptr;
+        s_network_wifi_row = nullptr;
+        s_network_details_row = nullptr;
+    }
+    if (s_connection_details_content != nullptr &&
+            lv_obj_get_parent(s_connection_details_content) == page) {
+        s_connection_details_content = nullptr;
+    }
     if (page == s_wifi_page) {
         s_wifi_page = nullptr;
         s_wifi_page_list = nullptr;
@@ -1777,6 +1815,24 @@ void clear_page_cache(lv_obj_t *page)
     }
     memset(s_ip_fields, 0, sizeof(s_ip_fields));
     s_ip_apply_status = nullptr;
+    if (s_system_page_depth == 0) {
+        s_root_network_row = nullptr;
+        s_root_settings_page = nullptr;
+        s_root_power_row = nullptr;
+        s_root_sound_row = nullptr;
+        s_root_region_row = nullptr;
+        s_network_wifi_row = nullptr;
+        s_network_details_row = nullptr;
+        s_network_page = nullptr;
+        s_connection_details_content = nullptr;
+        s_power_auto_dim_row = nullptr;
+        s_sound_alerts_row = nullptr;
+        s_region_auto_time_row = nullptr;
+        s_region_timezone_row = nullptr;
+        s_region_format_row = nullptr;
+        s_region_manual_time_row = nullptr;
+        s_region_location_row = nullptr;
+    }
 }
 
 void system_page_pop()
@@ -1842,6 +1898,16 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary 
     return row;
 }
 
+void settings_row_set_summary(lv_obj_t *row, const char *summary)
+{
+    // Phase 11 edit begin: refresh descriptions without rebuilding the page.
+    if (row == nullptr) return;
+    auto *detail = static_cast<lv_obj_t *>(lv_obj_get_user_data(row));
+    if (detail == nullptr) return;
+    lv_label_set_text(detail, summary != nullptr ? summary : "");
+    // Phase 11 edit end.
+}
+
 // Trims the summary label so it stops short of a right-aligned control instead of
 // running underneath it. No-op for rows created without a summary.
 void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width)
@@ -1868,10 +1934,16 @@ lv_obj_t *settings_switch(lv_obj_t *row, bool checked)
     return control;
 }
 
-void settings_push_connection_details()
+void populate_connection_details(lv_obj_t *content)
 {
-    lv_obj_t *content = system_page_push("Connection Details");
     if (content == nullptr) return;
+    if (s_wifi_connecting[0] != '\0') {
+        char status[64] = {};
+        snprintf(status, sizeof(status), "Connecting to %.32s...", s_wifi_connecting);
+        (void)settings_row(content, "Status", status);
+        (void)settings_row(content, "Network", s_wifi_connecting);
+        return;
+    }
     IWifi::IpConfig config = {};
     int8_t rssi = 0;
     uint8_t mac[6] = {};
@@ -1892,6 +1964,19 @@ void settings_push_connection_details()
     if (config.dns2 != 0) { ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.dns2), value, sizeof(value)); (void)settings_row(content, "Secondary DNS", value); }
     if (hal().wifi->rssi(&rssi)) { snprintf(value, sizeof(value), "%d dBm", rssi); (void)settings_row(content, "Signal", value); }
     if (hal().wifi->mac(mac)) { snprintf(value, sizeof(value), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]); (void)settings_row(content, "WiFi MAC", value); }
+}
+
+void settings_push_connection_details()
+{
+    s_connection_details_content = system_page_push("Connection Details");
+    populate_connection_details(s_connection_details_content);
+}
+
+void refresh_connection_details()
+{
+    if (s_connection_details_content == nullptr) return;
+    lv_obj_clean(s_connection_details_content);
+    populate_connection_details(s_connection_details_content);
 }
 
 bool stored_ip_value(const char *key, uint32_t *out)
@@ -1943,6 +2028,7 @@ void ip_apply(lv_event_t *event)
     }
     if (hal().wifi != nullptr && hal().wifi->set_ip_config(config)) {
         lv_label_set_text(s_ip_apply_status, config.dhcp ? "Automatic addressing enabled" : "Static configuration applied");
+        settings_row_set_summary(s_network_details_row, config.dhcp ? "Connected - DHCP" : "Connected - Static");
     } else {
         lv_label_set_text(s_ip_apply_status, "Could not apply network settings");
     }
@@ -1958,7 +2044,10 @@ void settings_push_ip()
     lv_obj_t *mode = settings_row(content, "Automatic (DHCP)", stored_dhcp ? "Router assigns the address" : "Manual configuration");
     lv_obj_t *dhcp_switch = settings_switch(mode, stored_dhcp != 0);
     lv_obj_add_event_cb(dhcp_switch, [](lv_event_t *e) {
-        set_ip_fields_enabled(!lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED));
+        const bool automatic = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        set_ip_fields_enabled(!automatic);
+        settings_row_set_summary(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))),
+                                 automatic ? "Router assigns the address" : "Manual configuration");
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     static const char *labels[] = {"IP address", "Subnet mask", "Gateway", "Primary DNS", "Secondary DNS (optional)"};
     static const char *keys[] = {"net.ip", "net.mask", "net.gw", "net.dns1", "net.dns2"};
@@ -1980,6 +2069,10 @@ void settings_push_ip()
     lv_obj_t *apply = settings_row(content, "Apply", "Validates all fields before changing the interface");
     lv_obj_add_event_cb(apply, ip_apply, LV_EVENT_CLICKED, dhcp_switch);
     s_ip_apply_status = lv_label_create(content);
+    // Phase 11 edit begin: suppress LVGL's default label text until validation runs.
+    // empty until validation or Apply produces a message.
+    lv_label_set_text(s_ip_apply_status, "");
+    // Phase 11 edit end.
     lv_obj_set_width(s_ip_apply_status, LV_PCT(100));
     lv_label_set_long_mode(s_ip_apply_status, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(s_ip_apply_status, &lv_font_montserrat_16, 0);
@@ -1990,17 +2083,26 @@ void settings_push_network()
 {
     lv_obj_t *content = system_page_push("Network");
     if (content == nullptr) return;
+    s_network_page = lv_obj_get_parent(content);
     IWifi *wifi = hal().wifi;
     const char *summary = wifi == nullptr || !wifi->enabled() ? "Off" :
+                          s_wifi_connecting[0] != '\0' ? "Connecting..." :
                           wifi->connected() ? wifi->last_ssid() : "On - Not connected";
     lv_obj_t *wifi_row = settings_row(content, "WiFi", summary);
+    s_network_wifi_row = wifi_row;
     lv_obj_t *wifi_switch = settings_switch(wifi_row, wifi != nullptr && wifi->enabled());
-    lv_obj_add_event_cb(wifi_switch, [](lv_event_t *e) { if (hal().wifi != nullptr) hal().wifi->set_enabled(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(wifi_switch, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        if (hal().wifi != nullptr) hal().wifi->set_enabled(enabled);
+        settings_row_set_summary(s_network_wifi_row, enabled ? "On - Not connected" : "Off");
+        settings_row_set_summary(s_root_network_row, enabled ? "WiFi On - Not connected" : "WiFi Off");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *networks = settings_row(content, "WiFi Networks", "Scan, connect, or forget");
     lv_obj_add_event_cb(networks, [](lv_event_t *) { wifi_page_open(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *ip = settings_row(content, "IP Settings", "Automatic or validated manual address");
     lv_obj_add_event_cb(ip, [](lv_event_t *) { settings_push_ip(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *details = settings_row(content, "Connection Details", wifi != nullptr && wifi->has_ip() ? "Connected" : "Not connected");
+    s_network_details_row = details;
     lv_obj_add_event_cb(details, [](lv_event_t *) { settings_push_connection_details(); }, LV_EVENT_CLICKED, nullptr);
 }
 
@@ -2020,8 +2122,13 @@ void settings_push_display_power()
     // Master switch for the two dropdowns below. They keep their stored values
     // while it is off so turning it back on restores the user's choices.
     lv_obj_t *auto_dim_row = settings_row(content, "Auto Dimming", "Dim and turn off the screen when idle");
+    s_power_auto_dim_row = auto_dim_row;
     lv_obj_t *auto_dim_sw = settings_switch(auto_dim_row, crystal_power_auto_dim_enabled());
-    lv_obj_add_event_cb(auto_dim_sw, [](lv_event_t *e) { crystal_power_set_auto_dim(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(auto_dim_sw, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_power_set_auto_dim(enabled);
+        settings_row_set_summary(s_power_auto_dim_row, enabled ? "Dim and turn off the screen when idle" : "Automatic dimming disabled");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t *dim_row = settings_row(content, "Dim After", nullptr);
     lv_obj_t *dim = lv_dropdown_create(dim_row);
@@ -2050,7 +2157,11 @@ void settings_push_display_power()
 
     lv_obj_t *saving_row = settings_row(content, "Energy Saving", "Shorter timeouts and lower power");
     lv_obj_t *saving = settings_switch(saving_row, crystal_power_saving_enabled());
-    lv_obj_add_event_cb(saving, [](lv_event_t *e) { crystal_power_set_saving(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(saving, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_power_set_saving(enabled);
+        settings_row_set_summary(s_root_power_row, enabled ? "Energy Saving On" : "Energy Saving Off");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     int percent = 0; bool charging = false; char battery[40] = "Waiting for battery reading";
     if (crystal_battery_cached(&percent, &charging)) snprintf(battery, sizeof(battery), "%d%% - %s", percent, charging ? "Charging" : "On battery");
     (void)settings_row(content, "Battery", battery);
@@ -2067,8 +2178,14 @@ void settings_push_sound()
     lv_slider_set_range(volume, 0, 100); lv_slider_set_value(volume, crystal_hal_get_volume(), LV_ANIM_OFF);
     lv_obj_add_event_cb(volume, [](lv_event_t *e) { const uint8_t value = static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e)))); if (crystal_hal_set_volume(value) && hal().storage != nullptr) (void)hal().storage->set("volume", &value, sizeof(value)); }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *alerts_row = settings_row(content, "Timer & Alarm Sounds", "Play timer completion alerts");
+    s_sound_alerts_row = alerts_row;
     lv_obj_t *alerts = settings_switch(alerts_row, crystal_sound_alerts_enabled());
-    lv_obj_add_event_cb(alerts, [](lv_event_t *e) { crystal_sound_set_alerts(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(alerts, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_sound_set_alerts(enabled);
+        settings_row_set_summary(s_sound_alerts_row, enabled ? "Play timer completion alerts" : "Timer completion alerts disabled");
+        settings_row_set_summary(s_root_sound_row, enabled ? "Alerts On" : "Alerts Off");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *test = settings_row(content, "Test Sound", "Play the timer chime now");
     lv_obj_add_event_cb(test, [](lv_event_t *) { crystal_hal_timer_alarm(); }, LV_EVENT_CLICKED, nullptr);
 }
@@ -2103,7 +2220,14 @@ void settings_push_timezones()
     if (content == nullptr) return;
     for (const auto &entry : kTimezones) {
         lv_obj_t *row = settings_row(content, entry.label, strcmp(entry.label, current_timezone_label()) == 0 ? "Selected" : nullptr);
-        lv_obj_add_event_cb(row, [](lv_event_t *e) { const auto *zone = static_cast<const TimezoneEntry *>(lv_event_get_user_data(e)); if (zone != nullptr && crystal_timezone_apply(zone->posix)) system_page_pop(); }, LV_EVENT_CLICKED, const_cast<TimezoneEntry *>(&entry));
+        lv_obj_add_event_cb(row, [](lv_event_t *e) {
+            const auto *zone = static_cast<const TimezoneEntry *>(lv_event_get_user_data(e));
+            if (zone != nullptr && crystal_timezone_apply(zone->posix)) {
+                settings_row_set_summary(s_region_timezone_row, zone->label);
+                settings_row_set_summary(s_root_region_row, zone->label);
+                system_page_pop();
+            }
+        }, LV_EVENT_CLICKED, const_cast<TimezoneEntry *>(&entry));
     }
 }
 
@@ -2119,9 +2243,40 @@ void settings_push_location()
     for (lv_obj_t *field : {city, lat, lon}) lv_obj_add_event_cb(field, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
     auto set_manual_enabled = [city, lat, lon](bool enabled) { for (lv_obj_t *field : {city, lat, lon}) { if (enabled) lv_obj_clear_state(field, LV_STATE_DISABLED); else lv_obj_add_state(field, LV_STATE_DISABLED); } };
     set_manual_enabled(!crystal_weather_location_automatic());
-    lv_obj_add_event_cb(automatic, [](lv_event_t *e) { const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED); crystal_weather_set_automatic(enabled); lv_obj_t *content_obj = lv_obj_get_parent(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e)))); for (uint32_t i = 1; i <= 3; ++i) { lv_obj_t *field = lv_obj_get_child(content_obj, i); if (field != nullptr) { if (enabled) lv_obj_add_state(field, LV_STATE_DISABLED); else lv_obj_clear_state(field, LV_STATE_DISABLED); } } }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(automatic, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_weather_set_automatic(enabled);
+        lv_obj_t *content_obj = lv_obj_get_parent(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))));
+        for (uint32_t i = 1; i <= 3; ++i) {
+            lv_obj_t *field = lv_obj_get_child(content_obj, i);
+            if (field != nullptr) {
+                if (enabled) lv_obj_add_state(field, LV_STATE_DISABLED);
+                else lv_obj_clear_state(field, LV_STATE_DISABLED);
+            }
+        }
+        settings_row_set_summary(s_region_location_row, enabled ? "Automatic" : "Manual");
+        settings_row_set_summary(s_root_region_row, enabled ? current_timezone_label() : "Manual location");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *apply = settings_row(content, "Apply Manual Location", "Refreshes Weather immediately");
-    lv_obj_add_event_cb(apply, [](lv_event_t *e) { lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))); lv_obj_t *city_field = lv_obj_get_child(content_obj, 1); lv_obj_t *lat_field = lv_obj_get_child(content_obj, 2); lv_obj_t *lon_field = lv_obj_get_child(content_obj, 3); const char *lat_text = lv_textarea_get_text(lat_field); const char *lon_text = lv_textarea_get_text(lon_field); if (lat_text == nullptr || lat_text[0] == '\0' || lon_text == nullptr || lon_text[0] == '\0') return; char *end = nullptr; const double latitude = strtod(lat_text, &end); if (end == nullptr || *end != '\0') return; const double longitude = strtod(lon_text, &end); if (end == nullptr || *end != '\0') return; if (crystal_weather_set_location(latitude, longitude, lv_textarea_get_text(city_field))) system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(apply, [](lv_event_t *e) {
+        lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e)));
+        lv_obj_t *city_field = lv_obj_get_child(content_obj, 1);
+        lv_obj_t *lat_field = lv_obj_get_child(content_obj, 2);
+        lv_obj_t *lon_field = lv_obj_get_child(content_obj, 3);
+        const char *lat_text = lv_textarea_get_text(lat_field);
+        const char *lon_text = lv_textarea_get_text(lon_field);
+        if (lat_text == nullptr || lat_text[0] == '\0' || lon_text == nullptr || lon_text[0] == '\0') return;
+        char *end = nullptr;
+        const double latitude = strtod(lat_text, &end);
+        if (end == nullptr || *end != '\0') return;
+        const double longitude = strtod(lon_text, &end);
+        if (end == nullptr || *end != '\0') return;
+        if (crystal_weather_set_location(latitude, longitude, lv_textarea_get_text(city_field))) {
+            settings_row_set_summary(s_region_location_row, "Manual");
+            settings_row_set_summary(s_root_region_row, "Manual location");
+            system_page_pop();
+        }
+    }, LV_EVENT_CLICKED, nullptr);
 }
 
 void settings_push_manual_time()
@@ -2149,17 +2304,35 @@ void settings_push_region_time()
                  sync_time.tm_hour, sync_time.tm_min);
     }
     lv_obj_t *auto_row = settings_row(content, "Set Time Automatically", sync_summary);
+    s_region_auto_time_row = auto_row;
     lv_obj_t *automatic = settings_switch(auto_row, crystal_time_auto_enabled());
-    lv_obj_add_event_cb(automatic, [](lv_event_t *e) { crystal_time_set_auto(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(automatic, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_time_set_auto(enabled);
+        settings_row_set_summary(s_region_auto_time_row, enabled ? "Automatic time enabled" : "Automatic time disabled");
+        settings_row_set_summary(s_region_manual_time_row, enabled ? "Turn automatic time off first" : "Manual");
+        if (s_region_manual_time_row != nullptr) {
+            if (enabled) lv_obj_add_state(s_region_manual_time_row, LV_STATE_DISABLED);
+            else lv_obj_clear_state(s_region_manual_time_row, LV_STATE_DISABLED);
+        }
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *timezone = settings_row(content, "Timezone", current_timezone_label());
+    s_region_timezone_row = timezone;
     lv_obj_add_event_cb(timezone, [](lv_event_t *) { settings_push_timezones(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *format_row = settings_row(content, "24-Hour Time", crystal_time_format_24() ? "24-hour" : "12-hour");
+    s_region_format_row = format_row;
     lv_obj_t *format = settings_switch(format_row, crystal_time_format_24());
-    lv_obj_add_event_cb(format, [](lv_event_t *e) { crystal_time_set_format_24(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(format, [](lv_event_t *e) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        crystal_time_set_format_24(enabled);
+        settings_row_set_summary(s_region_format_row, enabled ? "24-hour" : "12-hour");
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *manual = settings_row(content, "Set Date & Time", crystal_time_auto_enabled() ? "Turn automatic time off first" : "Manual");
+    s_region_manual_time_row = manual;
     if (crystal_time_auto_enabled()) lv_obj_add_state(manual, LV_STATE_DISABLED);
     else lv_obj_add_event_cb(manual, [](lv_event_t *) { settings_push_manual_time(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *location = settings_row(content, "Location", crystal_weather_location_automatic() ? "Automatic" : "Manual");
+    s_region_location_row = location;
     lv_obj_add_event_cb(location, [](lv_event_t *) { settings_push_location(); }, LV_EVENT_CLICKED, nullptr);
 }
 
@@ -2265,16 +2438,21 @@ void settings_open()
     }
     lv_obj_t *content = system_page_push("Settings");
     if (content == nullptr) return;
+    s_root_settings_page = lv_obj_get_parent(content);
     IWifi *wifi = hal().wifi;
     const char *network_summary = wifi == nullptr || !wifi->enabled() ? "WiFi Off" :
                                   wifi->connected() ? wifi->last_ssid() : "WiFi On - Not connected";
     lv_obj_t *network = settings_row(content, "Network", network_summary);
+    s_root_network_row = network;
     lv_obj_add_event_cb(network, [](lv_event_t *) { settings_push_network(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *power = settings_row(content, "Display & Power", crystal_power_saving_enabled() ? "Energy Saving On" : "Energy Saving Off");
+    s_root_power_row = power;
     lv_obj_add_event_cb(power, [](lv_event_t *) { settings_push_display_power(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *sound = settings_row(content, "Sound", crystal_sound_alerts_enabled() ? "Alerts On" : "Alerts Off");
+    s_root_sound_row = sound;
     lv_obj_add_event_cb(sound, [](lv_event_t *) { settings_push_sound(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *region = settings_row(content, "Region & Time", current_timezone_label());
+    s_root_region_row = region;
     lv_obj_add_event_cb(region, [](lv_event_t *) { settings_push_region_time(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *system = settings_row(content, "System", hal().system_info != nullptr ? hal().system_info->app_version() : "About and status");
     lv_obj_add_event_cb(system, [](lv_event_t *) { settings_push_system(); }, LV_EVENT_CLICKED, nullptr);
@@ -2387,6 +2565,14 @@ void crystal_shell_wifi_event(uint8_t event)
 {
     if (event == UI_EVT_WIFI_GOT_IP) {
         s_wifi_connecting[0] = '\0';
+        refresh_connection_details();
+        if (s_network_wifi_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_network_wifi_row, hal().wifi->last_ssid());
+        }
+        if (s_network_details_row != nullptr) settings_row_set_summary(s_network_details_row, "Connected");
+        if (s_root_network_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_root_network_row, hal().wifi->last_ssid());
+        }
         if (s_quick_wifi != nullptr) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         wifi_page_close();
         if (s_quick_wifi == nullptr) return;
@@ -2396,11 +2582,23 @@ void crystal_shell_wifi_event(uint8_t event)
         if (s_quick_wifi != nullptr) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         const char *ssid = hal().wifi != nullptr ? hal().wifi->last_ssid() : "";
         strlcpy(s_wifi_connecting, ssid, sizeof(s_wifi_connecting));
+        refresh_connection_details();
+        if (s_network_wifi_row != nullptr) settings_row_set_summary(s_network_wifi_row, "Connecting...");
+        if (s_network_details_row != nullptr) settings_row_set_summary(s_network_details_row, "Connecting...");
+        if (s_root_network_row != nullptr) settings_row_set_summary(s_root_network_row, "Connecting...");
         if (s_quick_wifi != nullptr) { lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0); if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); } }
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) { char text[64]; snprintf(text, sizeof(text), "Connecting to %.32s...", ssid); lv_label_set_text(s_wifi_page_status, text); }
         wifi_page_fill_list();
     } else if (event == UI_EVT_WIFI_DISCONNECTED) {
         s_wifi_connecting[0] = '\0';
+        refresh_connection_details();
+        if (s_network_wifi_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_network_wifi_row, hal().wifi->enabled() ? "On - Not connected" : "Off");
+        }
+        if (s_network_details_row != nullptr) settings_row_set_summary(s_network_details_row, "Not connected");
+        if (s_root_network_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_root_network_row, hal().wifi->enabled() ? "WiFi On - Not connected" : "WiFi Off");
+        }
         wifi_page_fill_list();
         if (s_quick_wifi == nullptr) return;
         if (hal().wifi != nullptr && hal().wifi->enabled()) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
@@ -2409,6 +2607,14 @@ void crystal_shell_wifi_event(uint8_t event)
         if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); }
     } else if (event == UI_EVT_WIFI_CONNECT_FAILED) {
         s_wifi_connecting[0] = '\0';
+        refresh_connection_details();
+        if (s_network_wifi_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_network_wifi_row, hal().wifi->enabled() ? "On - Not connected" : "Off");
+        }
+        if (s_network_details_row != nullptr) settings_row_set_summary(s_network_details_row, "Not connected");
+        if (s_root_network_row != nullptr && hal().wifi != nullptr) {
+            settings_row_set_summary(s_root_network_row, hal().wifi->enabled() ? "WiFi On - Not connected" : "WiFi Off");
+        }
         wifi_page_fill_list();
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
     } else if (event == UI_EVT_WIFI_SCAN_DONE) {
