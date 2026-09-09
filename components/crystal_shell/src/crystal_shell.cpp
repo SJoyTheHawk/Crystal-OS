@@ -1802,26 +1802,56 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary 
     lv_obj_set_style_radius(row, 0, 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x1b2028), 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x28323e), LV_STATE_PRESSED);
+    // Without these the default theme paints disabled rows a pale grey that reads
+    // as "highlighted" rather than "unavailable". Keep the row on the dark palette
+    // and fade its contents instead.
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x15191f), LV_STATE_DISABLED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_DISABLED);
+    lv_obj_set_style_opa(row, LV_OPA_50, LV_STATE_DISABLED);
     lv_obj_set_style_shadow_width(row, 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_hor(row, 14, 0);
+    // The two labels are placed from the row top with explicit offsets, so the
+    // theme's default vertical button padding must go or it shifts both inwards
+    // until the title and summary collide.
+    lv_obj_set_style_pad_ver(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *title = lv_label_create(row);
     lv_label_set_text(title, label);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xf2f4f7), 0);
-    lv_obj_align(title, summary == nullptr ? LV_ALIGN_LEFT_MID : LV_ALIGN_TOP_LEFT, 0,
-                 summary == nullptr ? 0 : 7);
-    if (summary != nullptr) {
+    if (summary == nullptr) {
+        lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, 0);
+    } else {
+        // 23px title line + 2px gap + 18px summary line = 43px, centred in 60px.
+        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 8);
         lv_obj_t *detail = lv_label_create(row);
         lv_label_set_text(detail, summary);
         lv_label_set_long_mode(detail, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(detail, 240);
+        // Clamp to one line; height=18 forces truncation rather than wrap. The width
+        // takes the whole row so the ellipsis is a last resort instead of the norm -
+        // rows that put a control on the right shrink this via settings_row_reserve_right().
+        lv_obj_set_width(detail, LV_PCT(100));
+        lv_obj_set_height(detail, 18);
         lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(detail, lv_color_hex(0x91a0b3), 0);
-        lv_obj_align(detail, LV_ALIGN_BOTTOM_LEFT, 0, -6);
+        lv_obj_align(detail, LV_ALIGN_TOP_LEFT, 0, 33);
+        // Remembered so controls added later can reclaim their own space.
+        lv_obj_set_user_data(row, detail);
     }
     return row;
+}
+
+// Trims the summary label so it stops short of a right-aligned control instead of
+// running underneath it. No-op for rows created without a summary.
+void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width)
+{
+    auto *detail = static_cast<lv_obj_t *>(lv_obj_get_user_data(row));
+    if (detail == nullptr) return;
+    lv_obj_update_layout(row);
+    lv_coord_t width = lv_obj_get_content_width(row) - control_width - 12;
+    if (width < 80) width = 80;
+    lv_obj_set_width(detail, width);
 }
 
 lv_obj_t *settings_switch(lv_obj_t *row, bool checked)
@@ -1829,7 +1859,12 @@ lv_obj_t *settings_switch(lv_obj_t *row, bool checked)
     lv_obj_t *control = lv_switch_create(row);
     lv_obj_set_size(control, 52, 30);
     lv_obj_align(control, LV_ALIGN_RIGHT_MID, 0, 0);
+    // The 52x30 body is a small target for a finger. Padding the click area by 15px
+    // makes it 82x60 - the full row height - without changing how it looks. LVGL
+    // hit-tests children before the row, so these presses no longer land on the row.
+    lv_obj_set_ext_click_area(control, 15);
     if (checked) lv_obj_add_state(control, LV_STATE_CHECKED);
+    settings_row_reserve_right(row, 52);
     return control;
 }
 
@@ -1977,6 +2012,7 @@ void settings_push_display_power()
     lv_obj_t *brightness = lv_slider_create(brightness_row);
     lv_obj_set_size(brightness, 180, 18);
     lv_obj_align(brightness, LV_ALIGN_RIGHT_MID, 0, 0);
+    settings_row_reserve_right(brightness_row, 180);
     lv_slider_set_range(brightness, 0, 95);
     lv_slider_set_value(brightness, crystal_brightness_level(), LV_ANIM_OFF);
     lv_obj_add_event_cb(brightness, [](lv_event_t *e) { crystal_brightness_set(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -2008,6 +2044,7 @@ void settings_push_display_power()
     lv_obj_t *level_row = settings_row(content, "Dim Brightness", "HAL level 5-50");
     lv_obj_t *level = lv_slider_create(level_row);
     lv_obj_set_size(level, 160, 18); lv_obj_align(level, LV_ALIGN_RIGHT_MID, 0, 0);
+    settings_row_reserve_right(level_row, 160);
     lv_slider_set_range(level, 5, 50); lv_slider_set_value(level, crystal_power_dim_level(), LV_ANIM_OFF);
     lv_obj_add_event_cb(level, [](lv_event_t *e) { crystal_power_set_dim_level(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -2026,6 +2063,7 @@ void settings_push_sound()
     lv_obj_t *volume_row = settings_row(content, "Volume", "0-100");
     lv_obj_t *volume = lv_slider_create(volume_row);
     lv_obj_set_size(volume, 180, 18); lv_obj_align(volume, LV_ALIGN_RIGHT_MID, 0, 0);
+    settings_row_reserve_right(volume_row, 180);
     lv_slider_set_range(volume, 0, 100); lv_slider_set_value(volume, crystal_hal_get_volume(), LV_ANIM_OFF);
     lv_obj_add_event_cb(volume, [](lv_event_t *e) { const uint8_t value = static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e)))); if (crystal_hal_set_volume(value) && hal().storage != nullptr) (void)hal().storage->set("volume", &value, sizeof(value)); }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *alerts_row = settings_row(content, "Timer & Alarm Sounds", "Play timer completion alerts");

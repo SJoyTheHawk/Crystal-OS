@@ -37,12 +37,26 @@ heavy multimedia, Linux tools, or general-purpose apps.
 - ESP32-S3 with 16 MB flash and octal PSRAM
 - 480x480 RGB LCD
 - GT911 touch controller over I2C
+- PCF85063 RTC over I2C
+- AXP2101 power management over I2C
 - ESP-IDF 6.1
 - LVGL 8.4.0
 - `esp-brookesia` 0.4.2
 
 Board wiring and pin assignments are maintained in the
 [Waveshare ESP32-S3-Touch-LCD-4B schematic diagram](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4B#Schematic_Diagram).
+
+## Current features
+
+- **Card shell:** horizontal swipe navigation with 50% visual crossover and persistent previews
+- **Gesture arbiter:** unified edge-gesture ownership for app switching and system overlays
+- **Status bar:** time, Wi-Fi, battery, and page indicators
+- **Quick Settings:** brightness, volume, Wi-Fi, and energy-saving toggle
+- **Settings overlay:** Wi-Fi networks, static IP, timezone, manual time/location, timer alerts, device info
+- **Keyboard overlay:** iOS-inspired shell keyboard with field lifting and multi-layer lifecycle
+- **Apps:** Clock (with timer/stopwatch), Weather (Open-Meteo), Calculator, Hello World, State Test
+- **Core services:** RTC persistence, Wi-Fi/SNTP sync, power management with dim/off timeouts
+- **Hardware abstraction:** unified interface for brightness, storage, Wi-Fi, RTC, power, and touch
 
 ## Phase status
 
@@ -66,16 +80,16 @@ validation remains. Details and evidence live in
 - [x] Phase 8 — quick settings
 - [x] Phase 8.5 — corner-anchored quick panel
 - [x] Phase 9 — Wi-Fi product integration
-- [ ] Phase 9.5 — Weather app hardware validation
+- [x] Phase 9.5 — Weather app
 - [x] Phase 9.6 — Calculator app port
-- [ ] Phase 10 — keyboard overlay
-- [ ] Phase 11 — Settings and power management
+- [x] Phase 10 — keyboard overlay
+- [x] Phase 11 — Settings and power management
 - [ ] Phase 12 — reliability and recovery
 - [ ] Phase 13 — PC app catalog and package loader
 
-Phase 11 is implemented and build-verified. It remains unchecked until the
-on-device gesture, static-network, timezone persistence, and current-draw gates
-in `docs/VALIDATION_CHECKLIST.md` pass.
+Phases 9.5, 9.6, 10, and 11 are implemented and build-verified. They remain
+unchecked until their hardware validation checklists in
+`docs/VALIDATION_CHECKLIST.md` pass on the physical panel.
 
 ## V2 track: installable apps
 
@@ -148,22 +162,26 @@ idf.py build
 ## Project layout
 
 ```text
-main/                  Application entry point
-components/crystal_hal/ Hardware abstraction interfaces and device adapters
-components/crystal_app/ CrystalApp lifecycle and bounded per-app state
+main/                       Application entry point and shell initialization
+components/crystal_hal/     Hardware abstraction interfaces and device adapters
+components/crystal_app/     CrystalApp lifecycle and bounded per-app state
 components/crystal_registry/ Persistent app enable and launcher slot registry
-components/state_test_app/ Phase 4 state persistence validation app
-components/clock_app/     Phase 5.5 clock, timer, and stopwatch app
-components/hello_app/   Hello World launcher application and icon
-components/perf_spike/  Phase 1 temporary performance benchmark
-docs/                   Design, implementation, and bring-up notes
-partitions.csv          Dual-OTA partition table with storage partition
-sdkconfig.defaults     Project configuration defaults
+components/crystal_shell/   Card shell, gesture arbiter, and system overlays
+components/crystal_core/    Core services (RTC, Wi-Fi/SNTP, power states, timers)
+components/hello_app/       Hello World launcher application and icon
+components/state_test_app/  Phase 4 state persistence validation app
+components/clock_app/       Clock, timer, and stopwatch app (Phase 5.5)
+components/weather_app/     Open-Meteo weather app (Phase 9.5)
+components/calculator_app/  Calculator app port (Phase 9.6)
+components/perf_spike/      Phase 1 temporary performance benchmark
+docs/                       Design, implementation, and bring-up notes
+partitions.csv              Dual-OTA partition table with storage partition
+sdkconfig.defaults          Project configuration defaults
 ```
 
 The performance spike is retained as diagnostic code, but it is not installed
-by the production startup path. The display currently uses one RGB buffer:
-`CONFIG_BSP_LCD_RGB_BUFFER_NUMS=1`.
+by the production startup path. The display currently uses two RGB buffers:
+`CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2` in avoid-tear direct mode.
 
 ## License and attribution
 
