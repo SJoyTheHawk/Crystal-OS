@@ -27,6 +27,7 @@ void settings_open();
 void settings_open_at_wifi();
 void wifi_tile_text(char *out, size_t size);
 bool shell_consume_back();
+void close_settings_and_restore_app();
 void system_page_pop();
 
 namespace {
@@ -1424,20 +1425,7 @@ void on_gesture_release(lv_event_t *event)
                      s_last_app_before_settings);
             // Close all Settings pages if open
             if (s_system_page_depth > 0) {
-                ESP_LOGI(TAG, "Closing all %zu Settings pages", s_system_page_depth);
-                while (s_system_page_depth > 0) system_page_pop();
-                // Return to the app that was active before Settings opened
-                if (s_last_app_before_settings >= 0) {
-                    // Was in an app - return to that app
-                    ESP_LOGI(TAG, "Returning to app index %d", s_last_app_before_settings);
-                    if (!start_card(static_cast<size_t>(s_last_app_before_settings), false)) {
-                        ESP_LOGW(TAG, "Failed to return to app %d", s_last_app_before_settings);
-                    }
-                    // Redraw pill after returning to app
-                    update_home_pill();
-                }
-                // else: was on launcher, already there after closing Settings
-                s_last_app_before_settings = -1;  // Reset
+                close_settings_and_restore_app();
             }
             // Close quick settings if open
             else if (s_quick_settings_open) {
@@ -1749,7 +1737,7 @@ lv_obj_t *system_page_push(const char *title)
     lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(back, 0, 0);
-    lv_obj_add_event_cb(back, [](lv_event_t *) { system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(back, [](lv_event_t *) { (void)shell_consume_back(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *back_label = lv_label_create(back);
     lv_label_set_text(back_label, s_system_page_depth == 1 ? LV_SYMBOL_CLOSE : LV_SYMBOL_LEFT);
     lv_obj_set_style_text_font(back_label, &lv_font_montserrat_20, 0);
@@ -1848,6 +1836,22 @@ void system_page_pop()
         lv_obj_clear_flag(s_system_page_stack[s_system_page_depth - 1], LV_OBJ_FLAG_HIDDEN);
     }
     update_home_pill();
+}
+
+void close_settings_and_restore_app()
+{
+    if (s_system_page_depth == 0) return;
+    ESP_LOGI(TAG, "Closing all %zu Settings pages", s_system_page_depth);
+    while (s_system_page_depth > 0) system_page_pop();
+
+    if (s_last_app_before_settings >= 0) {
+        ESP_LOGI(TAG, "Returning to app index %d", s_last_app_before_settings);
+        if (!start_card(static_cast<size_t>(s_last_app_before_settings), false)) {
+            ESP_LOGW(TAG, "Failed to return to app %d", s_last_app_before_settings);
+        }
+        update_home_pill();
+    }
+    s_last_app_before_settings = -1;
 }
 
 lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)
@@ -2497,7 +2501,7 @@ bool shell_consume_back()
         // popping. The back button shows LV_SYMBOL_CLOSE at depth 1 to signal
         // this; the bottom swipe matches that behaviour.
         if (s_system_page_depth == 1) {
-            while (s_system_page_depth > 0) system_page_pop();
+            close_settings_and_restore_app();
         } else {
             system_page_pop();
         }
