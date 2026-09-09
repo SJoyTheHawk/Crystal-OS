@@ -23,6 +23,14 @@ struct IRtc {
 struct IWifi {
     enum Event : uint8_t { GotIp, Disconnected, ScanDone, ConnectFailed, Connecting };
     struct Network { char ssid[33]; int8_t rssi; bool secured; };
+    struct IpConfig {
+        bool dhcp;
+        uint32_t ip;
+        uint32_t mask;
+        uint32_t gateway;
+        uint32_t dns1;
+        uint32_t dns2;
+    };
     using EventCallback = void (*)(Event event, void *context);
     virtual ~IWifi() = default;
     virtual void set_event_callback(EventCallback callback, void *context) = 0;
@@ -41,6 +49,12 @@ struct IWifi {
     virtual void set_enabled(bool enabled) = 0;
     virtual const char *last_ssid() const = 0;
     virtual size_t scan_results(Network *out, size_t capacity) const = 0;
+    virtual bool ip_config(IpConfig *out) const = 0;
+    virtual bool set_ip_config(const IpConfig &config) = 0;
+    virtual bool mac(uint8_t out[6]) const = 0;
+    virtual bool rssi(int8_t *out) const = 0;
+    virtual void set_power_save(bool enabled) = 0;
+    virtual bool set_hostname(const char *name) = 0;
 };
 
 struct IStorage {
@@ -61,6 +75,18 @@ struct IPower {
     virtual bool readBattery(int *percent, bool *charging) = 0;
 };
 
+struct ISystemInfo {
+    virtual ~ISystemInfo() = default;
+    virtual uint32_t free_heap() const = 0;
+    virtual uint32_t free_psram() const = 0;
+    virtual uint32_t uptime_seconds() const = 0;
+    virtual const char *reset_reason() const = 0;
+    virtual const char *idf_version() const = 0;
+    virtual const char *app_version() const = 0;
+    virtual bool chip_id(uint8_t out[6]) const = 0;
+    virtual bool storage_bytes(uint32_t *used, uint32_t *total) const = 0;
+};
+
 struct CrystalHal {
     IBrightness *brightness;
     IRtc *rtc;
@@ -68,6 +94,7 @@ struct CrystalHal {
     IStorage *storage;
     ITouchRaw *touch_raw;
     IPower *power;
+    ISystemInfo *system_info;
 };
 
 CrystalHal &hal();

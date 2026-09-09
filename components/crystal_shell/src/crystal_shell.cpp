@@ -15,17 +15,36 @@
 #include "esp_brookesia.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "lwip/inet.h"
 #include "lvgl.h"
 
 static const char *TAG = "crystal_shell";
 
 void wifi_page_open();
 void wifi_page_close();
+void settings_open();
+void settings_open_at_wifi();
 void wifi_tile_text(char *out, size_t size);
 bool shell_consume_back();
+void system_page_pop();
 
 namespace {
 constexpr int kTopBand = 20;
+constexpr int kBottomBand = 24;
+// Home pill geometry. Width matches iOS's proportion: its indicator is 140pt on
+// a 390pt-wide screen, 35.9%, which is 172px here. Stealth comes from opacity
+// instead -- 30% white, against app backgrounds that are all dark in this tree
+// (0x11181F, 0x101827), so it reads without a shadow or outline. The inset puts
+// it inside kBottomBand, so it marks the band it belongs to.
+constexpr lv_coord_t kHomePillWidth = 172;
+constexpr lv_coord_t kHomePillHeight = 6;
+constexpr lv_coord_t kHomePillInset = 7;
+// Travel required to commit the bottom swipe. Brookesia only classifies a
+// direction after 50px (direction_vertical in the 480x480 stylesheet), so this
+// must exceed that or the owner is claimed on gestures that never resolve as UP.
+// 80px is a comfortable flick and still far above a tap in the band.
+constexpr int kHomeSwipeTravel = 80;
 // Crop the captured app area to 90% x 90% about its centre, then store it at
 // 1/kSnapshotScaleDivisor of the app's resolution. On this panel the observed
 // 480x440 app area produces a 240x220 snapshot (~103 KiB).
@@ -42,6 +61,7 @@ constexpr lv_coord_t kQuickGapTop = 8;
 constexpr lv_coord_t kQuickCornerWidth = 120;
 constexpr lv_coord_t kQuickPanelSize = 4 * kQuickCell + 3 * kQuickGap + 2 * kQuickPad;
 constexpr uint32_t kQuickAnimMs = 200;
+constexpr size_t kSystemPageDepthMax = 4;
 // An lv_anim ready callback runs inside lv_timer_handler, before the display is
 // refreshed, so the animation's final frame is still unpainted at that moment.
 // Doing the Brookesia switch there costs the user that frame and makes the
@@ -57,21 +77,28 @@ size_t s_current_index = 0;
 bool s_switching = false;
 bool s_quick_settings_open = false;
 bool s_keyboard_open = false;
-bool s_settings_open = false;
 bool s_modal_open = false;
 bool s_swallow_wake_touch = false;
+bool s_home_gesture_active = false;
+int s_last_app_before_settings = -1;  // -1 = launcher, >= 0 = app index
 CrystalGestureOwner s_gesture_owner = CrystalGestureOwner::None;
 ESP_Brookesia_Gesture *s_gesture = nullptr;
 lv_obj_t *s_page_dots = nullptr;
+lv_obj_t *s_home_pill = nullptr;
 lv_obj_t *s_quick_root = nullptr;
 lv_obj_t *s_quick_panel = nullptr;
 lv_obj_t *s_quick_brightness = nullptr;
 lv_obj_t *s_quick_volume = nullptr;
 lv_obj_t *s_quick_wifi = nullptr;
 lv_obj_t *s_wifi_dialog = nullptr;
+lv_obj_t *s_system_dialog = nullptr;
 lv_obj_t *s_wifi_page = nullptr;
 lv_obj_t *s_wifi_page_list = nullptr;
 lv_obj_t *s_wifi_page_status = nullptr;
+lv_obj_t *s_system_page_stack[kSystemPageDepthMax] = {};
+size_t s_system_page_depth = 0;
+lv_obj_t *s_ip_fields[5] = {};
+lv_obj_t *s_ip_apply_status = nullptr;
 char s_wifi_selected[33] = {};
 char s_wifi_connecting[33] = {};
 void (*s_quick_after_close)() = nullptr;
@@ -185,9 +212,7 @@ void quick_set_bar_from_touch(lv_obj_t *bar)
     lv_bar_set_value(bar, value, LV_ANIM_OFF);
     if (bar == s_quick_brightness) {
         value = LV_CLAMP(0, value, 95);
-        hal().brightness->set(static_cast<uint8_t>(value));
-        const uint8_t pct = hal().brightness->get();
-        if (hal().storage != nullptr) hal().storage->set("brightness", &pct, sizeof(pct));
+        crystal_brightness_set(static_cast<uint8_t>(value));
     } else if (bar == s_quick_volume) {
         if (crystal_hal_set_volume(value) && hal().storage != nullptr) {
             const uint8_t pct = static_cast<uint8_t>(value);
@@ -203,12 +228,6 @@ void quick_bar_event(lv_event_t *event)
     if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
         quick_set_bar_from_touch(static_cast<lv_obj_t *>(lv_event_get_target(event)));
     }
-}
-
-void quick_show_message(lv_event_t *)
-{
-    static const char message[] = "Settings coming in Phase 11";
-    (void)crystal_ui_post(UI_EVT_TOAST, message, sizeof(message));
 }
 
 void close_quick_settings(void (*then)())
@@ -281,7 +300,7 @@ bool create_quick_settings()
     if (hal().wifi != nullptr && hal().wifi->enabled()) {
         lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
     }
-    lv_obj_add_event_cb(s_quick_wifi, [](lv_event_t *) { close_quick_settings(wifi_page_open); }, LV_EVENT_LONG_PRESSED, nullptr);
+    lv_obj_add_event_cb(s_quick_wifi, [](lv_event_t *) { close_quick_settings(settings_open_at_wifi); }, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_add_event_cb(s_quick_wifi, [](lv_event_t *event) {
         lv_obj_t *tile = static_cast<lv_obj_t *>(lv_event_get_target(event));
         if (hal().wifi == nullptr) return;
@@ -291,7 +310,7 @@ bool create_quick_settings()
         else lv_obj_clear_state(tile, LV_STATE_CHECKED);
     }, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_t *bt = tile(LV_SYMBOL_BLUETOOTH "\nBluetooth\nUnavailable", LV_GRID_ALIGN_STRETCH, 2, 2, 0, 2); lv_obj_set_style_bg_opa(bt, 15, 0); lv_obj_set_style_text_opa(lv_obj_get_child(bt, 0), LV_OPA_40, 0); lv_obj_add_state(bt, LV_STATE_DISABLED);
-    s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, hal().brightness->get(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
+    s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, crystal_brightness_level(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
     // The bundled font has no sun glyph, so draw a small flat icon without
     // theme styles. Its bottom alignment matches the volume symbol exactly.
     lv_obj_t *brightness_icon = lv_obj_create(s_quick_brightness); lv_obj_remove_style_all(brightness_icon); lv_obj_set_size(brightness_icon, 16, 16); lv_obj_align(brightness_icon, LV_ALIGN_BOTTOM_MID, 0, -8); lv_obj_clear_flag(brightness_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -306,9 +325,34 @@ bool create_quick_settings()
     lv_obj_t *energy_leaf = lv_obj_create(energy); lv_obj_remove_style_all(energy_leaf); lv_obj_set_size(energy_leaf, 20, 18); lv_obj_align(energy_leaf, LV_ALIGN_CENTER, 10, 2); lv_obj_clear_flag(energy_leaf, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *leaf_left = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_left); lv_obj_set_size(leaf_left, 7, 12); lv_obj_set_pos(leaf_left, 3, 2); lv_obj_set_style_bg_color(leaf_left, lv_color_hex(0x9be15b), 0); lv_obj_set_style_bg_opa(leaf_left, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_left, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_left, 350, 0); lv_obj_clear_flag(leaf_left, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *leaf_right = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_right); lv_obj_set_size(leaf_right, 7, 12); lv_obj_set_pos(leaf_right, 9, 2); lv_obj_set_style_bg_color(leaf_right, lv_color_hex(0x70bd43), 0); lv_obj_set_style_bg_opa(leaf_right, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_right, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_right, 550, 0); lv_obj_clear_flag(leaf_right, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    uint8_t saving = 0; size_t saving_len = sizeof(saving); if (hal().storage != nullptr) (void)hal().storage->get("power.saving", &saving, &saving_len); if (saving) lv_obj_add_state(energy, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(energy, [](lv_event_t *e) { lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e)); const bool on = !lv_obj_has_state(obj, LV_STATE_CHECKED); if (on) lv_obj_add_state(obj, LV_STATE_CHECKED); else lv_obj_clear_state(obj, LV_STATE_CHECKED); uint8_t value = on ? 1 : 0; if (hal().storage != nullptr) hal().storage->set("power.saving", &value, sizeof(value)); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *gear = tile(LV_SYMBOL_SETTINGS, LV_GRID_ALIGN_STRETCH, 3, 1, 2, 1); lv_obj_add_event_cb(gear, [](lv_event_t *) { quick_show_message(nullptr); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a, s_quick_panel); lv_anim_set_exec_cb(&a, quick_anim_y); lv_anim_set_values(&a, lv_obj_get_y(s_quick_panel), s_quick_y_hidden); lv_anim_set_time(&a, kQuickAnimMs); lv_anim_set_path_cb(&a, lv_anim_path_ease_out); lv_anim_set_ready_cb(&a, quick_anim_ready); s_quick_settling = true; s_quick_closing = true; lv_anim_start(&a); }, LV_EVENT_CLICKED, nullptr);
+    if (crystal_power_saving_enabled()) lv_obj_add_state(energy, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(energy, [](lv_event_t *e) { lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e)); const bool on = !lv_obj_has_state(obj, LV_STATE_CHECKED); if (on) lv_obj_add_state(obj, LV_STATE_CHECKED); else lv_obj_clear_state(obj, LV_STATE_CHECKED); crystal_power_set_saving(on); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *gear = tile(LV_SYMBOL_SETTINGS, LV_GRID_ALIGN_STRETCH, 3, 1, 2, 1);
+    lv_obj_add_event_cb(gear, [](lv_event_t *) { close_quick_settings(settings_open); }, LV_EVENT_CLICKED, nullptr);
+    // Auto Dimming. Sun outline plus rays and an "A", drawn natively for the same
+    // reason as the brightness sun and the energy leaf: the bundled font has no
+    // sun glyph. Monochrome to match the other tiles; the leaf is deliberately
+    // the only coloured element on the panel.
+    lv_obj_t *auto_dim = tile("", LV_GRID_ALIGN_STRETCH, 2, 1, 3, 1);
+    // 16x16 to match the brightness sun and the 14px symbol glyphs on the other
+    // tiles. Sized against those, not against the source artwork.
+    lv_obj_t *dim_icon = lv_obj_create(auto_dim); lv_obj_remove_style_all(dim_icon); lv_obj_set_size(dim_icon, 16, 16); lv_obj_align(dim_icon, LV_ALIGN_CENTER, -6, 0); lv_obj_clear_flag(dim_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *dim_disc = lv_obj_create(dim_icon); lv_obj_remove_style_all(dim_disc); lv_obj_set_size(dim_disc, 9, 9); lv_obj_center(dim_disc); lv_obj_set_style_bg_opa(dim_disc, LV_OPA_TRANSP, 0); lv_obj_set_style_border_width(dim_disc, 2, 0); lv_obj_set_style_border_color(dim_disc, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_border_opa(dim_disc, LV_OPA_COVER, 0); lv_obj_set_style_radius(dim_disc, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(dim_disc, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    // Cardinal rays as 2x3 / 3x2 bars, diagonals as 2x2 dots. Same ray geometry
+    // as the brightness sun so the two read as a family.
+    const lv_coord_t dim_bars[][4] = {{7, 0, 2, 3}, {7, 13, 2, 3}, {0, 7, 3, 2}, {13, 7, 3, 2}};
+    for (const auto &bar : dim_bars) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, bar[0], bar[1]); lv_obj_set_size(ray, bar[2], bar[3]); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, 1, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
+    const lv_coord_t dim_dots[][2] = {{2, 2}, {12, 2}, {2, 12}, {12, 12}};
+    for (const auto &dot : dim_dots) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, dot[0], dot[1]); lv_obj_set_size(ray, 2, 2); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
+    lv_obj_t *dim_a = lv_label_create(auto_dim); lv_label_set_text(dim_a, "A"); lv_obj_set_style_text_color(dim_a, lv_color_hex(0xf2f4f7), 0); lv_obj_align(dim_a, LV_ALIGN_CENTER, 6, 4); lv_obj_clear_flag(dim_a, LV_OBJ_FLAG_CLICKABLE);
+    if (crystal_power_auto_dim_enabled()) lv_obj_add_state(auto_dim, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(auto_dim, [](lv_event_t *e) {
+        lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e));
+        const bool on = !lv_obj_has_state(obj, LV_STATE_CHECKED);
+        if (on) lv_obj_add_state(obj, LV_STATE_CHECKED);
+        else lv_obj_clear_state(obj, LV_STATE_CHECKED);
+        crystal_power_set_auto_dim(on);
+    }, LV_EVENT_CLICKED, nullptr);
     s_quick_settings_open = true;
     return true;
 }
@@ -346,7 +390,37 @@ bool crossover_threshold_reached(lv_coord_t progress, lv_coord_t width,
 bool os_owns_gesture()
 {
     return s_gesture_owner == CrystalGestureOwner::AppSwitch ||
-           s_gesture_owner == CrystalGestureOwner::QuickSettings;
+           s_gesture_owner == CrystalGestureOwner::QuickSettings ||
+           s_gesture_owner == CrystalGestureOwner::Navigation;
+}
+
+// The pill hides when the keyboard is up, because the keyboard occupies the
+// bottom edge and the arbiter hands the band to the app while it is open, so the
+// cue would be pointing at a gesture that does not fire. It stays visible
+// everywhere else, including the launcher and system pages: a bottom swipe on a
+// system page still peels one layer via shell_consume_back().
+void update_home_pill()
+{
+    if (s_home_pill == nullptr) {
+        return;
+    }
+    // Hide when keyboard is up, because the keyboard occupies the bottom edge and
+    // the arbiter hands the band to the app, so the cue would point at a gesture
+    // that does not fire. The launcher no longer needs a special case: Brookesia's
+    // bottom indicator bar is disabled in the stylesheet (see main.cpp), so this is
+    // the only pill on every screen.
+    if (s_keyboard_open) {
+        ESP_LOGD(TAG, "Hiding pill: keyboard up");
+        lv_obj_add_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    ESP_LOGD(TAG, "Showing pill: depth=%zu", s_system_page_depth);
+    lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
+    // System pages are created on lv_layer_top() after the pill, so they cover
+    // it on z-order alone. Re-front it whenever it should be showing. Dialogs and
+    // toasts are created later still and are meant to cover it (DESIGN.md layers
+    // 5 and 6), so this is only called where the pill must be on top.
+    lv_obj_move_foreground(s_home_pill);
 }
 
 void update_page_dots()
@@ -391,6 +465,44 @@ bool init_indicator_overlay()
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     }
     update_page_dots();
+
+    // Home pill. Crystal draws its own because Brookesia's was not a resting hint:
+    // size_min is RECT(0, 10), zero width, so it only existed while a drag stretched
+    // it. This one rests visible as the discoverability cue for the bottom edge,
+    // sized to the page dots' visual weight rather than to Brookesia's 240px
+    // maximum. Brookesia's is disabled outright in the stylesheet (see main.cpp).
+    s_home_pill = lv_obj_create(lv_layer_top());
+    if (s_home_pill == nullptr) {
+        return false;
+    }
+    lv_obj_set_size(s_home_pill, kHomePillWidth, kHomePillHeight);
+    lv_obj_set_style_radius(s_home_pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_home_pill, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_home_pill, LV_OPA_50, 0);
+    // Add dark border for visibility on light backgrounds, matching iOS design
+    lv_obj_set_style_border_width(s_home_pill, 1, 0);
+    lv_obj_set_style_border_color(s_home_pill, lv_color_black(), 0);
+    lv_obj_set_style_border_opa(s_home_pill, LV_OPA_30, 0);
+    lv_obj_set_style_pad_all(s_home_pill, 0, 0);
+    // Clickable to block touch-through. Without this, dragging from the pill
+    // activates content underneath (e.g., the "System" button in Settings),
+    // navigating deeper before the swipe commits, so the pop leaves you still in
+    // Settings instead of closing it. The gesture arbiter claims the gesture before
+    // click events fire, so this doesn't interfere with the swipe.
+    lv_obj_add_flag(s_home_pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_SCROLLABLE);
+    // Add event handler to consume press events and prevent touch-through to
+    // underlying buttons. This stops presses on the pill from activating Settings
+    // buttons underneath before the gesture arbiter takes over.
+    lv_obj_add_event_cb(s_home_pill, [](lv_event_t *e) {
+        // Stop the event from propagating to objects underneath
+        lv_event_stop_bubbling(e);
+    }, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(s_home_pill, [](lv_event_t *e) {
+        lv_event_stop_bubbling(e);
+    }, LV_EVENT_PRESSED, nullptr);
+    lv_obj_align(s_home_pill, LV_ALIGN_BOTTOM_MID, 0, -kHomePillInset);
+    update_home_pill();
     return true;
 }
 
@@ -1102,7 +1214,11 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     s_card_transition.target_index = target_index;
     s_card_transition.width = width;
     s_card_transition.direction = direction;
-    if (target_index < s_pane_cache.size()) {
+    // Energy Saving drags the bare icon card. The icon and name are already built
+    // above, so skipping the overlay leaves them visible -- no separate card
+    // variant to keep in sync. This avoids a SPIFFS read and a ~103 KiB PSRAM
+    // allocation per drag, which is the work that hurts most at the 80MHz cap.
+    if (target_index < s_pane_cache.size() && !crystal_power_saving_enabled()) {
         lv_img_dsc_t *pane = s_pane_cache[target_index].image;
         if (pane == nullptr) {
             pane = load_persistent_preview(target_index);
@@ -1165,17 +1281,32 @@ void on_app_event(lv_event_t *event)
             s_current_index = i;
             update_page_dots();
             (void)persist_current_card();
+            update_home_pill();
             return;
         }
     }
+    // If we get here, the app start event wasn't for any of our cards, which
+    // means we're switching to the launcher (getActiveApp() will be nullptr).
+    // Update the pill visibility so it hides on launcher.
+    update_home_pill();
 }
 
-void on_gesture_press(lv_event_t *)
+void on_gesture_press(lv_event_t *event)
 {
     s_gesture_owner = CrystalGestureOwner::None;
     s_swallow_wake_touch = crystal_core_consume_wake_touch();
     if (s_swallow_wake_touch && s_gesture != nullptr) {
         (void)s_gesture->setMaskObjectVisible(true);
+    }
+
+    // Immediately set home gesture flag if touch starts in bottom band.
+    // This prevents buttons from receiving events during fast swipes.
+    auto *info = static_cast<ESP_Brookesia_GestureInfo_t *>(lv_event_get_param(event));
+    if (info != nullptr && (info->start_area & ESP_BROOKESIA_GESTURE_AREA_BOTTOM_EDGE)) {
+        s_home_gesture_active = true;
+        ESP_LOGD(TAG, "Bottom edge touch started, blocking input");
+    } else {
+        s_home_gesture_active = false;
     }
 }
 
@@ -1218,7 +1349,13 @@ void on_gesture_pressing(lv_event_t *event)
                                   info->start_y >= panel_area.y1 && info->start_y <= panel_area.y2;
         s_gesture_owner = (inside_panel || info->direction == ESP_BROOKESIA_GESTURE_DIR_UP)
             ? CrystalGestureOwner::QuickSettings : CrystalGestureOwner::App;
-    } else if (s_settings_open || s_switching ||
+    } else if (s_keyboard_open) {
+        s_gesture_owner = CrystalGestureOwner::App;
+    } else if (info->start_y >= lv_disp_get_ver_res(nullptr) - kBottomBand &&
+               info->direction == ESP_BROOKESIA_GESTURE_DIR_UP) {
+        // Note: s_home_gesture_active is already set in on_gesture_press
+        s_gesture_owner = CrystalGestureOwner::Navigation;
+    } else if (s_system_page_depth != 0 || s_switching ||
                s_card_transition.phase != CardTransitionPhase::Idle) {
         s_gesture_owner = CrystalGestureOwner::App;
     } else {
@@ -1257,6 +1394,50 @@ void on_gesture_release(lv_event_t *event)
     s_gesture_owner = CrystalGestureOwner::None;
     if (s_swallow_wake_touch) {
         s_swallow_wake_touch = false;
+        return;
+    }
+    if (owner == CrystalGestureOwner::Navigation) {
+        // kHomeSwipeTravel, not ver_res / 2. Half the screen is right for card
+        // switching, where the drag animates a card across and the commit point
+        // should be the midpoint. This gesture animates nothing: it is a flick,
+        // and demanding 240px of travel from a 24px band made it almost
+        // unreachable, so releases were silently dropped.
+        if (info != nullptr && info->start_y - info->stop_y >= kHomeSwipeTravel) {
+            ESP_LOGI(TAG, "Home gesture: travel=%d, depth=%zu, quick=%d, last_app=%d",
+                     info->start_y - info->stop_y, s_system_page_depth, s_quick_settings_open,
+                     s_last_app_before_settings);
+            // Close all Settings pages if open
+            if (s_system_page_depth > 0) {
+                ESP_LOGI(TAG, "Closing all %zu Settings pages", s_system_page_depth);
+                while (s_system_page_depth > 0) system_page_pop();
+                // Return to the app that was active before Settings opened
+                if (s_last_app_before_settings >= 0) {
+                    // Was in an app - return to that app
+                    ESP_LOGI(TAG, "Returning to app index %d", s_last_app_before_settings);
+                    if (!start_card(static_cast<size_t>(s_last_app_before_settings), false)) {
+                        ESP_LOGW(TAG, "Failed to return to app %d", s_last_app_before_settings);
+                    }
+                    // Redraw pill after returning to app
+                    update_home_pill();
+                }
+                // else: was on launcher, already there after closing Settings
+                s_last_app_before_settings = -1;  // Reset
+            }
+            // Close quick settings if open
+            else if (s_quick_settings_open) {
+                ESP_LOGI(TAG, "Closing quick settings");
+                close_quick_settings(nullptr);
+            }
+            // No overlays - go to launcher (standard home button behavior)
+            else if (s_phone != nullptr) {
+                ESP_LOGI(TAG, "Sending HOME to go to launcher");
+                (void)s_phone->sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
+            }
+        } else if (info != nullptr) {
+            ESP_LOGD(TAG, "Home gesture insufficient: travel=%d < %d",
+                     info->start_y - info->stop_y, kHomeSwipeTravel);
+        }
+        s_home_gesture_active = false;
         return;
     }
     if (owner == CrystalGestureOwner::QuickSettings && info != nullptr) {
@@ -1475,8 +1656,11 @@ static void wifi_open_credentials(const char *ssid)
 static void wifi_open_forget_confirm(const char *ssid)
 {
     if (s_wifi_page == nullptr || ssid == nullptr) return;
+    if (s_wifi_dialog != nullptr) wifi_close_credentials();
     lv_obj_t *box = lv_obj_create(s_wifi_page);
     if (box == nullptr) return;
+    s_wifi_dialog = box;
+    crystal_shell_set_modal_open(true);
     lv_obj_set_size(box, 350, 150); lv_obj_center(box);
     lv_obj_set_style_bg_color(box, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
@@ -1487,10 +1671,10 @@ static void wifi_open_forget_confirm(const char *ssid)
     lv_label_set_text(name, text); lv_obj_set_style_text_color(name, lv_color_hex(0xcbd5e1), 0); lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 42);
     lv_obj_t *forget = lv_btn_create(box); lv_obj_set_size(forget, 120, 38); lv_obj_align(forget, LV_ALIGN_BOTTOM_LEFT, 28, -14);
     lv_obj_t *fl = lv_label_create(forget); lv_label_set_text(fl, "Forget"); lv_obj_center(fl);
-    lv_obj_add_event_cb(forget, [](lv_event_t *e) { if (hal().wifi != nullptr) hal().wifi->forget(); lv_obj_del(lv_obj_get_parent(lv_event_get_current_target(e))); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(forget, [](lv_event_t *) { if (hal().wifi != nullptr) hal().wifi->forget(); wifi_close_credentials(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *cancel = lv_btn_create(box); lv_obj_set_size(cancel, 120, 38); lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -28, -14);
     lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel"); lv_obj_center(cl);
-    lv_obj_add_event_cb(cancel, [](lv_event_t *e) { lv_obj_del(lv_obj_get_parent(lv_event_get_current_target(e))); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(cancel, [](lv_event_t *) { wifi_close_credentials(); }, LV_EVENT_CLICKED, nullptr);
 }
 
 void wifi_tile_text(char *out, size_t size)
@@ -1505,26 +1689,575 @@ void wifi_tile_text(char *out, size_t size)
     }
 }
 
+void system_page_pop();
+void settings_push_network();
+void settings_push_display_power();
+void settings_push_sound();
+void settings_push_region_time();
+void settings_push_system();
+
+lv_obj_t *system_page_push(const char *title)
+{
+    if (s_system_page_depth >= kSystemPageDepthMax) return nullptr;
+    crystal_shell_front_layer_changed();
+    if (s_system_page_depth != 0) {
+        lv_obj_add_flag(s_system_page_stack[s_system_page_depth - 1], LV_OBJ_FLAG_HIDDEN);
+    }
+    const lv_area_t area = active_app_area();
+    lv_obj_t *page = lv_obj_create(lv_layer_top());
+    if (page == nullptr) return nullptr;
+    lv_obj_set_size(page, lv_area_get_width(&area), lv_area_get_height(&area));
+    lv_obj_set_pos(page, area.x1, area.y1);
+    lv_obj_set_style_bg_color(page, lv_color_hex(0x11151b), 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+    // Add event filter to block all input events when home gesture is active.
+    // We need to catch PRESSING (early drag) not just PRESSED (tap complete).
+    lv_obj_add_event_cb(page, [](lv_event_t *e) {
+        const lv_event_code_t code = lv_event_get_code(e);
+        if (s_home_gesture_active && (code == LV_EVENT_PRESSED ||
+                                      code == LV_EVENT_PRESSING ||
+                                      code == LV_EVENT_CLICKED)) {
+            ESP_LOGD(TAG, "Blocking input event (%d) during home gesture", code);
+            lv_event_stop_processing(e);
+            lv_event_stop_bubbling(e);
+        }
+    }, LV_EVENT_ALL, nullptr);
+    s_system_page_stack[s_system_page_depth++] = page;
+
+    lv_obj_t *back = lv_btn_create(page);
+    lv_obj_set_size(back, 64, 44);
+    lv_obj_set_pos(back, 8, 4);
+    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(back, 0, 0);
+    lv_obj_add_event_cb(back, [](lv_event_t *) { system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *back_label = lv_label_create(back);
+    lv_label_set_text(back_label, s_system_page_depth == 1 ? LV_SYMBOL_CLOSE : LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(back_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0xe6edf5), 0);
+    lv_obj_center(back_label);
+
+    lv_obj_t *heading = lv_label_create(page);
+    lv_label_set_text(heading, title);
+    lv_obj_set_style_text_font(heading, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(heading, lv_color_white(), 0);
+    lv_obj_align(heading, LV_ALIGN_TOP_MID, 0, 14);
+
+    lv_obj_t *content = lv_obj_create(page);
+    lv_obj_set_size(content, LV_PCT(100), lv_area_get_height(&area) - 52);
+    lv_obj_align(content, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 10, 0);
+    lv_obj_set_style_pad_row(content, 1, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+    update_home_pill();
+    // Explicitly ensure pill is on top of the Settings page
+    if (s_home_pill != nullptr) {
+        lv_obj_move_foreground(s_home_pill);
+        ESP_LOGD(TAG, "Moved pill to foreground after creating Settings page");
+    }
+    return content;
+}
+
+void clear_page_cache(lv_obj_t *page)
+{
+    if (page == s_wifi_page) {
+        s_wifi_page = nullptr;
+        s_wifi_page_list = nullptr;
+        s_wifi_page_status = nullptr;
+        if (s_wifi_dialog != nullptr) {
+            s_wifi_dialog = nullptr;
+            crystal_shell_set_modal_open(false);
+        }
+    }
+    memset(s_ip_fields, 0, sizeof(s_ip_fields));
+    s_ip_apply_status = nullptr;
+}
+
+void system_page_pop()
+{
+    if (s_system_page_depth == 0) return;
+    crystal_shell_front_layer_changed();
+    lv_obj_t *page = s_system_page_stack[--s_system_page_depth];
+    s_system_page_stack[s_system_page_depth] = nullptr;
+    crystal_keyboard_set_state_cb(nullptr, nullptr);
+    clear_page_cache(page);
+    lv_obj_del(page);
+    if (s_system_page_depth != 0) {
+        lv_obj_clear_flag(s_system_page_stack[s_system_page_depth - 1], LV_OBJ_FLAG_HIDDEN);
+    }
+    update_home_pill();
+}
+
+lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)
+{
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 60);
+    lv_obj_set_style_radius(row, 0, 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x1b2028), 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x28323e), LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_hor(row, 14, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *title = lv_label_create(row);
+    lv_label_set_text(title, label);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xf2f4f7), 0);
+    lv_obj_align(title, summary == nullptr ? LV_ALIGN_LEFT_MID : LV_ALIGN_TOP_LEFT, 0,
+                 summary == nullptr ? 0 : 7);
+    if (summary != nullptr) {
+        lv_obj_t *detail = lv_label_create(row);
+        lv_label_set_text(detail, summary);
+        lv_label_set_long_mode(detail, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(detail, 240);
+        lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(detail, lv_color_hex(0x91a0b3), 0);
+        lv_obj_align(detail, LV_ALIGN_BOTTOM_LEFT, 0, -6);
+    }
+    return row;
+}
+
+lv_obj_t *settings_switch(lv_obj_t *row, bool checked)
+{
+    lv_obj_t *control = lv_switch_create(row);
+    lv_obj_set_size(control, 52, 30);
+    lv_obj_align(control, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (checked) lv_obj_add_state(control, LV_STATE_CHECKED);
+    return control;
+}
+
+void settings_push_connection_details()
+{
+    lv_obj_t *content = system_page_push("Connection Details");
+    if (content == nullptr) return;
+    IWifi::IpConfig config = {};
+    int8_t rssi = 0;
+    uint8_t mac[6] = {};
+    if (hal().wifi == nullptr || !hal().wifi->ip_config(&config)) {
+        (void)settings_row(content, "Status", "Not connected");
+        return;
+    }
+    char value[64] = {};
+    (void)settings_row(content, "Network", hal().wifi->last_ssid());
+    ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.ip), value, sizeof(value));
+    (void)settings_row(content, "IP Address", value);
+    ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.mask), value, sizeof(value));
+    (void)settings_row(content, "Subnet Mask", value);
+    ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.gateway), value, sizeof(value));
+    (void)settings_row(content, "Gateway", value);
+    ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.dns1), value, sizeof(value));
+    (void)settings_row(content, "Primary DNS", value);
+    if (config.dns2 != 0) { ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.dns2), value, sizeof(value)); (void)settings_row(content, "Secondary DNS", value); }
+    if (hal().wifi->rssi(&rssi)) { snprintf(value, sizeof(value), "%d dBm", rssi); (void)settings_row(content, "Signal", value); }
+    if (hal().wifi->mac(mac)) { snprintf(value, sizeof(value), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]); (void)settings_row(content, "WiFi MAC", value); }
+}
+
+bool stored_ip_value(const char *key, uint32_t *out)
+{
+    size_t length = sizeof(*out);
+    return out != nullptr && hal().storage != nullptr &&
+           hal().storage->get(key, out, &length) && length == sizeof(*out);
+}
+
+void ip_field_focus(lv_event_t *event)
+{
+    lv_obj_t *field = static_cast<lv_obj_t *>(lv_event_get_target(event));
+    (void)crystal_keyboard_show(field, lv_obj_get_parent(field));
+}
+
+void set_ip_fields_enabled(bool enabled)
+{
+    for (lv_obj_t *field : s_ip_fields) {
+        if (field == nullptr) continue;
+        if (enabled) lv_obj_clear_state(field, LV_STATE_DISABLED);
+        else lv_obj_add_state(field, LV_STATE_DISABLED);
+    }
+}
+
+void ip_apply(lv_event_t *event)
+{
+    lv_obj_t *dhcp_switch = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+    IWifi::IpConfig config = {};
+    config.dhcp = lv_obj_has_state(dhcp_switch, LV_STATE_CHECKED);
+    if (!config.dhcp) {
+        uint32_t *values[] = {&config.ip, &config.mask, &config.gateway, &config.dns1, &config.dns2};
+        for (size_t i = 0; i < 5; ++i) {
+            const char *text = lv_textarea_get_text(s_ip_fields[i]);
+            if ((i < 4 && (text == nullptr || text[0] == '\0')) ||
+                    (text != nullptr && text[0] != '\0' && inet_aton(text, reinterpret_cast<in_addr *>(values[i])) == 0)) {
+                lv_label_set_text(s_ip_apply_status, "Enter valid dotted-quad addresses");
+                return;
+            }
+        }
+        const uint32_t mask = ntohl(config.mask);
+        const uint32_t wildcard = ~mask;
+        if (mask == 0 || (wildcard & (wildcard + 1)) != 0 ||
+                (config.ip & config.mask) != (config.gateway & config.mask) ||
+                (config.ip & ~config.mask) == 0 ||
+                (config.ip & ~config.mask) == ~config.mask) {
+            lv_label_set_text(s_ip_apply_status, "Check subnet mask, gateway, and host address");
+            return;
+        }
+    }
+    if (hal().wifi != nullptr && hal().wifi->set_ip_config(config)) {
+        lv_label_set_text(s_ip_apply_status, config.dhcp ? "Automatic addressing enabled" : "Static configuration applied");
+    } else {
+        lv_label_set_text(s_ip_apply_status, "Could not apply network settings");
+    }
+}
+
+void settings_push_ip()
+{
+    lv_obj_t *content = system_page_push("IP Settings");
+    if (content == nullptr) return;
+    uint8_t stored_dhcp = 1;
+    size_t length = sizeof(stored_dhcp);
+    if (hal().storage != nullptr) (void)hal().storage->get("net.dhcp", &stored_dhcp, &length);
+    lv_obj_t *mode = settings_row(content, "Automatic (DHCP)", stored_dhcp ? "Router assigns the address" : "Manual configuration");
+    lv_obj_t *dhcp_switch = settings_switch(mode, stored_dhcp != 0);
+    lv_obj_add_event_cb(dhcp_switch, [](lv_event_t *e) {
+        set_ip_fields_enabled(!lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED));
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    static const char *labels[] = {"IP address", "Subnet mask", "Gateway", "Primary DNS", "Secondary DNS (optional)"};
+    static const char *keys[] = {"net.ip", "net.mask", "net.gw", "net.dns1", "net.dns2"};
+    for (size_t i = 0; i < 5; ++i) {
+        s_ip_fields[i] = lv_textarea_create(content);
+        lv_obj_set_size(s_ip_fields[i], LV_PCT(100), 52);
+        lv_textarea_set_one_line(s_ip_fields[i], true);
+        lv_textarea_set_placeholder_text(s_ip_fields[i], labels[i]);
+        lv_textarea_set_max_length(s_ip_fields[i], 15);
+        uint32_t address = 0;
+        char text[IP4ADDR_STRLEN_MAX] = {};
+        if (stored_ip_value(keys[i], &address) && address != 0) {
+            ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&address), text, sizeof(text));
+            lv_textarea_set_text(s_ip_fields[i], text);
+        }
+        lv_obj_add_event_cb(s_ip_fields[i], ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    }
+    set_ip_fields_enabled(stored_dhcp == 0);
+    lv_obj_t *apply = settings_row(content, "Apply", "Validates all fields before changing the interface");
+    lv_obj_add_event_cb(apply, ip_apply, LV_EVENT_CLICKED, dhcp_switch);
+    s_ip_apply_status = lv_label_create(content);
+    lv_obj_set_width(s_ip_apply_status, LV_PCT(100));
+    lv_label_set_long_mode(s_ip_apply_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_ip_apply_status, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_ip_apply_status, lv_color_hex(0xf59e0b), 0);
+}
+
+void settings_push_network()
+{
+    lv_obj_t *content = system_page_push("Network");
+    if (content == nullptr) return;
+    IWifi *wifi = hal().wifi;
+    const char *summary = wifi == nullptr || !wifi->enabled() ? "Off" :
+                          wifi->connected() ? wifi->last_ssid() : "On - Not connected";
+    lv_obj_t *wifi_row = settings_row(content, "WiFi", summary);
+    lv_obj_t *wifi_switch = settings_switch(wifi_row, wifi != nullptr && wifi->enabled());
+    lv_obj_add_event_cb(wifi_switch, [](lv_event_t *e) { if (hal().wifi != nullptr) hal().wifi->set_enabled(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *networks = settings_row(content, "WiFi Networks", "Scan, connect, or forget");
+    lv_obj_add_event_cb(networks, [](lv_event_t *) { wifi_page_open(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *ip = settings_row(content, "IP Settings", "Automatic or validated manual address");
+    lv_obj_add_event_cb(ip, [](lv_event_t *) { settings_push_ip(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *details = settings_row(content, "Connection Details", wifi != nullptr && wifi->has_ip() ? "Connected" : "Not connected");
+    lv_obj_add_event_cb(details, [](lv_event_t *) { settings_push_connection_details(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_push_display_power()
+{
+    lv_obj_t *content = system_page_push("Display & Power");
+    if (content == nullptr) return;
+    lv_obj_t *brightness_row = settings_row(content, "Brightness", "0-95");
+    lv_obj_t *brightness = lv_slider_create(brightness_row);
+    lv_obj_set_size(brightness, 180, 18);
+    lv_obj_align(brightness, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_slider_set_range(brightness, 0, 95);
+    lv_slider_set_value(brightness, crystal_brightness_level(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(brightness, [](lv_event_t *e) { crystal_brightness_set(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // Master switch for the two dropdowns below. They keep their stored values
+    // while it is off so turning it back on restores the user's choices.
+    lv_obj_t *auto_dim_row = settings_row(content, "Auto Dimming", "Dim and turn off the screen when idle");
+    lv_obj_t *auto_dim_sw = settings_switch(auto_dim_row, crystal_power_auto_dim_enabled());
+    lv_obj_add_event_cb(auto_dim_sw, [](lv_event_t *e) { crystal_power_set_auto_dim(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *dim_row = settings_row(content, "Dim After", nullptr);
+    lv_obj_t *dim = lv_dropdown_create(dim_row);
+    lv_dropdown_set_options(dim, "Never\n15 seconds\n30 seconds\n1 minute\n5 minutes");
+    const uint16_t dim_values[] = {0, 15, 30, 60, 300};
+    const uint16_t current_dim = crystal_power_dim_seconds();
+    for (uint16_t i = 0; i < 5; ++i) if (dim_values[i] == current_dim) lv_dropdown_set_selected(dim, i);
+    lv_obj_set_width(dim, 170); lv_obj_align(dim, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_event_cb(dim, [](lv_event_t *e) { static const uint16_t values[] = {0, 15, 30, 60, 300}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_dim_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_dim_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *off_row = settings_row(content, "Screen Off After", nullptr);
+    lv_obj_t *off = lv_dropdown_create(off_row);
+    lv_dropdown_set_options(off, "Never\n1 minute\n2 minutes\n5 minutes\n15 minutes");
+    const uint16_t off_values[] = {0, 60, 120, 300, 900};
+    const uint16_t current_off = crystal_power_off_seconds();
+    for (uint16_t i = 0; i < 5; ++i) if (off_values[i] == current_off) lv_dropdown_set_selected(off, i);
+    lv_obj_set_width(off, 170); lv_obj_align(off, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_event_cb(off, [](lv_event_t *e) { static const uint16_t values[] = {0, 60, 120, 300, 900}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_off_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_off_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *level_row = settings_row(content, "Dim Brightness", "HAL level 5-50");
+    lv_obj_t *level = lv_slider_create(level_row);
+    lv_obj_set_size(level, 160, 18); lv_obj_align(level, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_slider_set_range(level, 5, 50); lv_slider_set_value(level, crystal_power_dim_level(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(level, [](lv_event_t *e) { crystal_power_set_dim_level(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *saving_row = settings_row(content, "Energy Saving", "Shorter timeouts and lower power");
+    lv_obj_t *saving = settings_switch(saving_row, crystal_power_saving_enabled());
+    lv_obj_add_event_cb(saving, [](lv_event_t *e) { crystal_power_set_saving(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    int percent = 0; bool charging = false; char battery[40] = "Waiting for battery reading";
+    if (crystal_battery_cached(&percent, &charging)) snprintf(battery, sizeof(battery), "%d%% - %s", percent, charging ? "Charging" : "On battery");
+    (void)settings_row(content, "Battery", battery);
+}
+
+void settings_push_sound()
+{
+    lv_obj_t *content = system_page_push("Sound");
+    if (content == nullptr) return;
+    lv_obj_t *volume_row = settings_row(content, "Volume", "0-100");
+    lv_obj_t *volume = lv_slider_create(volume_row);
+    lv_obj_set_size(volume, 180, 18); lv_obj_align(volume, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_slider_set_range(volume, 0, 100); lv_slider_set_value(volume, crystal_hal_get_volume(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(volume, [](lv_event_t *e) { const uint8_t value = static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e)))); if (crystal_hal_set_volume(value) && hal().storage != nullptr) (void)hal().storage->set("volume", &value, sizeof(value)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *alerts_row = settings_row(content, "Timer & Alarm Sounds", "Play timer completion alerts");
+    lv_obj_t *alerts = settings_switch(alerts_row, crystal_sound_alerts_enabled());
+    lv_obj_add_event_cb(alerts, [](lv_event_t *e) { crystal_sound_set_alerts(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *test = settings_row(content, "Test Sound", "Play the timer chime now");
+    lv_obj_add_event_cb(test, [](lv_event_t *) { crystal_hal_timer_alarm(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+struct TimezoneEntry { const char *label; const char *posix; };
+constexpr TimezoneEntry kTimezones[] = {
+    {"Hong Kong (UTC+08:00)", "HKT-8"},
+    {"Singapore (UTC+08:00)", "SGT-8"},
+    {"Tokyo (UTC+09:00)", "JST-9"},
+    {"Sydney (UTC+10:00)", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+    {"Dubai (UTC+04:00)", "GST-4"},
+    {"London (UTC+00:00)", "GMT0BST,M3.5.0/1,M10.5.0"},
+    {"Berlin (UTC+01:00)", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"New York (UTC-05:00)", "EST5EDT,M3.2.0,M11.1.0"},
+    {"Chicago (UTC-06:00)", "CST6CDT,M3.2.0,M11.1.0"},
+    {"Los Angeles (UTC-08:00)", "PST8PDT,M3.2.0,M11.1.0"},
+    {"UTC", "UTC0"},
+};
+
+const char *current_timezone_label()
+{
+    char timezone[48] = "HKT-8";
+    size_t length = sizeof(timezone) - 1;
+    if (hal().storage != nullptr && hal().storage->get("timezone", timezone, &length)) timezone[length < sizeof(timezone) ? length : sizeof(timezone) - 1] = '\0';
+    for (const auto &entry : kTimezones) if (strcmp(entry.posix, timezone) == 0) return entry.label;
+    return "Custom timezone";
+}
+
+void settings_push_timezones()
+{
+    lv_obj_t *content = system_page_push("Timezone");
+    if (content == nullptr) return;
+    for (const auto &entry : kTimezones) {
+        lv_obj_t *row = settings_row(content, entry.label, strcmp(entry.label, current_timezone_label()) == 0 ? "Selected" : nullptr);
+        lv_obj_add_event_cb(row, [](lv_event_t *e) { const auto *zone = static_cast<const TimezoneEntry *>(lv_event_get_user_data(e)); if (zone != nullptr && crystal_timezone_apply(zone->posix)) system_page_pop(); }, LV_EVENT_CLICKED, const_cast<TimezoneEntry *>(&entry));
+    }
+}
+
+void settings_push_location()
+{
+    lv_obj_t *content = system_page_push("Location");
+    if (content == nullptr) return;
+    lv_obj_t *auto_row = settings_row(content, "Automatic Location", "Uses the network location");
+    lv_obj_t *automatic = settings_switch(auto_row, crystal_weather_location_automatic());
+    lv_obj_t *city = lv_textarea_create(content); lv_obj_set_size(city, LV_PCT(100), 52); lv_textarea_set_one_line(city, true); lv_textarea_set_placeholder_text(city, "City name"); lv_textarea_set_max_length(city, 23);
+    lv_obj_t *lat = lv_textarea_create(content); lv_obj_set_size(lat, LV_PCT(100), 52); lv_textarea_set_one_line(lat, true); lv_textarea_set_placeholder_text(lat, "Latitude (-90 to 90)"); lv_textarea_set_max_length(lat, 16);
+    lv_obj_t *lon = lv_textarea_create(content); lv_obj_set_size(lon, LV_PCT(100), 52); lv_textarea_set_one_line(lon, true); lv_textarea_set_placeholder_text(lon, "Longitude (-180 to 180)"); lv_textarea_set_max_length(lon, 16);
+    for (lv_obj_t *field : {city, lat, lon}) lv_obj_add_event_cb(field, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    auto set_manual_enabled = [city, lat, lon](bool enabled) { for (lv_obj_t *field : {city, lat, lon}) { if (enabled) lv_obj_clear_state(field, LV_STATE_DISABLED); else lv_obj_add_state(field, LV_STATE_DISABLED); } };
+    set_manual_enabled(!crystal_weather_location_automatic());
+    lv_obj_add_event_cb(automatic, [](lv_event_t *e) { const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED); crystal_weather_set_automatic(enabled); lv_obj_t *content_obj = lv_obj_get_parent(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e)))); for (uint32_t i = 1; i <= 3; ++i) { lv_obj_t *field = lv_obj_get_child(content_obj, i); if (field != nullptr) { if (enabled) lv_obj_add_state(field, LV_STATE_DISABLED); else lv_obj_clear_state(field, LV_STATE_DISABLED); } } }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *apply = settings_row(content, "Apply Manual Location", "Refreshes Weather immediately");
+    lv_obj_add_event_cb(apply, [](lv_event_t *e) { lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))); lv_obj_t *city_field = lv_obj_get_child(content_obj, 1); lv_obj_t *lat_field = lv_obj_get_child(content_obj, 2); lv_obj_t *lon_field = lv_obj_get_child(content_obj, 3); const char *lat_text = lv_textarea_get_text(lat_field); const char *lon_text = lv_textarea_get_text(lon_field); if (lat_text == nullptr || lat_text[0] == '\0' || lon_text == nullptr || lon_text[0] == '\0') return; char *end = nullptr; const double latitude = strtod(lat_text, &end); if (end == nullptr || *end != '\0') return; const double longitude = strtod(lon_text, &end); if (end == nullptr || *end != '\0') return; if (crystal_weather_set_location(latitude, longitude, lv_textarea_get_text(city_field))) system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_push_manual_time()
+{
+    lv_obj_t *content = system_page_push("Set Date & Time");
+    if (content == nullptr) return;
+    lv_obj_t *date = lv_textarea_create(content); lv_obj_set_size(date, LV_PCT(100), 52); lv_textarea_set_one_line(date, true); lv_textarea_set_placeholder_text(date, "YYYY-MM-DD"); lv_textarea_set_max_length(date, 10);
+    lv_obj_t *clock = lv_textarea_create(content); lv_obj_set_size(clock, LV_PCT(100), 52); lv_textarea_set_one_line(clock, true); lv_textarea_set_placeholder_text(clock, "HH:MM"); lv_textarea_set_max_length(clock, 5);
+    lv_obj_add_event_cb(date, ip_field_focus, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(clock, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_t *apply = settings_row(content, "Set Date & Time", "Writes the system clock and RTC");
+    lv_obj_add_event_cb(apply, [](lv_event_t *e) { lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))); int year = 0, month = 0, day = 0, hour = 0, minute = 0; if (sscanf(lv_textarea_get_text(lv_obj_get_child(content_obj, 0)), "%d-%d-%d", &year, &month, &day) != 3 || sscanf(lv_textarea_get_text(lv_obj_get_child(content_obj, 1)), "%d:%d", &hour, &minute) != 2 || year < 2020 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return; struct tm value = {}; value.tm_year = year - 1900; value.tm_mon = month - 1; value.tm_mday = day; value.tm_hour = hour; value.tm_min = minute; value.tm_isdst = -1; if (crystal_time_set(&value)) system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_push_region_time()
+{
+    lv_obj_t *content = system_page_push("Region & Time");
+    if (content == nullptr) return;
+    char sync_summary[48] = "No successful sync yet";
+    const int32_t last_sync = crystal_time_last_sync();
+    const time_t last_sync_epoch = static_cast<time_t>(last_sync);
+    struct tm sync_time = {};
+    if (last_sync > 0 && localtime_r(&last_sync_epoch, &sync_time) != nullptr) {
+        snprintf(sync_summary, sizeof(sync_summary), "Last sync %04d-%02d-%02d %02d:%02d",
+                 sync_time.tm_year + 1900, sync_time.tm_mon + 1, sync_time.tm_mday,
+                 sync_time.tm_hour, sync_time.tm_min);
+    }
+    lv_obj_t *auto_row = settings_row(content, "Set Time Automatically", sync_summary);
+    lv_obj_t *automatic = settings_switch(auto_row, crystal_time_auto_enabled());
+    lv_obj_add_event_cb(automatic, [](lv_event_t *e) { crystal_time_set_auto(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *timezone = settings_row(content, "Timezone", current_timezone_label());
+    lv_obj_add_event_cb(timezone, [](lv_event_t *) { settings_push_timezones(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *format_row = settings_row(content, "24-Hour Time", crystal_time_format_24() ? "24-hour" : "12-hour");
+    lv_obj_t *format = settings_switch(format_row, crystal_time_format_24());
+    lv_obj_add_event_cb(format, [](lv_event_t *e) { crystal_time_set_format_24(lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED)); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_t *manual = settings_row(content, "Set Date & Time", crystal_time_auto_enabled() ? "Turn automatic time off first" : "Manual");
+    if (crystal_time_auto_enabled()) lv_obj_add_state(manual, LV_STATE_DISABLED);
+    else lv_obj_add_event_cb(manual, [](lv_event_t *) { settings_push_manual_time(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *location = settings_row(content, "Location", crystal_weather_location_automatic() ? "Automatic" : "Manual");
+    lv_obj_add_event_cb(location, [](lv_event_t *) { settings_push_location(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_push_legal()
+{
+    lv_obj_t *content = system_page_push("Legal & Attribution");
+    if (content == nullptr) return;
+    (void)settings_row(content, "Crystal OS", "MIT License - see LICENSE.md");
+    (void)settings_row(content, "ESP-IDF", "Copyright Espressif Systems");
+    (void)settings_row(content, "ESP-Brookesia", "Copyright Espressif Systems");
+    (void)settings_row(content, "Third-Party Notices", "See NOTICE in the firmware source");
+}
+
+void settings_push_about()
+{
+    lv_obj_t *content = system_page_push("About");
+    if (content == nullptr) return;
+    ISystemInfo *info = hal().system_info;
+    (void)settings_row(content, "Device", "Crystal OS Display");
+    (void)settings_row(content, "Hardware", "Waveshare ESP32-S3-Touch-LCD-4B");
+    (void)settings_row(content, "Platform", "Crystal OS open-source project");
+    (void)settings_row(content, "Crystal OS", info != nullptr ? info->app_version() : "Unknown");
+    (void)settings_row(content, "ESP-IDF", info != nullptr ? info->idf_version() : "Unknown");
+    char id[32] = "Unavailable";
+    uint8_t bytes[6] = {};
+    if (info != nullptr && info->chip_id(bytes)) snprintf(id, sizeof(id), "%02X%02X%02X%02X%02X%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+    (void)settings_row(content, "Serial / Chip ID", id);
+    lv_obj_t *legal = settings_row(content, "Legal & Attribution", "Licenses and required credits");
+    lv_obj_add_event_cb(legal, [](lv_event_t *) { settings_push_legal(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_push_status()
+{
+    lv_obj_t *content = system_page_push("Device Status");
+    if (content == nullptr) return;
+    ISystemInfo *info = hal().system_info;
+    char value[64] = "Unavailable";
+    if (info != nullptr) { snprintf(value, sizeof(value), "%lu seconds", static_cast<unsigned long>(info->uptime_seconds())); (void)settings_row(content, "Uptime", value); }
+    (void)settings_row(content, "WiFi", hal().wifi != nullptr && hal().wifi->has_ip() ? hal().wifi->last_ssid() : "Not connected");
+    IWifi::IpConfig ip = {};
+    if (hal().wifi != nullptr && hal().wifi->ip_config(&ip)) ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&ip.ip), value, sizeof(value)); else strlcpy(value, "Unavailable", sizeof(value));
+    (void)settings_row(content, "IP Address", value);
+    int percent = 0; bool charging = false;
+    if (crystal_battery_cached(&percent, &charging)) snprintf(value, sizeof(value), "%d%% - %s", percent, charging ? "Charging" : "On battery"); else strlcpy(value, "Waiting for reading", sizeof(value));
+    (void)settings_row(content, "Battery", value);
+    if (info != nullptr) {
+        snprintf(value, sizeof(value), "%lu KiB", static_cast<unsigned long>(info->free_heap() / 1024)); (void)settings_row(content, "Free Internal Heap", value);
+        snprintf(value, sizeof(value), "%lu KiB", static_cast<unsigned long>(info->free_psram() / 1024)); (void)settings_row(content, "Free PSRAM", value);
+        uint32_t used = 0, total = 0; if (info->storage_bytes(&used, &total)) { snprintf(value, sizeof(value), "%lu / %lu KiB", static_cast<unsigned long>(used / 1024), static_cast<unsigned long>(total / 1024)); (void)settings_row(content, "Storage Used", value); }
+        (void)settings_row(content, "Last Reset", info->reset_reason());
+    }
+    lv_obj_t *refresh = settings_row(content, "Refresh", "Read current cached and system values");
+    lv_obj_add_event_cb(refresh, [](lv_event_t *) { system_page_pop(); settings_push_status(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void system_dialog_close()
+{
+    if (s_system_dialog != nullptr) lv_obj_del(s_system_dialog);
+    s_system_dialog = nullptr;
+    crystal_shell_set_modal_open(false);
+}
+
+void open_restart_confirm()
+{
+    if (s_system_dialog != nullptr) return;
+    s_system_dialog = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_system_dialog, 360, 190); lv_obj_center(s_system_dialog);
+    lv_obj_set_style_bg_color(s_system_dialog, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_bg_opa(s_system_dialog, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_system_dialog, 8, 0);
+    lv_obj_t *title = lv_label_create(s_system_dialog); lv_label_set_text(title, "Restart Crystal OS?"); lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0); lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_t *detail = lv_label_create(s_system_dialog); lv_label_set_text(detail, "The display will be unavailable briefly.\nNo settings or app data will be erased."); lv_obj_set_width(detail, 320); lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0); lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 48);
+    lv_obj_t *restart = lv_btn_create(s_system_dialog); lv_obj_set_size(restart, 140, 44); lv_obj_align(restart, LV_ALIGN_BOTTOM_LEFT, 12, -10); lv_obj_t *rl = lv_label_create(restart); lv_label_set_text(rl, "Restart"); lv_obj_center(rl); lv_obj_add_event_cb(restart, [](lv_event_t *) { esp_restart(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *cancel = lv_btn_create(s_system_dialog); lv_obj_set_size(cancel, 140, 44); lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -12, -10); lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel"); lv_obj_center(cl); lv_obj_add_event_cb(cancel, [](lv_event_t *) { system_dialog_close(); }, LV_EVENT_CLICKED, nullptr);
+    crystal_shell_set_modal_open(true);
+}
+
+void settings_push_system()
+{
+    lv_obj_t *content = system_page_push("System");
+    if (content == nullptr) return;
+    lv_obj_t *about = settings_row(content, "About", "Device, software, and attribution");
+    lv_obj_add_event_cb(about, [](lv_event_t *) { settings_push_about(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *status = settings_row(content, "Device Status", "Network, battery, memory, and storage");
+    lv_obj_add_event_cb(status, [](lv_event_t *) { settings_push_status(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *restart = settings_row(content, "Restart", "Restarts without erasing data");
+    lv_obj_set_style_text_color(lv_obj_get_child(restart, 0), lv_color_hex(0xf87171), 0);
+    lv_obj_add_event_cb(restart, [](lv_event_t *) { open_restart_confirm(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_open()
+{
+    if (s_system_page_depth != 0) return;
+    // Save what app was active before opening Settings
+    if (s_phone != nullptr && s_phone->getManager().getActiveApp() != nullptr) {
+        s_last_app_before_settings = static_cast<int>(s_current_index);
+        ESP_LOGI(TAG, "Opening Settings from app index %d, closing app", s_last_app_before_settings);
+        // Close the app (send it to background) so Settings has a clean state
+        (void)s_phone->sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
+    } else {
+        s_last_app_before_settings = -1;  // Opened from launcher
+        ESP_LOGI(TAG, "Opening Settings from launcher");
+    }
+    lv_obj_t *content = system_page_push("Settings");
+    if (content == nullptr) return;
+    IWifi *wifi = hal().wifi;
+    const char *network_summary = wifi == nullptr || !wifi->enabled() ? "WiFi Off" :
+                                  wifi->connected() ? wifi->last_ssid() : "WiFi On - Not connected";
+    lv_obj_t *network = settings_row(content, "Network", network_summary);
+    lv_obj_add_event_cb(network, [](lv_event_t *) { settings_push_network(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *power = settings_row(content, "Display & Power", crystal_power_saving_enabled() ? "Energy Saving On" : "Energy Saving Off");
+    lv_obj_add_event_cb(power, [](lv_event_t *) { settings_push_display_power(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *sound = settings_row(content, "Sound", crystal_sound_alerts_enabled() ? "Alerts On" : "Alerts Off");
+    lv_obj_add_event_cb(sound, [](lv_event_t *) { settings_push_sound(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *region = settings_row(content, "Region & Time", current_timezone_label());
+    lv_obj_add_event_cb(region, [](lv_event_t *) { settings_push_region_time(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *system = settings_row(content, "System", hal().system_info != nullptr ? hal().system_info->app_version() : "About and status");
+    lv_obj_add_event_cb(system, [](lv_event_t *) { settings_push_system(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+void settings_open_at_wifi()
+{
+    settings_open();
+    settings_push_network();
+    wifi_page_open();
+}
+
 // The only teardown path for the WiFi page. Every cached pointer into the page
 // tree is cleared here, because lv_obj_del() frees the children too and a stale
 // pointer passes the != nullptr guards at every use site.
 void wifi_page_close()
 {
     if (s_wifi_page == nullptr) return;
-    // Clear the hook before the hide so the keyboard cannot reposition a dialog
-    // that is inside the tree about to be deleted.
-    crystal_keyboard_set_state_cb(nullptr, nullptr);
-    // Closing the page hands the front layer back to the app underneath.
-    crystal_shell_front_layer_changed();
-    lv_obj_del(s_wifi_page);
-    s_wifi_page = nullptr;
-    s_wifi_page_list = nullptr;
-    s_wifi_page_status = nullptr;
-    if (s_wifi_dialog != nullptr) {
-        s_wifi_dialog = nullptr;
-        crystal_shell_set_modal_open(false);
+    if (s_system_page_depth != 0 && s_system_page_stack[s_system_page_depth - 1] == s_wifi_page) {
+        system_page_pop();
     }
-    crystal_shell_set_settings_open(false);
 }
 
 // One Back dismisses one shell layer. Returning false means the app is now the
@@ -1539,8 +2272,19 @@ bool shell_consume_back()
         wifi_close_credentials();
         return true;
     }
-    if (s_wifi_page != nullptr) {
-        wifi_page_close();
+    if (s_system_dialog != nullptr) {
+        system_dialog_close();
+        return true;
+    }
+    if (s_system_page_depth > 0) {
+        // At the Settings root (depth 1), close Settings entirely instead of
+        // popping. The back button shows LV_SYMBOL_CLOSE at depth 1 to signal
+        // this; the bottom swipe matches that behaviour.
+        if (s_system_page_depth == 1) {
+            while (s_system_page_depth > 0) system_page_pop();
+        } else {
+            system_page_pop();
+        }
         return true;
     }
     if (s_quick_settings_open) {
@@ -1553,26 +2297,11 @@ bool shell_consume_back()
 void wifi_page_open()
 {
     if (s_wifi_page != nullptr) return;
-    // The page replaces the app as the frontmost layer, so a keyboard the app
-    // still owns must go. Quick Settings no longer drops it on the way here --
-    // it deliberately keeps the keyboard alive underneath the panel -- so
-    // without this the app's keyboard is orphaned behind the page and
-    // shell_consume_back() closes it instead of the page.
-    crystal_shell_front_layer_changed();
-    s_wifi_page = lv_obj_create(lv_layer_top());
-    lv_area_t area = active_app_area();
-    lv_obj_set_size(s_wifi_page, lv_area_get_width(&area), lv_area_get_height(&area));
-    lv_obj_set_pos(s_wifi_page, area.x1, area.y1);
-    lv_obj_set_style_bg_color(s_wifi_page, lv_color_hex(0x11151b), 0);
-    lv_obj_set_style_bg_opa(s_wifi_page, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(s_wifi_page, LV_OBJ_FLAG_SCROLLABLE);
-    crystal_shell_set_settings_open(true);
-    lv_obj_t *back = lv_btn_create(s_wifi_page); lv_obj_set_size(back, 76, 38); lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 8);
-    lv_obj_t *back_label = lv_label_create(back); lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back"); lv_obj_set_style_text_color(back_label, lv_color_white(), 0); lv_obj_center(back_label);
-    lv_obj_add_event_cb(back, [](lv_event_t *) { wifi_page_close(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *title = lv_label_create(s_wifi_page); lv_label_set_text(title, "WiFi Networks"); lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    s_wifi_page_status = lv_label_create(s_wifi_page); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_align(s_wifi_page_status, LV_ALIGN_TOP_MID, 0, 38);
-    s_wifi_page_list = lv_list_create(s_wifi_page); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), lv_area_get_height(&area) - 92); lv_obj_align(s_wifi_page_list, LV_ALIGN_TOP_MID, 0, 74); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
+    lv_obj_t *content = system_page_push("WiFi Networks");
+    if (content == nullptr) return;
+    s_wifi_page = s_system_page_stack[s_system_page_depth - 1];
+    s_wifi_page_status = lv_label_create(content); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_set_style_text_font(s_wifi_page_status, &lv_font_montserrat_16, 0); lv_obj_set_width(s_wifi_page_status, LV_PCT(100));
+    s_wifi_page_list = lv_list_create(content); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), 320); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
     lv_obj_t *scanning = lv_list_add_text(s_wifi_page_list, "Scanning...");
     if (scanning != nullptr) lv_obj_set_style_text_color(scanning, lv_color_white(), 0);
     if (hal().wifi != nullptr) hal().wifi->scan();
@@ -1671,6 +2400,9 @@ void crystal_shell_front_layer_changed()
 
 CrystalGestureOwner crystal_shell_gesture_owner() { return s_gesture_owner; }
 void crystal_shell_set_quick_settings_open(bool open) { s_quick_settings_open = open; }
-void crystal_shell_set_keyboard_open(bool open) { s_keyboard_open = open; }
-void crystal_shell_set_settings_open(bool open) { s_settings_open = open; }
+void crystal_shell_set_keyboard_open(bool open)
+{
+    s_keyboard_open = open;
+    update_home_pill();
+}
 void crystal_shell_set_modal_open(bool open) { s_modal_open = open; }

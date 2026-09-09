@@ -58,6 +58,7 @@ here.
 | --- | --- | --- | --- |
 | 0 | App content | `lv_scr_act()` | yes |
 | 1 | Indicator bar | Brookesia status bar | no (v1) |
+| 1 | Home pill | `lv_layer_top()` | no (cue only) |
 | 2 | App switch cards | shell container | during drag only |
 | 3 | Keyboard overlay | shell container | yes |
 | 4 | Quick settings panel | shell container | yes |
@@ -66,6 +67,23 @@ here.
 
 Rules that follow from the ordering:
 
+- **The home pill** is the resting cue for the bottom edge, 172x6px at 50% white,
+  centred `kHomePillInset` above the bottom so it sits inside `kBottomBand`. It is
+  never clickable — the gesture arbiter owns that band, and a clickable object
+  there would swallow presses that must reach `on_gesture_pressing()`. Hidden while
+  the keyboard is open, because the keyboard takes the bottom edge and the arbiter
+  hands the band to the app. Crystal draws it because clearing
+  `enable_navigation_gesture` removed Brookesia's on app screens; Brookesia's was
+  drag-only (`size_min` width 0), so a resting pill is new behaviour.
+- **The pill is re-fronted, not just unhidden.** System pages are created on
+  `lv_layer_top()` after it and cover it on z-order alone, so `update_home_pill()`
+  calls `lv_obj_move_foreground()` and runs at the end of `system_page_push()` and
+  `system_page_pop()`. Dialogs and toasts are created later still and are meant to
+  cover it, which is why nothing re-fronts it there.
+- **The bottom swipe commits at `kHomeSwipeTravel = 80`px**, not half the screen.
+  It is a flick with no drag animation, so there is no midpoint to cross. The floor
+  is the stylesheet's `direction_vertical = 50`: below that the direction never
+  resolves as UP and the arbiter would claim gestures that cannot commit.
 - The indicator bar stays visible during app switching (cards slide beneath it).
   Quick settings is ordered above it and slides out from behind it, which is what
   makes the pull-down read as coming from above — but the corner panel only ever
@@ -119,14 +137,14 @@ Every screen in the system.
 | App content | launcher, app switch | per-app |
 | App switcher cards | edge drag | transient overlay |
 | Quick settings | top-right corner pull | corner overlay |
-| WiFi page | long-press WiFi in quick settings; Settings › Network | full-screen page |
+| Settings › Network › WiFi Networks | long-press WiFi in quick settings; Settings › Network | sub-page |
 | WiFi credential dialog | pick an SSID on the WiFi page | modal |
-| Settings root | gear in quick settings | app |
+| Settings root | gear in quick settings | shell-owned override |
 | Settings › Network | settings root | sub-page |
-| Settings › Power | settings root | sub-page |
-| Settings › General | settings root | sub-page |
+| Settings › Display & Power | settings root | sub-page |
+| Settings › Sound | settings root | sub-page |
+| Settings › Region & Time | settings root | sub-page |
 | Settings › System | settings root | sub-page |
-| Settings › Manage Apps | settings root | sub-page |
 
 ## 4. Gestures
 
@@ -139,12 +157,13 @@ travel, and holds it until lift.
 | Drag left | right edge, ≤24px from right | `APP_SWITCH` | next app |
 | Drag down | top band ≤20px, **right 120px only** | `QUICK_SETTINGS` | pull panel |
 | Drag up | anywhere, panel open | `QUICK_SETTINGS` | dismiss panel |
+| Drag up | bottom 24px, no panel | `NAVIGATION` | dismiss one shell layer, or open launcher on a bare card |
 | Tap | outside panel, panel open | `QUICK_SETTINGS` | dismiss panel |
 | Long press | quick settings WiFi button | — | close panel, open WiFi page |
 | Drag vertical | WiFi page SSID list | `APP` (list scrolls) | scroll SSIDs |
 | Any other | anywhere | `APP` | passed through |
 
-Constants: `kLockThreshold = 12`, `kEdgeBand = 24`, `kTopBand = 20`,
+Constants: `kLockThreshold = 12`, `kEdgeBand = 24`, `kBottomBand = 24`, `kTopBand = 20`,
 `kQuickCornerWidth = 120`, long press = 500ms.
 
 `kTopBand` gates the pull-down's vertical component; `kQuickCornerWidth` gates its
@@ -165,6 +184,11 @@ Precedence, in order:
 
 Horizontal edge gestures are unconditionally reserved for the OS in ABI v1.
 There is no per-app opt-out such as `claimsEdgeGestures()`.
+
+Crystal also owns the bottom edge. `CrystalApp` clears Brookesia's per-app
+`enable_navigation_gesture` flag at construction, then the shell forwards a
+committed bare-card swipe to Brookesia HOME itself. This prevents Brookesia from
+dismissing the card behind a shell page before the shell can consume the gesture.
 
 The `kTopBand` restriction is the deliberate exception to rule 4. Without it, a
 swipe-down inside a scrolled app view opens quick settings when the user meant to
@@ -289,8 +313,8 @@ upstream. Leave it intact and never navigate to it. Same result, no fight.
 - Card switching is suppressed while it is open, same precedence as a dialog
 - Lives at layer 5 (§1), with dialogs — not at layer 0 with card content
 
-**Back is two-level.** Pop the sub-page if inside one (Network, Power, General,
-System, Manage Apps); dismiss the override only from the Settings root. A single
+**Back is two-level.** Pop the sub-page if inside one; dismiss the override only
+from the Settings root. A single
 level would drop the user to a card from inside Network and lose their place.
 
 ### Lifecycle and memory
@@ -460,13 +484,13 @@ long-press WiFi tile
          |
          +-> tap a row -> credential dialog (keyboard opens)
          |     |
-         |     +- success -> close dialog, close page, return to the app that
-         |     |             was running, toast "Connected to <SSID>",
+         |     +- success -> close dialog, pop to Settings › Network,
+         |     |             toast "Connected to WiFi",
          |     |             bar icon turns active
          |     +- failure -> close dialog, stay on the page,
          |                   toast "Failed to connect to WiFi network"
          |
-         +-> back -> close page, return to the app that was running
+         +-> back -> pop to Settings › Network
 ```
 
 **Why a page and not an inline list.** The inline version stacked a scrollable
@@ -476,15 +500,16 @@ scroll inside a translating parent, and a modal whose parent can be destroyed by
 a dismiss gesture, are both avoidable. The page owns its own area, scrolls
 normally, and has one clear exit.
 
-Ownership: while the WiFi page is open the quick-settings pull-down is
-unavailable and app switching is suppressed, same as `s_settings_open`. Back is
-the only exit besides a successful connect.
+Ownership: WiFi Networks is an entry in the Settings system-page stack. While it
+is open the quick-settings pull-down and app switching are suppressed. Back or a
+committed bottom swipe pops to Network, then the root, then the underlying card.
 
 Outcomes are toasts; input is dialogs. That split is why the toast layer is built
 before WiFi. Failure is a toast on the page rather than a stacked dialog, so
 there is never a dialog over a dialog.
 
-Settings › Network opens the same page. There is one SSID list in the system.
+The quick-panel long press builds the same root → Network → WiFi Networks stack
+as ordinary navigation. There is one SSID list in the system.
 
 Known networks reconnect without a prompt. Saved credentials live in
 NVS-encrypted storage (`nvs_keys` partition) — plaintext otherwise.
@@ -518,10 +543,10 @@ computed, replacing the dialog's private copy.
 | Category | Rows |
 | --- | --- |
 | Network | WiFi (SSID list, connect, forget); DHCP / static toggle; IP, gateway, netmask, DNS |
-| Power | screen dim timeout; screen off timeout; dim level; power saving toggle |
-| General | timezone |
-| System | hardware version; OS version; company info; current IP; attribution |
-| Manage Apps | per-app install/uninstall, reorder, clear data |
+| Display & Power | brightness; dim/off timeouts; dim level; Energy Saving; battery |
+| Sound | volume; timer/alarm sounds; test sound |
+| Region & Time | automatic/manual time; timezone; 12/24-hour format; location |
+| System | About; Legal & Attribution; Device Status; Restart |
 
 Notes:
 
@@ -532,20 +557,28 @@ Notes:
 - **System › attribution** is where `esp-brookesia` and ESP-IDF are credited in
   the UI, alongside the root `NOTICE` file.
 - **Power saving** is one NVS flag with several effects: CPU capped at 80MHz,
-  `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened timeouts.
+  `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened timeouts, and card
+  drags showing the icon card instead of the preview snapshot. The last of these
+  exists because loading a preview costs a SPIFFS read plus a ~103 KiB PSRAM
+  allocation per drag, which is the work that hurts most under the 80MHz cap.
+- **Auto Dimming** is a separate NVS flag (`power.auto_dim`, default on) and the
+  master switch for both timeouts. Off holds the panel at the user's brightness
+  no matter what the timeouts say, and the configured values are retained so
+  turning it back on restores them. It appears as a quick-panel tile and as the
+  first row of Settings › Display & Power, above the two timeout dropdowns it
+  governs. It is independent of Energy Saving: Energy Saving halves the timeouts,
+  Auto Dimming decides whether they apply at all.
 - Screen states: full → dim (after dim timeout) → backlight off (after off
   timeout). Any touch restores full brightness and **is swallowed**, not
   delivered to the app. No automatic light sleep in v1 — the RGB panel is a
   continuous DMA scan-out and will blank or tear.
-- **Divergence to settle in Phase 11.** As built, dim and off happen *only while
-  power saving is on* — the timeout check is gated on the energy-saving flag, so
-  with the toggle off the panel stays at full brightness indefinitely. The
-  intent above is that timeouts always apply and power saving merely shortens
-  them. Phase 11 owns resolving this; whichever way it goes, the four timeout
-  and dim-level rows above become the stored values that today are compile-time
-  constants (30s dim, 60s off, 20% dim level).
+- Dim and off timeouts always apply while Auto Dimming is on, whether or not
+  Energy Saving is enabled. Energy Saving halves their effective values without
+  changing the values shown in Settings.
 
 ## 9. Manage Apps
+
+Manage Apps is Phase 13 work and is not a Phase 11 Settings category.
 
 The user-facing face of the NVS registry. To the user this is installing and
 removing apps; underneath, install is `app.<id>.enabled = 1` and reorder is
@@ -674,7 +707,7 @@ GET https://api.open-meteo.com/v1/forecast
 
 - **Location:** no GPS on this board. Phase 9.5 resolves location once from a
   keyless IP-geolocation service and caches latitude, longitude, and city in NVS.
-  The precedence is manual Settings › General coordinates (when Phase 11 lands),
+  The precedence is manual Settings › Region & Time coordinates,
   cached IP result, then the Hong Kong default. The resolved city is displayed.
 - **Refresh:** on app open if the cache is older than 15 minutes, plus a service
   refresh every 30 minutes while WiFi is up. Never per-frame, never on a tight

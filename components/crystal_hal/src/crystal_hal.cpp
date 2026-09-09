@@ -8,10 +8,14 @@
 #include <sys/time.h>
 #include <time.h>
 
+#include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -32,6 +36,7 @@ constexpr uint8_t kBrightnessMax = 95;
 constexpr int kVolumeMax = 100;
 constexpr const char *kStorageNamespace = "crystal";
 constexpr const char *kWifiEnabledKey = "wifi_enabled";
+constexpr const char *kDhcpKey = "net.dhcp";
 constexpr uint8_t kRtcAddress = 0x51;
 constexpr uint8_t kAxp2101Address = 0x34;
 constexpr uint32_t kAlarmSampleRate = 22050;
@@ -122,6 +127,8 @@ public:
         return err == ESP_OK;
     }
 };
+
+DeviceStorage s_storage;
 
 class FallbackRtc final : public IRtc {
 public:
@@ -248,6 +255,8 @@ public:
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &DeviceWifi::event_handler, this);
         (void)esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &DeviceWifi::event_handler, this);
         enabled_ = read_enabled();
+        apply_stored_ip_config();
+        (void)set_hostname("crystal");
         wifi_config_t saved_config = {};
         const bool have_saved = esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK &&
                                 saved_config.sta.ssid[0] != 0;
@@ -397,7 +406,115 @@ public:
     }
     const char *last_ssid() const override { return last_ssid_; }
 
+    bool ip_config(IpConfig *out) const override
+    {
+        if (out == nullptr || netif_ == nullptr || !has_ip_) return false;
+        esp_netif_ip_info_t info = {};
+        esp_netif_dns_info_t dns = {};
+        if (esp_netif_get_ip_info(netif_, &info) != ESP_OK) return false;
+        out->dhcp = dhcp_enabled_;
+        out->ip = info.ip.addr;
+        out->mask = info.netmask.addr;
+        out->gateway = info.gw.addr;
+        out->dns1 = esp_netif_get_dns_info(netif_, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK
+                        ? dns.ip.u_addr.ip4.addr : 0;
+        out->dns2 = esp_netif_get_dns_info(netif_, ESP_NETIF_DNS_BACKUP, &dns) == ESP_OK
+                        ? dns.ip.u_addr.ip4.addr : 0;
+        return true;
+    }
+
+    bool set_ip_config(const IpConfig &config) override
+    {
+        if (netif_ == nullptr) return false;
+        if (config.dhcp) {
+            const esp_err_t err = esp_netif_dhcpc_start(netif_);
+            if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) return false;
+        } else {
+            // The client must stop before applying the address or its next lease
+            // will overwrite the static configuration.
+            (void)esp_netif_dhcpc_stop(netif_);
+            esp_netif_ip_info_t info = {};
+            info.ip.addr = config.ip;
+            info.netmask.addr = config.mask;
+            info.gw.addr = config.gateway;
+            if (esp_netif_set_ip_info(netif_, &info) != ESP_OK) return false;
+            esp_netif_dns_info_t dns = {};
+            dns.ip.type = ESP_IPADDR_TYPE_V4;
+            dns.ip.u_addr.ip4.addr = config.dns1;
+            if (esp_netif_set_dns_info(netif_, ESP_NETIF_DNS_MAIN, &dns) != ESP_OK) return false;
+            dns.ip.u_addr.ip4.addr = config.dns2;
+            (void)esp_netif_set_dns_info(netif_, ESP_NETIF_DNS_BACKUP, &dns);
+        }
+        dhcp_enabled_ = config.dhcp;
+        persist_ip_config(config);
+        if (started_ && enabled_ && last_ssid_[0] != '\0') {
+            (void)esp_wifi_disconnect();
+            pending_connect_ = false;
+            (void)esp_wifi_connect();
+        }
+        return true;
+    }
+
+    bool mac(uint8_t out[6]) const override
+    {
+        return out != nullptr && esp_wifi_get_mac(WIFI_IF_STA, out) == ESP_OK;
+    }
+
+    bool rssi(int8_t *out) const override
+    {
+        if (out == nullptr) return false;
+        wifi_ap_record_t record = {};
+        if (esp_wifi_sta_get_ap_info(&record) != ESP_OK) return false;
+        *out = record.rssi;
+        return true;
+    }
+
+    void set_power_save(bool enabled) override
+    {
+        if (started_) (void)esp_wifi_set_ps(enabled ? WIFI_PS_MAX_MODEM : WIFI_PS_NONE);
+    }
+
+    bool set_hostname(const char *name) override
+    {
+        return netif_ != nullptr && name != nullptr && name[0] != '\0' &&
+               esp_netif_set_hostname(netif_, name) == ESP_OK;
+    }
+
 private:
+    static bool read_blob(const char *key, void *value, size_t size)
+    {
+        size_t length = size;
+        return s_storage.get(key, value, &length) && length == size;
+    }
+
+    static void persist_ip_config(const IpConfig &config)
+    {
+        const uint8_t dhcp = config.dhcp ? 1 : 0;
+        (void)s_storage.set(kDhcpKey, &dhcp, sizeof(dhcp));
+        (void)s_storage.set("net.ip", &config.ip, sizeof(config.ip));
+        (void)s_storage.set("net.mask", &config.mask, sizeof(config.mask));
+        (void)s_storage.set("net.gw", &config.gateway, sizeof(config.gateway));
+        (void)s_storage.set("net.dns1", &config.dns1, sizeof(config.dns1));
+        (void)s_storage.set("net.dns2", &config.dns2, sizeof(config.dns2));
+    }
+
+    void apply_stored_ip_config()
+    {
+        IpConfig config = {true, 0, 0, 0, 0, 0};
+        uint8_t dhcp = 1;
+        (void)read_blob(kDhcpKey, &dhcp, sizeof(dhcp));
+        config.dhcp = dhcp != 0;
+        if (!config.dhcp && read_blob("net.ip", &config.ip, sizeof(config.ip)) &&
+                read_blob("net.mask", &config.mask, sizeof(config.mask)) &&
+                read_blob("net.gw", &config.gateway, sizeof(config.gateway)) &&
+                read_blob("net.dns1", &config.dns1, sizeof(config.dns1))) {
+            (void)read_blob("net.dns2", &config.dns2, sizeof(config.dns2));
+            (void)set_ip_config(config);
+        } else {
+            dhcp_enabled_ = true;
+        }
+    }
+
     static bool read_enabled()
     {
         nvs_handle_t handle;
@@ -547,6 +664,7 @@ private:
     // Written from the esp_event task, read from the service task, so keep the
     // compiler from caching it. Single byte, one writer: no lock needed.
     volatile bool has_ip_ = false;
+    bool dhcp_enabled_ = true;
     volatile bool pending_connect_ = false;
     uint8_t retries_ = 0;
     esp_timer_handle_t retry_timer_ = nullptr;
@@ -593,8 +711,47 @@ private:
     i2c_master_dev_handle_t device_ = nullptr;
 };
 
+class DeviceSystemInfo final : public ISystemInfo {
+public:
+    uint32_t free_heap() const override { return esp_get_free_heap_size(); }
+    uint32_t free_psram() const override { return heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
+    uint32_t uptime_seconds() const override
+    {
+        return static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
+    }
+    const char *reset_reason() const override
+    {
+        switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: return "Power on";
+        case ESP_RST_SW: return "Software restart";
+        case ESP_RST_PANIC: return "Software crash";
+        case ESP_RST_INT_WDT:
+        case ESP_RST_TASK_WDT:
+        case ESP_RST_WDT: return "Watchdog";
+        case ESP_RST_BROWNOUT: return "Brownout";
+        case ESP_RST_DEEPSLEEP: return "Deep sleep wake";
+        default: return "Other";
+        }
+    }
+    const char *idf_version() const override { return esp_get_idf_version(); }
+    const char *app_version() const override { return esp_app_get_description()->version; }
+    bool chip_id(uint8_t out[6]) const override
+    {
+        return out != nullptr && esp_efuse_mac_get_default(out) == ESP_OK;
+    }
+    bool storage_bytes(uint32_t *used, uint32_t *total) const override
+    {
+        size_t used_bytes = 0;
+        size_t total_bytes = 0;
+        if (used == nullptr || total == nullptr ||
+                esp_spiffs_info("storage", &total_bytes, &used_bytes) != ESP_OK) return false;
+        *used = static_cast<uint32_t>(used_bytes);
+        *total = static_cast<uint32_t>(total_bytes);
+        return true;
+    }
+};
+
 DeviceBrightness s_brightness;
-DeviceStorage s_storage;
 Pcf85063Rtc s_rtc;
 esp_codec_dev_handle_t s_speaker = nullptr;
 
@@ -697,7 +854,8 @@ void start_reset_button()
 DeviceWifi s_wifi;
 DeviceTouch s_touch;
 Axp2101Power s_power;
-CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch, &s_power};
+DeviceSystemInfo s_system_info;
+CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch, &s_power, &s_system_info};
 
 } // namespace
 

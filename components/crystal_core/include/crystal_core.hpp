@@ -47,6 +47,9 @@ bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len 
 void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 // Requests one throttled Open-Meteo fetch on the crystal service task.
 void crystal_weather_request();
+bool crystal_weather_set_location(double latitude, double longitude, const char *city);
+void crystal_weather_set_automatic(bool automatic);
+bool crystal_weather_location_automatic();
 
 // Called by the gesture arbiter on touch-down. Returns true exactly when that
 // touch must wake the display without being delivered as an app interaction.
@@ -57,6 +60,31 @@ void crystal_time_init();
 
 // Applies local time to both the system clock and the PCF85063 RTC.
 bool crystal_time_set(const struct tm *local_time);
+bool crystal_timezone_apply(const char *posix);
+bool crystal_time_format_24();
+void crystal_time_set_format_24(bool enabled);
+bool crystal_time_auto_enabled();
+void crystal_time_set_auto(bool enabled);
+int32_t crystal_time_last_sync();
+
+uint16_t crystal_power_dim_seconds();
+uint16_t crystal_power_off_seconds();
+uint8_t crystal_power_dim_level();
+bool crystal_power_saving_enabled();
+// Master switch for the dim and screen-off timeouts. Off holds the panel at the
+// user's brightness regardless of the configured timeouts, which are retained so
+// switching back on restores them.
+bool crystal_power_auto_dim_enabled();
+void crystal_power_set_auto_dim(bool enabled);
+void crystal_power_set_dim_seconds(uint16_t seconds);
+void crystal_power_set_off_seconds(uint16_t seconds);
+void crystal_power_set_dim_level(uint8_t level);
+void crystal_power_set_saving(bool enabled);
+void crystal_brightness_set(uint8_t level);
+uint8_t crystal_brightness_level();
+bool crystal_sound_alerts_enabled();
+void crystal_sound_set_alerts(bool enabled);
+bool crystal_battery_cached(int *percent, bool *charging);
 
 bool crystal_timer_start(uint32_t duration_seconds);
 bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t duration_seconds);
@@ -66,7 +94,7 @@ void crystal_timer_reset();
 CrystalTimerState crystal_timer_state();
 void crystal_stopwatch_set_running(bool running);
 
-using crystal_clock_update_cb_t = void (*)(void *context, int hour, int minute, bool is_pm);
+using crystal_clock_update_cb_t = void (*)(void *context, int hour, int minute, bool is_pm, bool format24);
 using crystal_connectivity_update_cb_t = void (*)(void *context, bool wifi_connected);
 using crystal_battery_update_cb_t = void (*)(void *context, int percent, bool charging);
 

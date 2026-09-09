@@ -231,7 +231,13 @@ void ClockApp::refresh()
     if (localtime_r(&now, &local) != nullptr) {
         char clock_text[16];
         char date_text[32];
-        snprintf(clock_text, sizeof(clock_text), "%02d:%02d:%02d", local.tm_hour, local.tm_min, local.tm_sec);
+        if (crystal_time_format_24()) {
+            snprintf(clock_text, sizeof(clock_text), "%02d:%02d:%02d", local.tm_hour, local.tm_min, local.tm_sec);
+        } else {
+            const int hour = local.tm_hour % 12 == 0 ? 12 : local.tm_hour % 12;
+            snprintf(clock_text, sizeof(clock_text), "%d:%02d:%02d %s", hour, local.tm_min,
+                     local.tm_sec, local.tm_hour >= 12 ? "PM" : "AM");
+        }
         snprintf(date_text, sizeof(date_text), "%04d-%02d-%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
         lv_label_set_text(clock_label_, clock_text);
         lv_label_set_text(date_label_, date_text);

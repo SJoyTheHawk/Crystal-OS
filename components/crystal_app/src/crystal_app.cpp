@@ -16,6 +16,16 @@ namespace {
 constexpr size_t kMaxStateBytes = 2048;
 constexpr size_t kMaxKeyBytes = 7;
 crystal_shell_back_hook_t s_shell_back_hook = nullptr;
+
+ESP_Brookesia_PhoneAppData_t crystal_phone_app_data(const void *launcher_icon)
+{
+    ESP_Brookesia_PhoneAppData_t data =
+        ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT(launcher_icon, true, false);
+    // Crystal arbitrates the bottom edge so a shell page is dismissed before
+    // the card underneath it is sent home.
+    data.flags.enable_navigation_gesture = 0;
+    return data;
+}
 }
 
 void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook)
@@ -87,7 +97,9 @@ bool CrystalState::set_u32(const char *key, uint32_t value)
 }
 
 CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
-    : ESP_Brookesia_PhoneApp(name, launcher_icon, true),
+    : ESP_Brookesia_PhoneApp(
+          ESP_BROOKESIA_CORE_APP_DATA_DEFAULT(name, launcher_icon, true),
+          crystal_phone_app_data(launcher_icon)),
       app_name_(name != nullptr ? name : "<unnamed>"), state_(name)
 {
 }

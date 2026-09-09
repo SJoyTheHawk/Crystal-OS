@@ -14,9 +14,10 @@ because the exit criteria land in the first three steps.
 
 ## 0. Decisions this phase settles
 
-Five things were open across `DESIGN.md`, `IMPLEMENTATION_PLAN.md`,
+Seven things were open across `DESIGN.md`, `IMPLEMENTATION_PLAN.md`,
 `CODE_GUIDE.md` and the proposal. They are decided here, and the other documents
-are updated to match rather than left to drift.
+are updated to match rather than left to drift. D1-D5 come from the proposal; D6
+and D7 are the navigation work this phase absorbs.
 
 **D1 — Timeouts always apply; Energy Saving only shortens them.**
 `check_power_state()` currently evaluates Dim and Off only inside
@@ -49,6 +50,18 @@ it.** `dim_brightness()` compares `kDimBrightness = 20` directly against
 `hal().brightness->get()`. Both scales get called "%" in the proposal and in the
 quick panel; the stored value is whatever `IBrightness::set()` takes, and the
 range is 5-50 on that scale.
+
+**D6 — Crystal owns the bottom edge; Brookesia's gesture navigation is off.**
+A swipe up from the bottom currently dismisses the *card underneath* an open
+shell layer instead of the layer itself. Phase 11 fixes it (§2.1). The launcher
+stays and remains the destination for a bottom swipe on a bare card — that part
+of the current behaviour is correct and is preserved deliberately.
+
+**D7 — There is one WiFi Networks page, and it lives under Network.** The page
+`wifi_page_open()` builds today *becomes* Settings › Network › WiFi Networks. The
+quick panel does not open a separate page; it deep-links into that subpage with
+the Settings stack underneath it (§5, §2.1). Backing out of it lands on Network,
+not on a card.
 
 ## 1. What already exists
 
@@ -92,6 +105,28 @@ Needs new code, in rough order of size:
 
 ## 2. The page: one pattern, borrowed from WiFi
 
+### Where it is opened from
+
+Two entry points exist in the quick panel today, both in
+`components/crystal_shell/src/crystal_shell.cpp`:
+
+- **The gear tile** (line 311) closes the panel and calls `quick_show_message()`,
+  which shows the toast `"Settings coming in Phase 11"` (line 210). Replace the
+  toast with `settings_open()`. Keep the panel-close animation exactly as it is —
+  the gear already runs the same dismissal the other tiles use, and the page should
+  open after the panel is gone, not behind it. The `message[]` string and the
+  `quick_show_message(nullptr)` call for the gear both go away; check whether
+  `quick_show_message()` still has other callers before deleting it.
+- **The WiFi tile's long-press** (line 284) currently does
+  `close_quick_settings(wifi_page_open)`. It becomes
+  `close_quick_settings(settings_open_at_wifi)` — the deep link in §5. Note the
+  existing pattern: `close_quick_settings()` takes the follow-up as a callback so
+  it runs after the close animation finishes. Use it rather than opening the page
+  first.
+
+There is no third entry point, and Phase 11 does not add one. Settings is not in
+the ring and has no launcher icon (D3).
+
 Settings is built like `wifi_page_open()` — `lv_obj_create(lv_layer_top())`, sized
 and positioned from `active_app_area()`, `crystal_shell_set_settings_open(true)`.
 Do not parent to `lv_scr_act()` and do not use `area.x1/y1` as a child offset;
@@ -114,25 +149,209 @@ Settings has depth, and `DESIGN.md` §5.5 requires two-level back: pop the subpa
 if inside one, dismiss the override only from the root.
 
 ```cpp
-// One entry per pushed subpage. Bounded: the deepest path in the proposal is
+// One entry per pushed system page. Bounded: the deepest path in the proposal is
 // root -> System -> About -> Legal, so 4 is enough, and a fixed array avoids
-// an allocation on a UI path.
-constexpr size_t kSettingsDepthMax = 4;
-lv_obj_t *s_settings_stack[kSettingsDepthMax];
-size_t s_settings_depth = 0;
+// an allocation on a UI path. The WiFi page is an entry in this stack, not a
+// parallel mechanism (D7).
+constexpr size_t kSystemPageDepthMax = 4;
+lv_obj_t *s_system_page_stack[kSystemPageDepthMax];
+size_t s_system_page_depth = 0;
 ```
 
+`s_settings_open` stops being a bool that two different pages both set and clear.
+It becomes `s_system_page_depth > 0`. That kills the bug where the WiFi page's
+close clears the flag while the Settings root is still up — the flag is now
+derived from the stack, so it cannot disagree with what is on screen.
+
 `shell_consume_back()` gains one clause, above the quick-panel one and below the
-keyboard and modal ones:
+keyboard and modal ones, and the separate `s_wifi_page` clause goes away:
 
 ```cpp
-if (s_settings_depth > 1) { settings_pop(); return true; }   // subpage
-if (s_settings_depth == 1) { settings_close(); return true; } // root -> card
+if (s_system_page_depth > 1) { system_page_pop(); return true; }   // subpage
+if (s_system_page_depth == 1) { system_page_close(); return true; } // root -> card
 ```
 
 Getting this wrong has a specific symptom worth naming: Back from inside Network
 drops the user onto a card instead of the Settings root. That is the failure
 `DESIGN.md` §5.5 calls out by name, and it is the one to test first.
+
+### 2.1 The bottom edge: fixing the swipe that dismisses the wrong thing
+
+This is a real bug, not a design limitation, and it predates Settings — the WiFi
+page has had it since Phase 8. Swipe up from the bottom with the WiFi page open
+and the page stays while the *card behind it* is dismissed to the launcher.
+
+**Why.** Two independent things listen to the same gesture object, and only one of
+them knows the shell has a front layer.
+
+Brookesia's manager registers `onGestureNavigationReleaseEventCallback`, which on
+`GESTURE_DIR_UP` calls `sendNavigateEvent(HOME)`. `processNavigationEvent()`
+handles HOME by calling `processAppPause()`, `processHomeScreenChange(MAIN)` and
+`resetActiveApp()` — with **no hook consulted anywhere**. That is the asymmetry:
+BACK routes through `active_app->back()`, which is `CrystalApp::back()`, which
+calls `s_shell_back_hook()`. HOME has no equivalent. So Back correctly closes the
+WiFi page and a bottom swipe correctly ignores it.
+
+The shell's arbiter does classify the gesture — with a front layer open it locks
+`CrystalGestureOwner::App` — but ownership is advisory between *Crystal's* own
+handlers. Brookesia's callback does not check `s_gesture_owner`, and the shell
+registers its callbacks in `crystal_shell_init()`, which runs after
+`phone->begin()`, so Brookesia's handler fires first regardless. Ordering cannot
+fix this and neither can the arbiter as it stands.
+
+**The fix: Crystal takes the bottom edge, the same way it already took the side
+edges.** Card switching works because Crystal owns left/right — the stylesheet
+ships `enable_gesture_navigation_back = 0`, so Brookesia never competes for them.
+Do the same for the bottom.
+
+Per-app data is the lever. `processGestureScreenChange()` computes
+`enable_gesture_navigation` from `app_data->flags.enable_navigation_gesture` at
+every screen change, and `enable_gesture_navigation_home` is gated on it. Clear
+that flag and Brookesia raises neither HOME nor recents from a gesture.
+
+The flag lives in `_init_data`, which is **private** in `ESP_Brookesia_PhoneApp`
+with only a const `getActiveData()`. So it cannot be cleared after construction —
+it has to be passed in. `CrystalApp`'s current 3-arg
+`ESP_Brookesia_PhoneApp(name, launcher_icon, true)` hardcodes the default macro.
+Switch to the 2-arg `(core_data, phone_data)` constructor
+(`esp_brookesia_phone_app.hpp:33`) and hand it modified data. No upstream patch:
+
+```cpp
+namespace {
+// ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT() is a brace initialiser, so the flag
+// cannot be overridden inline. Build it, then clear the one bit.
+ESP_Brookesia_PhoneAppData_t crystal_phone_app_data(const void *launcher_icon)
+{
+    ESP_Brookesia_PhoneAppData_t data =
+        ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT(launcher_icon, true, false);
+    // Crystal's arbiter owns the bottom edge (D6). Leaving this set lets
+    // Brookesia raise HOME behind an open shell layer.
+    data.flags.enable_navigation_gesture = 0;
+    return data;
+}
+}  // namespace
+
+CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
+    : ESP_Brookesia_PhoneApp(
+          ESP_BROOKESIA_CORE_APP_DATA_DEFAULT(name, launcher_icon, true),
+          crystal_phone_app_data(launcher_icon)),
+      app_name_(name != nullptr ? name : "<unnamed>"), state_(name)
+{
+}
+```
+
+Two things make this safe, both verified against upstream rather than assumed:
+
+**The data is copied, not referenced.** `ESP_Brookesia_CoreApp` stores
+`_core_init_data(data)` (`esp_brookesia_core_app.cpp:29`) and
+`ESP_Brookesia_PhoneApp` stores `_init_data(phone_data)`
+(`esp_brookesia_phone_app.cpp:18`) — both by value, into members declared as
+plain structs. So returning a temporary from `crystal_phone_app_data()` and
+binding it to a `const &` parameter is fine; the copy happens before the
+temporary dies. Nothing here would be safe if either base held a pointer, so it
+is worth knowing which it is.
+
+**The macro arguments are the ones the 3-arg path already used.** It expands
+`ESP_BROOKESIA_CORE_APP_DATA_DEFAULT(name, launcher_icon, use_default_screen)`
+(`esp_brookesia_core_app.cpp:48`) and
+`ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT(launcher_icon, true, false)`
+(`esp_brookesia_phone_app.cpp:33`). The code above passes exactly those, with
+`use_default_screen` fixed at `true` because `CrystalApp` always passed `true`.
+Change nothing else in either argument list: `status_icon` doubling as
+`launcher_icon` is what drives `image_num`, and `use_status_bar = true` /
+`use_navigation_bar = false` are what give Crystal apps a status bar and no nav
+bar.
+
+`name` remains a `const char *` held by pointer in both the old and new path
+(`getName()` returns `_core_active_data.name`), so the lifetime requirement on
+the caller is unchanged — it was already "must outlive the app", and every
+`CrystalApp` subclass passes a literal.
+
+**The flag reaches the manager.** `beginExtra()` does `_active_data = _init_data`
+(`esp_brookesia_phone_app.cpp:74`) at install, then applies its own consistency
+fixes; `processGestureScreenChange()` reads `getActiveData()`. So a bit cleared in
+`_init_data` by the constructor is the bit the manager sees. Note that
+`beginExtra()` already clears `enable_navigation_gesture` itself when no gesture
+object exists — clearing it deliberately is the same operation upstream performs,
+not a new kind of change.
+
+If the constructor swap turns out to be awkward, do **not** substitute a
+`const_cast` on `getActiveData()`. It would appear to work — install happens once
+at boot and nothing rewrites `_active_data` afterwards — which is exactly the
+problem: it depends on install-once timing that nothing enforces, and
+`delExtra()` zeroes the struct, so anything that ever uninstalls and reinstalls an
+app silently loses the flag. The constructor is the supported route and costs one
+helper function.
+
+**Then handle the gesture.** The arbiter gains a bottom band and a real owner
+instead of falling through to `App`:
+
+```cpp
+constexpr lv_coord_t kBottomBand = 24;  // matches kEdgeBand
+```
+
+In `on_gesture_pressing()`, before the `horizontal_edge` test, a swipe starting
+inside `kBottomBand` of the bottom going up locks
+`CrystalGestureOwner::Navigation`. Two cases must not claim it: the keyboard
+(which already claims everything) and an open quick panel (an upward drag there
+dismisses the panel — that path exists and stays).
+
+In `on_gesture_release()`, `Navigation` resolves in order:
+
+```cpp
+// One swipe dismisses one shell layer, top down -- the same rule as Back,
+// because they are the same question asked with a different gesture.
+if (owner == CrystalGestureOwner::Navigation) {
+    if (shell_consume_back()) return;
+    // Nothing of the shell's was on top: the card is the front layer, so the
+    // swipe means what Brookesia meant by it. The launcher stays and is the
+    // right destination here.
+    if (s_phone != nullptr) (void)s_phone->sendNavigateEvent(
+        ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
+    return;
+}
+```
+
+`sendNavigateEvent()` is public on `ESP_Brookesia_Core`
+(`esp_brookesia_core.hpp:49`), so the launcher path is Brookesia's own code,
+reached deliberately instead of by accident. Reusing `shell_consume_back()` rather
+than writing a second dismissal chain is the point: keyboard, modal, system page
+and quick panel already have a documented precedence, and one swipe now peels one
+layer exactly as one Back does.
+
+Require a travel threshold on the release — a tap in the bottom 24px must not
+dismiss anything. **Do not use half the screen height.** This section originally
+said to, matching card switching's `hor_res / 2`; that shipped and the gesture was
+unusable. Half the screen is right for card switching, where the drag animates a
+card across and the commit point should be the midpoint. The bottom swipe animates
+nothing — it is a flick, and demanding 240px of travel from a 24px band meant
+releases were silently dropped, which read as "the pill does nothing".
+
+`kHomeSwipeTravel = 80` instead. The floor is Brookesia's `direction_vertical = 50`
+from the 480x480 stylesheet: below that the direction never resolves as UP, so the
+arbiter would claim gestures that cannot commit.
+
+**What this costs.** `enable_gesture_show_mask_bottom_edge` and
+`enable_gesture_show_bottom_indicator_bar` are both computed from
+`enable_gesture_navigation`, so clearing the flag also removes Brookesia's bottom
+indicator pill on app screens. **This was missed, and the shell now draws its own
+pill** — `s_home_pill` in `init_indicator_overlay()`, 172x4px at 30% white,
+`kHomePillInset` above the bottom edge, hidden while the keyboard is open.
+
+Two corrections to what this section originally claimed. The loss was **app
+screens only**: the `MAIN` branch of `processGestureScreenChange()` derives
+`enable_gesture_navigation` from the navigation bar being `HIDE`, which is still
+true, so the launcher kept its pill; only the `APP` branch reads the app flag.
+And Brookesia's pill was never a resting hint — `size_min` is `RECT(0, 10)`, zero
+width, so it existed only while a drag stretched it. Crystal's rests visible,
+which is a deliberate change rather than a restoration. Do not
+set `navigation_bar_visual_mode = SHOW_FLEX` to get the hint back: it disables
+gesture HOME by a side effect and puts a real nav bar on screen, which is not the
+Crystal layout.
+
+**Test it on a card with no shell layer open first.** If a bare bottom swipe stops
+reaching the launcher, the arbiter is claiming the gesture and not forwarding it,
+and every other test in this section will be misleading.
 
 ## 3. Storage keys
 
@@ -251,9 +470,12 @@ so the quick-panel tile and the Settings row cannot diverge:
 ```cpp
 void power_saving_apply(bool on)
 {
+    // min MUST equal max. A lower min enables dynamic frequency scaling, and
+    // nothing holds an ESP_PM_CPU_FREQ_MAX lock, so the UI renders at min.
+    const int freq = on ? 80 : 240;
     esp_pm_config_t pm = {
-        .max_freq_mhz = on ? 80 : 240,
-        .min_freq_mhz = 80,
+        .max_freq_mhz = freq,
+        .min_freq_mhz = freq,
         .light_sleep_enable = false,   // never true in v1: RGB panel is DMA scan-out
     };
     (void)esp_pm_configure(&pm);
@@ -270,6 +492,16 @@ void power_saving_apply(bool on)
 `light_sleep_enable = false` is not a default to revisit. `CONFIG_PM_ENABLE=y` is
 already set in `sdkconfig.defaults`; automatic light sleep blanks or tears this
 panel.
+
+`min_freq_mhz == max_freq_mhz` is also not a default to revisit. An earlier
+revision of this snippet pinned `min_freq_mhz = 80` with `max_freq_mhz = 240`
+when saving was off. That shipped and caused the Phase 11 performance
+regression: with `CONFIG_PM_ENABLE=y`, nothing had ever called
+`esp_pm_configure()` before, so the SoC sat at `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ`
+= 240 and DFS was inert. Giving it a real range switched DFS on, and because no
+task in the tree takes an `ESP_PM_CPU_FREQ_MAX` lock, LVGL rendered at 80MHz —
+stuttering animations, slow app loads, and an idle CPU figure several times its
+old value. Energy Saving lowers both ends together; it does not widen the range.
 
 The brightness ceiling clamps the current value but must not overwrite the stored
 `brightness` — turning Energy Saving off restores what the user picked. That means
@@ -373,17 +605,49 @@ the UI — Settings stays reachable and the row can be set back to Automatic. Th
 is the property to preserve: never apply a config the form has not validated, and
 never leave the page in a state where DHCP cannot be re-selected.
 
-### Reuse the SSID list, do not build a second one
+### The WiFi page becomes Settings › Network › WiFi Networks (D7)
 
-Network's WiFi Networks row calls `wifi_page_open()`. It already handles scan,
-credentials, connect, connected-row state, and forget. There is one SSID list in
-the system (`DESIGN.md` §6).
+Do not build a second SSID list, and do not leave the existing one standing beside
+Settings as a page with its own rules. `wifi_page_open()` already handles scan,
+credentials, connect, connected-row state and forget, and `DESIGN.md` §6 says
+there is one SSID list in the system. It becomes a subpage — the same list, the
+same code, reached through the stack from §2.
 
-One wrinkle: `wifi_page_open()` currently calls `crystal_shell_set_settings_open(true)`
-and `wifi_page_close()` sets it false. Opened from inside Settings that flag is
-already true, and the close would clear it while the Settings page is still up,
-handing gestures back to the card underneath. Make the flag a depth count or have
-the WiFi page participate in the subpage stack — it is the same layer concept.
+What changes about it:
+
+- It pushes and pops through `system_page_push()` / `system_page_pop()` instead of
+  creating and deleting itself independently. Its own `crystal_shell_set_settings_open()`
+  calls go away; depth is the flag now.
+- Its "Back" button becomes the standard subpage header from §10, and it pops one
+  level instead of closing outright.
+- `wifi_page_close()`'s cached-pointer clearing survives verbatim. It is still the
+  only teardown path for that tree, and it is still the model the other subpages
+  copy.
+
+**The quick panel deep-links; it does not open a page.** Long-pressing the WiFi
+tile must land on this subpage with Network and the Settings root beneath it, so
+Back and a bottom swipe walk out through Network to the root and only then to the
+card. Opening the page bare would put the user somewhere with no way back into
+Settings, which is exactly the isolated-overlay behaviour this phase removes.
+
+```cpp
+// Build the stack the user would have built by hand, then show the leaf. The
+// intermediate pages are constructed, not faked -- popping to Network has to
+// find a real Network page there.
+void settings_open_at_wifi()
+{
+    close_quick_settings(nullptr);
+    settings_open();                 // root
+    settings_push_network();         // Network
+    settings_push_wifi_networks();    // WiFi Networks
+}
+```
+
+Building three pages on one tap is more work than the 80ms card budget allows for
+a single push, so measure it. If it is visibly slow, construct the leaf and mark
+the intermediates lazily — but the stack entries must exist either way, because
+`system_page_pop()` has to have something to return to. Do not solve it by making
+the WiFi page a root-level page again.
 
 ## 6. System info: one interface, or the simulator dies
 
@@ -570,8 +834,8 @@ target, 16 px minimum body text, and three Montserrat sizes — 16 small, 20 med
 Settings uses. Row height of 56 px with 20 px labels and 16 px summaries fits the
 480 px width without crowding.
 
-Root rows carry a live summary, not a description: `Wi-Fi  On - Home`, not
-`Wi-Fi  Configure wireless networks`. `SETTINGS_PROPOSAL.md` §2 has the layouts.
+Root rows carry a live summary, not a description: `WiFi  On - Home`, not
+`WiFi  Configure wireless networks`. `SETTINGS_PROPOSAL.md` §2 has the layouts.
 
 Disabled rows state their reason. "Manual IP fields" greyed with no explanation is
 the same UI as broken; the reason line is "Automatic (DHCP) is on".
@@ -593,30 +857,46 @@ not follow-up:
 - `DESIGN.md` §8 — the category table, and delete the "Divergence to settle in
   Phase 11" note once D1 is implemented.
 - `DESIGN.md` §9 — Manage Apps moves to Phase 13.
+- `DESIGN.md` §4 — the gesture table gains the bottom edge as a Crystal-owned
+  gesture (D6), alongside the side edges and the top-right corner. Note that
+  `enable_navigation_gesture` is cleared per app and why, so the next person to
+  wonder where Brookesia's HOME went finds the answer in the design document
+  rather than in a constructor.
+- `DESIGN.md` §6 — the WiFi page's address changes: it is now a Network subpage,
+  and the quick panel deep-links to it (D7).
 - `CODE_GUIDE.md` §Phase 11 — replace with a pointer to this document.
 - `IMPLEMENTATION_PLAN.md` §Phase 11 — the category list and exit criteria.
 - `README.md` — tick Phase 11 when the exit criteria pass.
 - `VALIDATION_CHECKLIST.md` — the regression rows from §13.
-- `SETTINGS_PROPOSAL.md` — a note that D1-D5 are settled here.
+- `SETTINGS_PROPOSAL.md` — a note that D1-D7 are settled here.
 
 ## 12. Build order
 
-Arranged so the exit criteria land first. Everything after step 3 is cuttable
+Arranged so the exit criteria land first. Everything after step 4 is cuttable
 without failing the phase, which is what makes "build it all, then trim" safe.
+Steps 1-3 are not cuttable: they are the phase's structural work, and the
+bottom-edge fix in particular is cheaper to do before there are five subpages to
+re-test than after.
 
 1. **Page and back stack** (§2). Root with five rows, one empty subpage, two-level
    back. Test Back from a subpage before adding any content to it.
-2. **Power** (§4). D1, stored values, Energy Saving's four effects. Closes one
-   exit criterion and fixes a real behaviour bug.
+2. **Bottom-edge fix** (§2.1). Do it here, not last. It changes how every gesture
+   into and out of a system page resolves, and the WiFi page already gives you
+   something to test it against before Settings has any content. Order inside the
+   step: `CrystalApp` constructor first, confirm a bare bottom swipe still reaches
+   the launcher, then add the arbiter's `Navigation` owner.
 3. **Network** (§5). `IWifi` additions, connection details, DHCP/static form with
-   validation. Closes the static-IP exit criterion.
-4. **Region & Time** (§7). Timezone catalog and live apply. Closes the third exit
+   validation, and folding the WiFi page into the stack (D7). Closes the static-IP
+   exit criterion.
+4. **Power** (§4). D1, stored values, Energy Saving's four effects. Closes one
+   exit criterion and fixes a real behaviour bug.
+5. **Region & Time** (§7). Timezone catalog and live apply. Closes the third exit
    criterion.
-5. **System** (§6). `ISystemInfo`, About, Legal, Device Status, Restart.
-6. **Sound** (§9), then Location (§8).
-7. **Simulator mock** (§6). Do this before it is the last thing between the phase
+6. **System** (§6). `ISystemInfo`, About, Legal, Device Status, Restart.
+7. **Sound** (§9), then Location (§8).
+8. **Simulator mock** (§6). Do this before it is the last thing between the phase
    and a green build.
-8. May slip, per the proposal: Device Name, hidden networks, temperature and wind
+9. May slip, per the proposal: Device Name, hidden networks, temperature and wind
    units, low-battery auto-saving, Reduce Motion.
 
 ## 13. Exit criteria
@@ -631,6 +911,16 @@ From `IMPLEMENTATION_PLAN.md`, plus what the wider scope adds:
 - Dim and off happen with Energy Saving **off** (D1), and Energy Saving shortens
   them rather than enabling them.
 - Back from inside a subpage returns to the Settings root, not to a card.
+- A bottom-edge swipe up with a system page open dismisses that page, not the card
+  underneath it. Repeat until the stack is empty; the card is only reached last.
+- A bottom-edge swipe up on a bare card still reaches the launcher (D6), and a tap
+  in the bottom 24px of a card dismisses nothing.
+- Long-pressing the quick panel's WiFi tile lands on WiFi Networks with Network
+  and the root beneath it: Back walks out to Network, then the root, then the card
+  (D7).
+- There is exactly one WiFi SSID list in the build, reachable from Settings and
+  from the quick panel, and closing it never leaves the Settings root without
+  gesture ownership.
 - Quick panel and Settings show the same brightness, volume, and Energy Saving
   values in both directions.
 - A keyboard left open on the manual-IP form does not survive a subpage change.

@@ -317,6 +317,32 @@ survives the destroy-on-switch lifecycle. Phase 9.6 closed on 2026-09-07.
 Before evaluating these visual checks, confirm the generated `sdkconfig`
 contains the intended display options.
 
+## Phase 11: Settings and power
+
+- [x] The ESP-IDF firmware builds and fits the smallest OTA partition.
+- [x] The standalone host HAL mock compiles against the current interfaces.
+- [ ] Back from each subpage returns to its parent; only Back from the root
+  returns to the card.
+- [ ] A committed bottom swipe peels one Settings layer at a time, while a tap in
+  the bottom band does nothing and a bare-card swipe reaches the launcher.
+- [ ] Long-pressing the quick-panel WiFi tile opens WiFi Networks with Network
+  and Settings beneath it.
+- [ ] A validated static IP, gateway, mask, and primary DNS survive reboot and
+  Weather still resolves hostnames; invalid and incomplete forms never apply.
+- [ ] Dim and off timeouts work with Energy Saving off. With it on, the effective
+  timeouts are halved and current draw is measurably lower.
+- [ ] Quick Settings and Settings mirror brightness, volume, and Energy Saving
+  in both directions, including restoring saved brightness after Energy Saving.
+- [ ] Every timezone choice applies to the status bar without reboot and survives
+  reboot; DST-observing entries cross a known transition correctly.
+- [ ] Automatic/manual time and location modes persist, manual time updates the
+  RTC, and a manual location triggers an immediate Weather refresh.
+- [ ] Timer alert policy and Test Sound behave independently as specified.
+- [ ] About, Legal, Device Status refresh, and restart confirmation work without
+  adding a battery polling timer.
+
+Completion gate: all hardware-dependent rows above pass on the physical panel.
+
 ## Post-cleanup checklist (2026-09-05)
 
 ### Phase 7

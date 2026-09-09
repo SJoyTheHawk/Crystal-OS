@@ -204,7 +204,7 @@ Fonts are the three sizes from `DESIGN.md` §10 — `small` 16, `medium` 20,
 | `http.fetch(url, opts, cb)` | async; host-allowlisted; returns a request handle |
 | `http.cancel(req)` | |
 | `net.status()` | `{state, ssid, ip}` — read-only, no credentials |
-| `location.get()` | lat/long from Settings › General, if permitted |
+| `location.get()` | lat/long from Settings › Region & Time, if permitted |
 | `system.info()` | OS version, ABI version, free PSRAM |
 
 `timer.*` is the important entry. It hands an absolute end instant to

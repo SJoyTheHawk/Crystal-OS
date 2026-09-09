@@ -1139,7 +1139,7 @@ double longitude = 114.1694;
 Three sources, strict precedence, first hit wins:
 
 ```text
-manual lat/lon (Settings › General, Phase 11)
+manual lat/lon (Settings › Region & Time, Phase 11)
   -> cached IP geolocation result in NVS
      -> compiled default (HK, matching the Phase 11 default TZ HKT-8)
 ```
@@ -1551,68 +1551,10 @@ call site.
 
 ## Phase 11 — Settings and power
 
-The power state machine is already built; Phase 11 is mostly UI over values that
-are currently constants. Know which is which before starting.
-
-**Already in `crystal_core.cpp`:**
-
-```cpp
-constexpr uint32_t kDimTimeoutMs = 30000;   // line 31
-constexpr uint32_t kOffTimeoutMs = 60000;   // line 32
-constexpr uint8_t  kDimBrightness = 20;     // line 34
-enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3 };
-```
-
-Transitions are decided from `lv_disp_get_inactive_time()` and executed on the
-service task via `xTaskNotify`, never inline — `ramp_brightness()` sleeps in 25ms
-steps and would stall the LVGL task. `dim_brightness()` deliberately refuses to
-*raise* brightness: if the user already sits below 20%, dimming is a no-op.
-
-Two behaviours in the code that Phase 11 has to reconcile with §8 of the design:
-
-1. **Dim and off are gated on energy saving.** `update_power_state()` only
-   considers Dim/Off when `energy_saving_enabled()` is true, so with the toggle
-   off the panel never dims at all. The design describes full → dim → off as the
-   normal screen lifecycle with power saving as a separate flag. Pick one and
-   make both documents say it; the safer reading is that timeouts always apply
-   and power saving only shortens them.
-2. **The wake touch is already handled.** `crystal_core_consume_wake_touch()`
-   exists for exactly this, and the arbiter calls it on touch-down. Do not add a
-   second swallow path in Settings.
-
-**Storage keys already in use** — Settings must read and write these, not invent
-parallel ones:
-
-| Key | Written by | Type |
-|---|---|---|
-| `brightness` | quick panel slider | `uint8_t` |
-| `volume` | quick panel slider | `uint8_t` |
-| `power.saving` | quick panel Energy tile | `uint8_t` 0/1 |
-| `timezone` | first-boot default `"HKT-8"` | string |
-| `wifi.enabled` | WiFi adapter | `uint8_t` |
-
-These go through `hal().storage` (the shell's own namespace), *not* through
-`CrystalState` — `CrystalState` prefixes per app and is for app data only.
-
-**Timezone is not optional.** `crystal_time_init()` (`crystal_core.cpp:638`)
-reads the `timezone` key, defaults to `"HKT-8"`, and calls `setenv`/`tzset`
-before the UI starts. Changing it at runtime means re-running both, and
-`localtime_r` results cached anywhere become wrong until the next tick. Store the
-POSIX string, not an offset or a city name.
-
-**Static IP.** `IWifi` has no static-address API today (`crystal_hal.hpp:23`) —
-it is `start`/`scan`/`connect`/`forget` plus queries. DHCP-vs-static needs a new
-HAL method so the simulator can stub it; do not reach for `esp_netif_*` from the
-shell. Validate on commit, not per keystroke, and keep the fields disabled while
-DHCP is on.
-
-**`CONFIG_PM_ENABLE=y` is already set** in `sdkconfig.defaults`. Do **not** enable
-automatic light sleep: the RGB panel is a continuous DMA scan-out and will blank
-or tear. Power saving is one flag with several effects — CPU ceiling, 
-`WIFI_PS_MAX_MODEM`, brightness ceiling, shorter timeouts.
-
-Exit: static IP survives a reboot; timezone change moves the indicator bar hour
-without a reboot; power saving measurably lowers current draw.
+The authoritative implementation guide is `PHASE_11_SETTINGS.md`. It defines the
+page stack, bottom-edge ownership, HAL additions, storage schema, timezone
+catalog, power policy, build order, and validation criteria. Keep those details
+there so interfaces and verified line references have one owner.
 
 ## Phase 12 — reliability
 

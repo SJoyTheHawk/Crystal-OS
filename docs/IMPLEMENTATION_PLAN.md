@@ -641,7 +641,7 @@ GET https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..
       &current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m
 ```
 
-- Lat/long entered in Settings › General — no GPS on this board.
+- Lat/long entered in Settings › Region & Time — no GPS on this board.
 - Fetch runs on `crystal_service`, never the LVGL task; results via the UI queue.
 - Cache the last reading and its timestamp in `CrystalState`, and surface age as
   "Updated N min ago" so staleness is visible rather than hidden.
@@ -697,20 +697,22 @@ jump when already visible.
 
 ### Phase 11 — Settings and power
 
-Categories: Network (WiFi, DHCP vs static, IP/gateway/netmask/DNS), System
-(hardware version, OS version, company info, IP, attribution), Power (screen dim
-timeout, screen off timeout, dim level, power saving), General (timezone).
+Categories: Network, Display & Power, Sound, Region & Time, and System. Settings
+is a shell-owned override with a bounded page stack; Manage Apps remains Phase 13.
 
 Timezone is not optional — without it SNTP yields UTC and the bar shows the
 wrong hour. The first-boot default is Hong Kong (`HKT-8`, UTC+08:00); Phase 11
-will expose this as a General setting stored as a POSIX timezone string.
+exposes friendly Region & Time entries backed by complete POSIX timezone rules.
 
 `CONFIG_PM_ENABLE=y` with DFS 240/80MHz. **Do not enable automatic light
 sleep in v1**: the RGB panel is a continuous DMA scan-out and will blank or
 tear. Power saving is one NVS flag with several effects — CPU capped at 80MHz,
 `WIFI_PS_MAX_MODEM`, lower brightness ceiling, shorter timeouts.
 
-Exit: static IP survives reboot; power saving measurably lowers current draw.
+Exit: static IP and DNS survive reboot; timezone changes apply live and survive
+reboot; power saving measurably lowers current draw; subpage Back and bottom-edge
+swipes peel one Settings layer at a time. See `PHASE_11_SETTINGS.md` for the full
+implementation and validation contract.
 
 ### Phase 12 — Reliability
 

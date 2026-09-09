@@ -37,11 +37,13 @@ static const CrystalAppEntry kApps[] = {
     {"calculator", make_calculator_app, true, 4},
 };
 
-static void update_status_clock(void *context, int hour, int minute, bool is_pm)
+static void update_status_clock(void *context, int hour, int minute, bool is_pm, bool format24)
 {
     auto *phone = static_cast<ESP_Brookesia_Phone *>(context);
     auto *status_bar = phone->getHome().getStatusBar();
     if (status_bar != nullptr) {
+        (void)status_bar->setClockFormat(format24 ? ESP_Brookesia_StatusBar::ClockFormat::FORMAT_24H
+                                                  : ESP_Brookesia_StatusBar::ClockFormat::FORMAT_12H);
         (void)status_bar->setClock(hour, minute, is_pm);
     }
 }
@@ -118,6 +120,17 @@ extern "C" void app_main(void)
     stylesheet->manager.gesture.threshold.direction_vertical = 12;
     stylesheet->manager.gesture.threshold.horizontal_edge = 24;
     stylesheet->manager.gesture_mask_indicator_trigger_time_ms = UINT32_MAX;
+    // Kill Brookesia's bottom indicator bar so Crystal's home pill is the only one.
+    // This flag is the only gate the manager does not re-assert: begin() calls
+    // setIndicatorBarVisible(BOTTOM, true) once, and the MAIN branch of
+    // processGestureScreenChange() re-shows it on every return to the launcher, so
+    // hiding the object from the shell loses on the next navigation. With the flag
+    // clear, setIndicatorBarVisible() and setIndicatorBarLength() return early and
+    // the bar keeps the LV_OBJ_FLAG_HIDDEN it was created with. Gesture detection is
+    // unaffected: the flag only gates the bar's visuals, not the touch handling.
+    // LEFT and RIGHT already ship as 0, so this path is already exercised.
+    stylesheet->manager.gesture.flags.enable_indicator_bars
+        [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_BOTTOM] = 0;
     require_boot_step(phone->addStylesheet(stylesheet), "Failed to add phone stylesheet");
     require_boot_step(phone->activateStylesheet(stylesheet), "Failed to activate phone stylesheet");
     delete stylesheet;

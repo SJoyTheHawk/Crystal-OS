@@ -189,9 +189,9 @@ clang++ -std=c++17 \
   -fsyntax-only sim/crystal_hal_mock.cpp
 ```
 
-This currently reports an abstract `MockWifi` error until the mock implements
-the `IWifi::has_ip()` interface method. It does not build the LVGL/SDL
-simulator; see [`SIMULATOR.md`](SIMULATOR.md) for its current scope.
+This verifies the complete host HAL contract, including WiFi, power, and system
+information mocks. It does not build the LVGL/SDL simulator; see
+[`SIMULATOR.md`](SIMULATOR.md) for its current scope.
 
 ## Quick reference
 

@@ -73,6 +73,10 @@ validation remains. Details and evidence live in
 - [ ] Phase 12 — reliability and recovery
 - [ ] Phase 13 — PC app catalog and package loader
 
+Phase 11 is implemented and build-verified. It remains unchecked until the
+on-device gesture, static-network, timezone persistence, and current-draw gates
+in `docs/VALIDATION_CHECKLIST.md` pass.
+
 ## V2 track: installable apps
 
 The V2 app platform is a design track, not yet built. It replaces the V1 rule

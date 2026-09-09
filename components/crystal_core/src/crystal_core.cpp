@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_pm.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_timer.h"
@@ -28,13 +29,11 @@ extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 namespace {
 constexpr size_t kQueueDepth = 12;
 constexpr size_t kEventDataMax = 64;
-constexpr uint32_t kDimTimeoutMs = 30000;
-constexpr uint32_t kOffTimeoutMs = 60000;
 constexpr uint8_t kFullBrightness = 95;
-constexpr uint8_t kDimBrightness = 20;
+constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
 
-enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3 };
+enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3, ApplySaving = 4 };
 
 struct EventMessage {
     crystal_evt_t type;
@@ -81,6 +80,60 @@ double s_weather_latitude = 22.3193;
 double s_weather_longitude = 114.1694;
 char s_weather_city[24] = "Hong Kong (fallback)";
 std::atomic_bool s_weather_location_ready{false};
+portMUX_TYPE s_weather_location_mux = portMUX_INITIALIZER_UNLOCKED;
+std::atomic<int> s_battery_percent{-1};
+std::atomic_bool s_battery_charging{false};
+
+template <typename T>
+T stored_value(const char *key, T fallback)
+{
+    T value = {};
+    size_t length = sizeof(value);
+    return hal().storage != nullptr && hal().storage->get(key, &value, &length) &&
+           length == sizeof(value) ? value : fallback;
+}
+
+template <typename T>
+void store_value(const char *key, T value)
+{
+    if (hal().storage != nullptr) (void)hal().storage->set(key, &value, sizeof(value));
+}
+
+// Read-through cache for the keys the LVGL timers read every tick.
+//
+// check_power_state() runs at 4Hz and update_clock() at 1Hz. Going to NVS from
+// them costs an nvs_open per read -- a global lock plus a handle allocation --
+// on the task that must never stall, which shows as animation jitter. Every
+// writer of these keys is a setter in this file, so a RAM copy cannot go stale.
+// -1 means "not loaded yet"; the first read fills it.
+template <typename T>
+T cached_value(const char *key, T fallback, std::atomic<int32_t> &cache)
+{
+    const int32_t held = cache.load(std::memory_order_relaxed);
+    if (held >= 0) return static_cast<T>(held);
+    const T value = stored_value<T>(key, fallback);
+    cache.store(static_cast<int32_t>(value), std::memory_order_relaxed);
+    return value;
+}
+
+template <typename T>
+void store_cached(const char *key, T value, std::atomic<int32_t> &cache)
+{
+    store_value(key, value);
+    cache.store(static_cast<int32_t>(value), std::memory_order_relaxed);
+}
+
+std::atomic<int32_t> s_cache_auto_dim{-1};
+std::atomic<int32_t> s_cache_dim_seconds{-1};
+std::atomic<int32_t> s_cache_off_seconds{-1};
+std::atomic<int32_t> s_cache_saving{-1};
+std::atomic<int32_t> s_cache_format24{-1};
+
+bool one_of(uint16_t value, const uint16_t *allowed, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) if (value == allowed[i]) return true;
+    return false;
+}
 
 // Fetches a small JSON document into s_weather_response, NUL-terminated.
 //
@@ -171,8 +224,11 @@ void resolve_weather_location()
                 const char *open_quote = strchr(c + strlen("\"city\""), '"');
                 if (open_quote != nullptr) sscanf(open_quote + 1, "%23[^\"]", city);
             }
+            if (!crystal_weather_location_automatic()) return;
+            taskENTER_CRITICAL(&s_weather_location_mux);
             s_weather_latitude = lat; s_weather_longitude = lon;
             if (city[0] != '\0') strlcpy(s_weather_city, city, sizeof(s_weather_city));
+            taskEXIT_CRITICAL(&s_weather_location_mux);
             if (hal().storage != nullptr) {
                 (void)hal().storage->set("weather.lat", &lat, sizeof(lat));
                 (void)hal().storage->set("weather.lon", &lon, sizeof(lon));
@@ -184,6 +240,9 @@ void resolve_weather_location()
         }
         ESP_LOGW(TAG, "weather location parse failed for %s", endpoint);
     }
+    // Do not let an automatic lookup already in flight overwrite a manual
+    // location selected while the request was running.
+    if (!crystal_weather_location_automatic()) return;
     // Do not retry every service tick; retain the compiled fallback.
     s_weather_location_ready.store(true);
     strlcpy(s_weather_city, "Hong Kong (fallback)", sizeof(s_weather_city));
@@ -193,11 +252,19 @@ void resolve_weather_location()
 bool weather_fetch(CrystalWeatherReading *out)
 {
     if (out == nullptr || hal().wifi == nullptr || !hal().wifi->connected()) return false;
+    double latitude = 0.0;
+    double longitude = 0.0;
+    char city[sizeof(s_weather_city)] = {};
+    taskENTER_CRITICAL(&s_weather_location_mux);
+    latitude = s_weather_latitude;
+    longitude = s_weather_longitude;
+    strlcpy(city, s_weather_city, sizeof(city));
+    taskEXIT_CRITICAL(&s_weather_location_mux);
     char url[256];
     snprintf(url, sizeof(url),
              "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
              "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
-             s_weather_latitude, s_weather_longitude);
+             latitude, longitude);
     bool ok = false;
     if (http_get_json(url)) {
         // "current_units" precedes "current" in the body and repeats every key
@@ -220,7 +287,7 @@ bool weather_fetch(CrystalWeatherReading *out)
             out->wind_kmh10 = static_cast<uint16_t>(w * 10.0);
             out->fetched_at = static_cast<int32_t>(time(nullptr));
             out->success = true;
-            strlcpy(out->city, s_weather_city, sizeof(out->city));
+            strlcpy(out->city, city, sizeof(out->city));
             ok = true;
             ESP_LOGI(TAG, "weather fetched: %.1f C, humidity %d%%, code %d, wind %.1f km/h", t, h, c, w);
         }
@@ -235,10 +302,7 @@ void sntp_synced(struct timeval *tv);
 bool energy_saving_enabled()
 {
     if (hal().storage == nullptr) return false;
-    uint8_t value = 0;
-    size_t length = sizeof(value);
-    return hal().storage->get("power.saving", &value, &length) &&
-           length == sizeof(value) && value != 0;
+    return cached_value<uint8_t>("power.saving", 0, s_cache_saving) != 0;
 }
 
 uint8_t saved_brightness()
@@ -379,8 +443,9 @@ void update_clock(lv_timer_t *)
     const time_t epoch = time(nullptr);
     struct tm now = {};
     if (epoch < 1577836800 || localtime_r(&epoch, &now) == nullptr) return;
-    const int hour_12 = now.tm_hour % 12 == 0 ? 12 : now.tm_hour % 12;
-    s_clock_update(s_status_context, hour_12, now.tm_min, now.tm_hour >= 12);
+    const bool format24 = crystal_time_format_24();
+    const int hour = format24 ? now.tm_hour : (now.tm_hour % 12 == 0 ? 12 : now.tm_hour % 12);
+    s_clock_update(s_status_context, hour, now.tm_min, !format24 && now.tm_hour >= 12, format24);
 }
 
 void update_connectivity(lv_timer_t *)
@@ -423,6 +488,7 @@ void wifi_event(IWifi::Event event, void *)
 void network_signal_handler(void *, esp_event_base_t, int32_t id, void *)
 {
     if (id != CRYSTAL_NETWORK_CONNECTED || s_sntp_sync_started) return;
+    if (!crystal_time_auto_enabled()) return;
     ESP_LOGI(TAG, "network connected signal received; starting SNTP");
     if (!s_sntp_initialized.load()) {
         esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -457,12 +523,26 @@ void update_timer_indicator(lv_timer_t *)
 void check_power_state(lv_timer_t *)
 {
     if (s_display == nullptr || s_service_task == nullptr) return;
-    const uint32_t inactive_ms = lv_disp_get_inactive_time(s_display);
-    PowerState requested = PowerState::Full;
-    if (energy_saving_enabled()) {
-        if (inactive_ms >= kOffTimeoutMs) requested = PowerState::Off;
-        else if (inactive_ms >= kDimTimeoutMs) requested = PowerState::Dim;
+    // Auto Dimming is the master switch for both timeouts. Off means the panel
+    // stays at the user's brightness indefinitely, so restore Full if a timeout
+    // had already taken it down before the switch was flipped.
+    if (!crystal_power_auto_dim_enabled()) {
+        if (s_power_state != PowerState::Full) {
+            s_power_state = PowerState::Full;
+            xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::Full), eSetValueWithOverwrite);
+        }
+        return;
     }
+    const uint32_t inactive_ms = lv_disp_get_inactive_time(s_display);
+    uint32_t dim_ms = crystal_power_dim_seconds() * 1000u;
+    uint32_t off_ms = crystal_power_off_seconds() * 1000u;
+    if (energy_saving_enabled()) {
+        if (dim_ms != 0) dim_ms /= 2;
+        if (off_ms != 0) off_ms /= 2;
+    }
+    PowerState requested = PowerState::Full;
+    if (off_ms != 0 && inactive_ms >= off_ms) requested = PowerState::Off;
+    else if (dim_ms != 0 && inactive_ms >= dim_ms) requested = PowerState::Dim;
     if (requested != s_power_state) {
         s_power_state = requested;
         xTaskNotify(s_service_task, static_cast<uint32_t>(requested), eSetValueWithOverwrite);
@@ -487,9 +567,29 @@ void dim_brightness()
 
     // Energy saving must never make a user-selected low brightness brighter.
     // Only apply the 20% dim target when the current level is above it.
-    if (hal().brightness->get() > kDimBrightness) {
-        ramp_brightness(kDimBrightness);
+    const uint8_t target = crystal_power_dim_level();
+    if (hal().brightness->get() > target) {
+        ramp_brightness(target);
     }
+}
+
+void power_saving_apply(bool enabled)
+{
+    // min must equal max. A lower min turns dynamic frequency scaling on, and
+    // nothing in the tree holds an ESP_PM_CPU_FREQ_MAX lock -- not the LVGL task,
+    // not the RGB panel -- so the UI would render at min most of the time. Energy
+    // Saving caps the clock by moving both ends down together, not by widening the
+    // range. light_sleep_enable is never true in v1: the RGB panel is DMA scan-out.
+    const int freq_mhz = enabled ? 80 : 240;
+    esp_pm_config_t config = {};
+    config.max_freq_mhz = freq_mhz;
+    config.min_freq_mhz = freq_mhz;
+    config.light_sleep_enable = false;
+    (void)esp_pm_configure(&config);
+    if (hal().wifi != nullptr) hal().wifi->set_power_save(enabled);
+    const uint8_t target = enabled && saved_brightness() > kSavingBrightnessMax
+                               ? kSavingBrightnessMax : saved_brightness();
+    ramp_brightness(target);
 }
 
 void sntp_synced(struct timeval *tv)
@@ -513,6 +613,10 @@ void sntp_synced(struct timeval *tv)
     }
     s_time_valid.store(true);
     s_sntp_sync_started = false;
+    if (tv != nullptr) {
+        const int32_t last_sync = static_cast<int32_t>(tv->tv_sec);
+        store_value("time.last_sync", last_sync);
+    }
     ESP_LOGI(TAG, "SNTP synchronized system clock and RTC");
     (void)crystal_ui_post(UI_EVT_TIME_SYNCED);
 }
@@ -531,14 +635,22 @@ void service_task(void *)
                                                   network_signal_handler, nullptr, &s_network_handler);
         hal().wifi->start();
     }
+    power_saving_apply(energy_saving_enabled());
 
     TickType_t last_battery_poll = 0;
     for (;;) {
         uint32_t command = 0;
         if (xTaskNotifyWait(0, UINT32_MAX, &command, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (command == static_cast<uint32_t>(PowerState::Full)) ramp_brightness(saved_brightness());
+            if (command == static_cast<uint32_t>(PowerState::Full)) {
+                const uint8_t saved = saved_brightness();
+                ramp_brightness(energy_saving_enabled() && saved > kSavingBrightnessMax
+                                    ? kSavingBrightnessMax : saved);
+            }
             else if (command == static_cast<uint32_t>(PowerState::Dim)) dim_brightness();
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
+            else if (command == static_cast<uint32_t>(PowerState::ApplySaving)) {
+                power_saving_apply(energy_saving_enabled());
+            }
         }
         const int64_t now_epoch = static_cast<int64_t>(time(nullptr));
         const TickType_t tick_now = xTaskGetTickCount();
@@ -608,6 +720,8 @@ void service_task(void *)
             int percent = -1;
             bool charging = false;
             if (hal().power->readBattery(&percent, &charging)) {
+                s_battery_percent.store(percent);
+                s_battery_charging.store(charging);
                 const uint8_t battery[] = {
                     static_cast<uint8_t>(static_cast<int8_t>(percent)),
                     static_cast<uint8_t>(charging),
@@ -624,7 +738,7 @@ void service_task(void *)
             s_timer_duration.store(0);
             s_timer_paused_remaining.store(0);
             ESP_LOGI(TAG, "timer expired");
-            crystal_hal_timer_alarm();
+            if (crystal_sound_alerts_enabled()) crystal_hal_timer_alarm();
             (void)crystal_ui_post(UI_EVT_TIMER_EXPIRED);
         }
     }
@@ -634,6 +748,157 @@ void service_task(void *)
 ESP_EVENT_DEFINE_BASE(CRYSTAL_NETWORK_EVENT);
 
 void crystal_weather_request() { s_weather_request.store(true); }
+
+bool crystal_weather_set_location(double latitude, double longitude, const char *city)
+{
+    if (latitude < -90.0 || latitude > 90.0 || longitude < -180.0 ||
+            longitude > 180.0 || city == nullptr || city[0] == '\0') return false;
+    store_value<uint8_t>("loc.auto", 0);
+    taskENTER_CRITICAL(&s_weather_location_mux);
+    s_weather_latitude = latitude;
+    s_weather_longitude = longitude;
+    strlcpy(s_weather_city, city, sizeof(s_weather_city));
+    taskEXIT_CRITICAL(&s_weather_location_mux);
+    if (hal().storage != nullptr) {
+        (void)hal().storage->set("weather.lat", &latitude, sizeof(latitude));
+        (void)hal().storage->set("weather.lon", &longitude, sizeof(longitude));
+        (void)hal().storage->set("weather.city", s_weather_city, strlen(s_weather_city) + 1);
+    }
+    s_weather_next_try.store(0);
+    s_weather_retry_ms.store(kWeatherRetryMinMs);
+    s_weather_location_ready.store(true);
+    crystal_weather_request();
+    return true;
+}
+
+void crystal_weather_set_automatic(bool automatic)
+{
+    store_value<uint8_t>("loc.auto", automatic ? 1 : 0);
+    if (automatic) {
+        if (hal().storage != nullptr) {
+            (void)hal().storage->erase("weather.lat");
+            (void)hal().storage->erase("weather.lon");
+            (void)hal().storage->erase("weather.city");
+        }
+        s_weather_location_ready.store(false);
+        s_weather_next_locate.store(0);
+        s_weather_locate_ms.store(kWeatherRetryMinMs);
+    }
+}
+
+bool crystal_weather_location_automatic()
+{
+    return stored_value<uint8_t>("loc.auto", 1) != 0;
+}
+
+bool crystal_timezone_apply(const char *posix)
+{
+    if (posix == nullptr || posix[0] == '\0' || strlen(posix) >= 48) return false;
+    if (hal().storage != nullptr &&
+            !hal().storage->set("timezone", posix, strlen(posix) + 1)) return false;
+    setenv("TZ", posix, 1);
+    tzset();
+    return true;
+}
+
+bool crystal_time_format_24()
+{
+    return cached_value<uint8_t>("time.format24", 0, s_cache_format24) != 0;
+}
+void crystal_time_set_format_24(bool enabled)
+{
+    store_cached<uint8_t>("time.format24", enabled ? 1 : 0, s_cache_format24);
+    update_clock(nullptr);
+}
+bool crystal_time_auto_enabled() { return stored_value<uint8_t>("time.auto", 1) != 0; }
+void crystal_time_set_auto(bool enabled)
+{
+    store_value<uint8_t>("time.auto", enabled ? 1 : 0);
+    if (!enabled && s_sntp_initialized.load()) {
+        esp_netif_sntp_deinit();
+        s_sntp_initialized.store(false);
+        s_sntp_sync_started.store(false);
+    } else if (enabled && hal().wifi != nullptr && hal().wifi->has_ip()) {
+        network_signal_handler(nullptr, CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED, nullptr);
+    }
+}
+int32_t crystal_time_last_sync() { return stored_value<int32_t>("time.last_sync", 0); }
+
+uint16_t crystal_power_dim_seconds()
+{
+    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 300};
+    const uint16_t value = cached_value<uint16_t>("power.dim_s", 30, s_cache_dim_seconds);
+    return one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : 30;
+}
+uint16_t crystal_power_off_seconds()
+{
+    static constexpr uint16_t allowed[] = {0, 60, 120, 300, 900};
+    const uint16_t value = cached_value<uint16_t>("power.off_s", 60, s_cache_off_seconds);
+    return one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : 60;
+}
+uint8_t crystal_power_dim_level()
+{
+    const uint8_t value = stored_value<uint8_t>("power.dim_level", 20);
+    return value >= 5 && value <= 50 ? value : 20;
+}
+bool crystal_power_saving_enabled() { return energy_saving_enabled(); }
+bool crystal_power_auto_dim_enabled()
+{
+    return cached_value<uint8_t>("power.auto_dim", 1, s_cache_auto_dim) != 0;
+}
+void crystal_power_set_auto_dim(bool enabled)
+{
+    store_cached<uint8_t>("power.auto_dim", enabled ? 1 : 0, s_cache_auto_dim);
+}
+void crystal_power_set_dim_seconds(uint16_t seconds)
+{
+    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 300};
+    if (one_of(seconds, allowed, sizeof(allowed) / sizeof(allowed[0])) &&
+            (crystal_power_off_seconds() == 0 || seconds == 0 || crystal_power_off_seconds() > seconds)) {
+        store_cached("power.dim_s", seconds, s_cache_dim_seconds);
+    }
+}
+void crystal_power_set_off_seconds(uint16_t seconds)
+{
+    static constexpr uint16_t allowed[] = {0, 60, 120, 300, 900};
+    if (one_of(seconds, allowed, sizeof(allowed) / sizeof(allowed[0])) &&
+            (seconds == 0 || crystal_power_dim_seconds() == 0 || seconds > crystal_power_dim_seconds())) {
+        store_cached("power.off_s", seconds, s_cache_off_seconds);
+    }
+}
+void crystal_power_set_dim_level(uint8_t level)
+{
+    if (level >= 5 && level <= 50) store_value("power.dim_level", level);
+}
+void crystal_power_set_saving(bool enabled)
+{
+    store_cached<uint8_t>("power.saving", enabled ? 1 : 0, s_cache_saving);
+    if (s_service_task != nullptr) {
+        xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::ApplySaving), eSetValueWithOverwrite);
+    }
+}
+void crystal_brightness_set(uint8_t level)
+{
+    if (level > kFullBrightness) level = kFullBrightness;
+    store_value("brightness", level);
+    if (hal().brightness != nullptr) {
+        hal().brightness->set(crystal_power_saving_enabled() && level > kSavingBrightnessMax
+                                  ? kSavingBrightnessMax : level);
+    }
+}
+uint8_t crystal_brightness_level() { return saved_brightness(); }
+bool crystal_sound_alerts_enabled() { return stored_value<uint8_t>("sound.alerts", 1) != 0; }
+void crystal_sound_set_alerts(bool enabled)
+{
+    store_value<uint8_t>("sound.alerts", enabled ? 1 : 0);
+}
+bool crystal_battery_cached(int *percent, bool *charging)
+{
+    if (percent == nullptr || charging == nullptr || s_battery_percent.load() < 0) return false;
+    *percent = s_battery_percent.load();
+    *charging = s_battery_charging.load();
+    return true;
+}
 
 void crystal_time_init()
 {
@@ -670,7 +935,9 @@ bool crystal_time_set(const struct tm *local_time)
     struct tm adjusted = *local_time;
     adjusted.tm_isdst = -1;
     const time_t epoch = mktime(&adjusted);
-    if (epoch < 1577836800) return false;
+    if (epoch < 1577836800 || adjusted.tm_year != local_time->tm_year ||
+            adjusted.tm_mon != local_time->tm_mon || adjusted.tm_mday != local_time->tm_mday ||
+            adjusted.tm_hour != local_time->tm_hour || adjusted.tm_min != local_time->tm_min) return false;
 
     struct timeval tv = {};
     tv.tv_sec = epoch;
