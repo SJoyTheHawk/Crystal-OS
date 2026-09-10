@@ -23,10 +23,14 @@ a restrained white glow on touch, plus up to 8 px of lift during an upward drag.
 dependency patches and must be moved into a durable component override or
 reapplied whenever managed dependencies are regenerated.
 
-## Home-pill feedback
+## Home-pill feedback and input priority
 
-- A touch beginning in the existing 24 px bottom gesture band immediately adds
-  a subtle white shadow glow to the pill.
+- A transparent, press-locked shell target reserves a centered 188 x 24 px area:
+  the 172 px pill width plus 8 px of horizontal margin on each side. It wins
+  LVGL hit testing before an underlying text field can focus and open the
+  keyboard, and it retains the touch after the drag leaves the target.
+- A touch beginning inside that target immediately adds a subtle white shadow
+  glow to the pill. Touches elsewhere in the bottom band remain app-owned.
 - Upward travel maps linearly over the existing 80 px Home threshold. The pill
   remains horizontally centered, lifts from 0 to 8 px, and strengthens its
   glow as the drag progresses.
@@ -49,10 +53,14 @@ reapplied whenever managed dependencies are regenerated.
   release, and committed Home release on the device.
 - Recheck Settings dismissal, Quick Settings dismissal, keyboard behavior,
   wake-touch handling, and horizontal app switching.
+- Place a text field beneath the pill target. Taps and upward drags inside the
+  centered 188 x 24 px target must not focus it or open the keyboard; touching
+  the field outside that target must continue to work normally.
 
 ## Interfaces and assumptions
 
 - No public APIs or shared types change.
-- The entire bottom gesture band drives the feedback, not only the visible pill
-  bounds.
+- The centered 188 x 24 px pill target exclusively owns its input. App content
+  outside that target remains interactive, including the rest of the bottom
+  band.
 - Crash correction is verified before device-testing the animation.

@@ -41,6 +41,8 @@ constexpr int kBottomBand = 24;
 constexpr lv_coord_t kHomePillWidth = 172;
 constexpr lv_coord_t kHomePillHeight = 6;
 constexpr lv_coord_t kHomePillInset = 7;
+constexpr lv_coord_t kHomePillHitMargin = 8;
+constexpr lv_coord_t kHomePillHitWidth = kHomePillWidth + 2 * kHomePillHitMargin;
 constexpr lv_coord_t kHomePillMaxLift = 8;
 constexpr uint32_t kHomePillSettleMs = 120;
 constexpr lv_opa_t kHomePillTouchGlowOpa = LV_OPA_20;
@@ -91,6 +93,7 @@ int s_last_app_before_settings = -1;  // -1 = launcher, >= 0 = app index
 CrystalGestureOwner s_gesture_owner = CrystalGestureOwner::None;
 ESP_Brookesia_Gesture *s_gesture = nullptr;
 lv_obj_t *s_page_dots = nullptr;
+lv_obj_t *s_home_pill_catcher = nullptr;
 lv_obj_t *s_home_pill = nullptr;
 struct HomePillFeedbackState {
     lv_coord_t lift = 0;
@@ -424,6 +427,15 @@ bool os_owns_gesture()
            s_gesture_owner == CrystalGestureOwner::Navigation;
 }
 
+bool home_pill_target_contains(lv_coord_t x, lv_coord_t y)
+{
+    const lv_coord_t display_width = lv_disp_get_hor_res(nullptr);
+    const lv_coord_t display_height = lv_disp_get_ver_res(nullptr);
+    const lv_coord_t left = (display_width - kHomePillHitWidth) / 2;
+    return x >= left && x < left + kHomePillHitWidth &&
+           y >= display_height - kBottomBand && y < display_height;
+}
+
 void apply_home_pill_feedback(lv_coord_t lift, lv_opa_t glow_opa)
 {
     s_home_pill_feedback.lift = lift;
@@ -511,10 +523,17 @@ void update_home_pill()
         ESP_LOGD(TAG, "Hiding pill: keyboard up");
         lv_anim_del(&s_home_pill_feedback, home_pill_settle_anim);
         apply_home_pill_feedback(0, LV_OPA_TRANSP);
+        if (s_home_pill_catcher != nullptr) {
+            lv_obj_add_flag(s_home_pill_catcher, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_obj_add_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     ESP_LOGD(TAG, "Showing pill: depth=%zu", s_system_page_depth);
+    if (s_home_pill_catcher != nullptr) {
+        lv_obj_clear_flag(s_home_pill_catcher, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_home_pill_catcher);
+    }
     lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
     // System pages are created on lv_layer_top() after the pill, so they cover
     // it on z-order alone. Re-front it whenever it should be showing. Dialogs and
@@ -566,6 +585,24 @@ bool init_indicator_overlay()
     }
     update_page_dots();
 
+    // Reserve a centered 24 px-high target for system navigation. LVGL focuses
+    // text areas during the initial press, before Brookesia has classified any
+    // movement, so the shell must win hit testing immediately. PRESS_LOCK keeps
+    // the touch assigned here after the finger moves above the target.
+    s_home_pill_catcher = lv_obj_create(lv_layer_top());
+    if (s_home_pill_catcher == nullptr) {
+        return false;
+    }
+    lv_obj_set_size(s_home_pill_catcher, kHomePillHitWidth, kBottomBand);
+    lv_obj_set_style_bg_opa(s_home_pill_catcher, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_home_pill_catcher, 0, 0);
+    lv_obj_set_style_shadow_width(s_home_pill_catcher, 0, 0);
+    lv_obj_set_style_pad_all(s_home_pill_catcher, 0, 0);
+    lv_obj_add_flag(s_home_pill_catcher, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_clear_flag(s_home_pill_catcher,
+                      LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICK_FOCUSABLE);
+    lv_obj_align(s_home_pill_catcher, LV_ALIGN_BOTTOM_MID, 0, 0);
+
     // Home pill. Crystal draws its own because Brookesia's was not a resting hint:
     // size_min is RECT(0, 10), zero width, so it only existed while a drag stretched
     // it. This one rests visible as the discoverability cue for the bottom edge,
@@ -587,23 +624,8 @@ bool init_indicator_overlay()
     lv_obj_set_style_shadow_width(s_home_pill, 0, 0);
     lv_obj_set_style_shadow_opa(s_home_pill, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(s_home_pill, 0, 0);
-    // Clickable to block touch-through. Without this, dragging from the pill
-    // activates content underneath (e.g., the "System" button in Settings),
-    // navigating deeper before the swipe commits, so the pop leaves you still in
-    // Settings instead of closing it. The gesture arbiter claims the gesture before
-    // click events fire, so this doesn't interfere with the swipe.
-    lv_obj_add_flag(s_home_pill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_SCROLLABLE);
-    // Add event handler to consume press events and prevent touch-through to
-    // underlying buttons. This stops presses on the pill from activating Settings
-    // buttons underneath before the gesture arbiter takes over.
-    lv_obj_add_event_cb(s_home_pill, [](lv_event_t *e) {
-        // Stop the event from propagating to objects underneath
-        lv_event_stop_bubbling(e);
-    }, LV_EVENT_PRESSING, nullptr);
-    lv_obj_add_event_cb(s_home_pill, [](lv_event_t *e) {
-        lv_event_stop_bubbling(e);
-    }, LV_EVENT_PRESSED, nullptr);
+    // Input belongs to the larger transparent catcher; the pill is visual only.
+    lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(s_home_pill, LV_ALIGN_BOTTOM_MID, 0, -kHomePillInset);
     update_home_pill();
     return true;
@@ -1402,11 +1424,11 @@ void on_gesture_press(lv_event_t *event)
         (void)s_gesture->setMaskObjectVisible(true);
     }
 
-    // Immediately set home gesture flag if touch starts in bottom band.
-    // This prevents buttons from receiving events during fast swipes.
+    // Use the same target as the LVGL catcher so feedback and navigation cannot
+    // begin from app-owned space.
     auto *info = static_cast<ESP_Brookesia_GestureInfo_t *>(lv_event_get_param(event));
     if (!s_swallow_wake_touch && info != nullptr &&
-            (info->start_area & ESP_BROOKESIA_GESTURE_AREA_BOTTOM_EDGE) &&
+            home_pill_target_contains(info->start_x, info->start_y) &&
             s_home_pill != nullptr && !lv_obj_has_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN)) {
         s_home_gesture_active = true;
         begin_home_pill_feedback();
@@ -1460,8 +1482,7 @@ void on_gesture_pressing(lv_event_t *event)
             ? CrystalGestureOwner::QuickSettings : CrystalGestureOwner::App;
     } else if (s_keyboard_open) {
         s_gesture_owner = CrystalGestureOwner::App;
-    } else if (info->start_y >= lv_disp_get_ver_res(nullptr) - kBottomBand &&
-               info->direction == ESP_BROOKESIA_GESTURE_DIR_UP) {
+    } else if (s_home_gesture_active && info->direction == ESP_BROOKESIA_GESTURE_DIR_UP) {
         // Note: s_home_gesture_active is already set in on_gesture_press
         s_gesture_owner = CrystalGestureOwner::Navigation;
     } else if (s_system_page_depth != 0 || s_switching ||
@@ -1865,7 +1886,10 @@ lv_obj_t *system_page_push(const char *title)
     // Phase 11 edit end.
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
     update_home_pill();
-    // Explicitly ensure pill is on top of the Settings page
+    // Explicitly ensure the pill target is on top of the Settings page.
+    if (s_home_pill_catcher != nullptr) {
+        lv_obj_move_foreground(s_home_pill_catcher);
+    }
     if (s_home_pill != nullptr) {
         lv_obj_move_foreground(s_home_pill);
         ESP_LOGD(TAG, "Moved pill to foreground after creating Settings page");
