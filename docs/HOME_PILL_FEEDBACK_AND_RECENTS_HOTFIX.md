@@ -23,6 +23,14 @@ a restrained white glow on touch, plus up to 8 px of lift during an upward drag.
 dependency patches and must be moved into a durable component override or
 reapplied whenever managed dependencies are regenerated.
 
+**Status 2026-09-10.** The patched `esp_brookesia_phone_manager.cpp` was force-added
+past `.gitignore` in `62256ad`, so it is tracked and survives a clone — but a
+dependency re-resolve or `fullclean` regenerates the directory and reverts it
+silently. Because `enable_recents_screen = 0`, the symptom is a null dereference on
+side-switch rather than a build failure. The durability options are compared in
+`PHASE_11_BUG_FIXES_V3.md`; a durable component override is the recommendation and
+is still to be done.
+
 ## Home-pill feedback and input priority
 
 - A transparent, press-locked shell target reserves a centered 188 x 24 px area:

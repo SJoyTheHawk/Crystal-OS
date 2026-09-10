@@ -77,9 +77,22 @@ lv_obj_set_style_border_opa(s_home_pill, LV_OPA_30, 0);
 
 ---
 
-## Bug 3: Home Gesture Going to Launcher Instead of Staying in App
+## Bug 3: Home gesture destination
 
-### Issue
+> **Superseded 2026-09-10.** This section was written against an intermediate
+> build and its "expected behavior" is wrong. The settled rule, matching both the
+> shipped code and `PHASE_11_SETTINGS.md` §2.1, is:
+>
+> - **From Settings:** close the entire Settings stack and restore whatever the
+>   user was looking at before Settings opened (`close_settings_and_restore_app()`).
+> - **From an app with nothing else open:** close the app and go to the launcher.
+>   The pill is a Home button; going to the launcher is the point, not a defect.
+> - **From an open quick panel:** dismiss the panel.
+>
+> The claim below that a home gesture from an app "should do nothing" was
+> mistaken, and the code no longer behaves that way. Kept for history only.
+
+### Issue (as understood at the time)
 Triggering home gesture from an app (not Settings) would navigate to launcher instead of staying in the app. The expected behavior:
 - From app: home gesture should do nothing (stay in app)
 - From Settings: home gesture should close Settings and return to previous context
@@ -111,9 +124,14 @@ if (owner == CrystalGestureOwner::Navigation) {
 }
 ```
 
-**Result:**
+**Result (as of this revision; see the note above for current behaviour):**
 - From app: gesture closes Settings/quick settings if open, then HOME event returns control to Brookesia
 - Brookesia determines the appropriate destination (launcher or previous app)
+
+The snippet above is also no longer current. Crystal now restores the previous app
+itself via `s_last_app_before_settings` rather than relying on Brookesia's HOME
+handler to pick a destination, because Brookesia's HOME always resolves to the
+launcher and could not return the user to the app Settings was opened from.
 
 ### Code Location
 `components/crystal_shell/src/crystal_shell.cpp:1386-1415`
@@ -196,7 +214,8 @@ After flashing this build:
 
 ✅ **Bug 1**: Only one pill on launcher (Brookesia's)  
 ✅ **Bug 2**: Pill visible on light backgrounds with subtle border  
-✅ **Bug 3**: Home gesture from app stays in app (only closes overlays)  
+⚠️ **Bug 3**: superseded — home gesture from a bare app goes to the launcher by
+design. From Settings it closes the stack and restores the previous app.  
 ✅ **Bug 4**: No button activation when starting swipe from pill  
 
 ## Files Modified

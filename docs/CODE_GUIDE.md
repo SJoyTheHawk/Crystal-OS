@@ -1556,6 +1556,15 @@ page stack, bottom-edge ownership, HAL additions, storage schema, timezone
 catalog, power policy, build order, and validation criteria. Keep those details
 there so interfaces and verified line references have one owner.
 
+The phase is implemented and has had its device pass. Five open defects and their
+fixes are in `PHASE_11_BUG_FIXES_V3.md`, which is the work-list for closing it.
+Two things there are general traps worth knowing outside Phase 11: bind LVGL
+handlers unconditionally and gate on state inside them rather than binding inside
+an `if` on state that changes while the page is open, and remember that a textarea
+keeps drawing its cursor until something sends it `LV_EVENT_DEFOCUSED` — LVGL 8.4's
+`lv_textarea` has no handler for it and the theme draws the cursor from
+`LV_STATE_FOCUSED`.
+
 ## Phase 12 — reliability
 
 The sdkconfig side is done. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`,

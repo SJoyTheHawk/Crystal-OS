@@ -10,13 +10,14 @@ appliance rather than imitating a phone or desktop computer. A setting belongs
 here only when a person can understand its effect and the device can honor it
 reliably.
 
-Implementation lives in `PHASE_11_SETTINGS.md`, which settles seven questions this
+Implementation lives in `PHASE_11_SETTINGS.md`, which settles eight questions this
 document leaves open: that timeouts apply whether or not Energy Saving is on, that
 these five categories supersede `DESIGN.md` §8, that Settings is a shell-owned
 page rather than an app, that timezone entries carry DST rules, and that dim
-brightness is in HAL units. It also assigns the bottom edge to Crystal and makes
-WiFi Networks a Network subpage used by both entry points. It supersedes
-`DESIGN.md` §3 and §8, which are edited as part of the phase.
+brightness is in HAL units. It also assigns the bottom edge to Crystal, makes
+WiFi Networks a Network subpage used by both entry points, and adds Auto Dimming
+as a separate master switch for the two timeouts. It supersedes `DESIGN.md` §3 and
+§8, which are edited as part of the phase.
 
 ## 1. Recommendation
 
@@ -114,6 +115,11 @@ Timeouts should work whether or not Energy Saving is enabled. Energy Saving may
 shorten the selected timeouts, but it should not be the switch that decides
 whether screen lifecycle exists at all. Automatic light sleep remains excluded:
 the continuously scanned RGB panel can blank or tear.
+
+As shipped, the switch that decides whether the lifecycle applies is a separate
+**Auto Dimming** row above the two timeouts (D8 in `PHASE_11_SETTINGS.md`), added
+so an always-on wall-mounted panel has one control to throw instead of setting both
+dropdowns to Never. It retains the timeout values while off.
 
 ### 2.3 Sound
 

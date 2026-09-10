@@ -83,13 +83,17 @@ validation remains. Details and evidence live in
 - [x] Phase 9.5 — Weather app
 - [x] Phase 9.6 — Calculator app port
 - [x] Phase 10 — keyboard overlay
-- [x] Phase 11 — Settings and power management
+- [ ] Phase 11 — Settings and power management
 - [ ] Phase 12 — reliability and recovery
 - [ ] Phase 13 — PC app catalog and package loader
 
 Phases 9.5, 9.6, 10, and 11 are implemented and build-verified. They remain
 unchecked until their hardware validation checklists in
 `docs/VALIDATION_CHECKLIST.md` pass on the physical panel.
+
+Phase 11 has had its device pass: nine of thirteen rows pass, and four open
+defects hold the phase. `docs/PHASE_11_BUG_FIXES_V3.md` is the work-list for
+closing it.
 
 ## V2 track: installable apps
 

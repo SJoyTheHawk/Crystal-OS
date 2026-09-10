@@ -12,12 +12,21 @@ Scope is the full proposal: five root categories, all must-ship and should-ship
 rows. The build order in §12 is arranged so anything cut late is cut cleanly,
 because the exit criteria land in the first three steps.
 
+**Status (2026-09-10).** Every §12 step is implemented and the device pass is done
+except two rows. Four defects are open and hold the phase: see
+`PHASE_11_BUG_FIXES_V3.md`, which is the work-list for closing it. `D8` in §0 and
+the Home-pill semantics in §2.1 were both added *after* the original guide shipped
+and reflect what is on the device; where an older Phase 11 document disagrees with
+this one, this one is current.
+
 ## 0. Decisions this phase settles
 
-Seven things were open across `DESIGN.md`, `IMPLEMENTATION_PLAN.md`,
+Eight things were open across `DESIGN.md`, `IMPLEMENTATION_PLAN.md`,
 `CODE_GUIDE.md` and the proposal. They are decided here, and the other documents
 are updated to match rather than left to drift. D1-D5 come from the proposal; D6
-and D7 are the navigation work this phase absorbs.
+and D7 are the navigation work this phase absorbs. D8 was added during
+implementation, after D1 shipped and turned out to need a user-facing escape
+hatch.
 
 **D1 — Timeouts always apply; Energy Saving only shortens them.**
 `check_power_state()` currently evaluates Dim and Off only inside
@@ -62,6 +71,27 @@ of the current behaviour is correct and is preserved deliberately.
 quick panel does not open a separate page; it deep-links into that subpage with
 the Settings stack underneath it (§5, §2.1). Backing out of it lands on Network,
 not on a card.
+
+**D8 — Auto Dimming is a separate switch, and it is the master for both
+timeouts.** Added after D1 shipped. D1 made every device dim, which is right as a
+default and wrong as the only option: a wall-mounted always-on panel needs a way
+to stop dimming that is not "set both dropdowns to Never". `power.auto_dim`
+(default 1) gates the whole lifecycle. Off holds the panel at the user's
+brightness and *retains* the two timeout values, so turning it back on restores
+what the user picked.
+
+The two switches are independent and easy to conflate, so state it once:
+
+| | Auto Dimming | Energy Saving |
+|---|---|---|
+| Owns | whether timeouts apply at all | how long they are, plus CPU and WiFi |
+| Off | panel never dims or blanks | timeouts run at their stored values |
+| On | timeouts run | timeouts halved, CPU 80MHz, `WIFI_PS_MAX_MODEM`, brightness ceiling |
+
+D1 still holds: with Energy Saving off and Auto Dimming at its default, the panel
+dims. Auto Dimming does not reinstate the bug D1 fixed — the old code made
+dimming conditional on a *power-saving* toggle, which is a different thing from a
+switch that says "dim the screen".
 
 ## 1. What already exists
 
@@ -167,9 +197,15 @@ derived from the stack, so it cannot disagree with what is on screen.
 keyboard and modal ones, and the separate `s_wifi_page` clause goes away:
 
 ```cpp
-if (s_system_page_depth > 1) { system_page_pop(); return true; }   // subpage
-if (s_system_page_depth == 1) { system_page_close(); return true; } // root -> card
+if (s_system_page_depth > 1) { system_page_pop(); return true; }  // subpage
+// At the root, Back leaves Settings entirely. It restores the app Settings was
+// opened from, the same destination the pill goes to -- the header chevron shows
+// LV_SYMBOL_CLOSE at depth 1 to signal that this is an exit, not a pop.
+if (s_system_page_depth == 1) { close_settings_and_restore_app(); return true; }
 ```
+
+Back and the pill agree at depth 1 and differ below it: Back pops one level, the
+pill exits from any depth (§2.1).
 
 Getting this wrong has a specific symptom worth naming: Back from inside Network
 drops the user onto a card instead of the Settings root. That is the failure
@@ -296,21 +332,47 @@ inside `kBottomBand` of the bottom going up locks
 (which already claims everything) and an open quick panel (an upward drag there
 dismisses the panel — that path exists and stays).
 
-In `on_gesture_release()`, `Navigation` resolves in order:
+In `on_gesture_release()`, `Navigation` resolves in order. **The pill is a Home
+button, not a second Back button** — this is the one place the two gestures
+deliberately differ, and an earlier revision of this section had it wrong:
 
 ```cpp
-// One swipe dismisses one shell layer, top down -- the same rule as Back,
-// because they are the same question asked with a different gesture.
+// The pill is Home. It dismisses the whole shell stack in one go and restores
+// whatever the user was looking at before Settings opened. Back peels one layer;
+// Home takes you out. Do not route this through shell_consume_back().
 if (owner == CrystalGestureOwner::Navigation) {
-    if (shell_consume_back()) return;
-    // Nothing of the shell's was on top: the card is the front layer, so the
-    // swipe means what Brookesia meant by it. The launcher stays and is the
-    // right destination here.
-    if (s_phone != nullptr) (void)s_phone->sendNavigateEvent(
-        ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
+    if (info == nullptr ||
+        info->start_y - info->stop_y < kHomeSwipeTravel) return;   // not committed
+
+    if (s_system_page_depth > 0) {
+        close_settings_and_restore_app();   // pops the whole stack, then restores
+    } else if (s_quick_settings_open) {
+        close_quick_settings(nullptr);
+    } else if (s_phone != nullptr) {
+        // Nothing of the shell's was on top, so the card is the front layer and
+        // the swipe means what Brookesia meant by it: go to the launcher.
+        (void)s_phone->sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
+    }
     return;
 }
 ```
+
+Why Home and not Back. Settings can be three levels deep, and a user who wants
+out should not have to flick three times — that is what the header's Back chevron
+is for. `close_settings_and_restore_app()` reads `s_last_app_before_settings`
+(`-1` = launcher, `>= 0` = an installed app index) and calls `start_card()` to put
+the user back where they were, which is the behaviour a Home button has on the
+platforms this borrows from. The two gestures now answer two different questions:
+
+| | Back button / BACK event | Home pill swipe |
+|---|---|---|
+| Inside a subpage | pop one level | close all of Settings, restore the app |
+| At the Settings root | close Settings | close Settings, restore the app |
+| Quick panel open | dismiss the panel | dismiss the panel |
+| Bare card | app's own Back | launcher |
+
+`shell_consume_back()` keeps the peel-one-layer chain and stays wired to the
+header chevron and Brookesia's BACK. Do not merge the two paths.
 
 `sendNavigateEvent()` is public on `ESP_Brookesia_Core`
 (`esp_brookesia_core.hpp:49`), so the launcher path is Brookesia's own code,
@@ -378,6 +440,7 @@ brick the screen:
 
 | Key | Type | Default | Valid | Notes |
 |---|---|---|---|---|
+| `power.auto_dim` | `uint8_t` 0/1 | 1 | — | D8 master switch for both timeouts |
 | `power.dim_s` | `uint16_t` | 30 | 0, 15, 30, 60, 300 | 0 = never |
 | `power.off_s` | `uint16_t` | 60 | 0, 60, 120, 300, 900 | 0 = never; must exceed `dim_s` |
 | `power.dim_level` | `uint8_t` | 20 | 5-50 | HAL units, see D5 |
@@ -419,6 +482,20 @@ uint16_t stored_u16(const char *key, uint16_t fallback,
 void check_power_state(lv_timer_t *)
 {
     if (s_display == nullptr || s_service_task == nullptr) return;
+
+    // D8. Auto Dimming is the master switch. Off means the panel holds the
+    // user's brightness indefinitely -- and if a timeout had already taken it
+    // down before the switch was flipped, Full has to be requested here or the
+    // screen stays dim until the next touch.
+    if (!crystal_power_auto_dim_enabled()) {
+        if (s_power_state != PowerState::Full) {
+            s_power_state = PowerState::Full;
+            xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::Full),
+                        eSetValueWithOverwrite);
+        }
+        return;
+    }
+
     const uint32_t inactive_ms = lv_disp_get_inactive_time(s_display);
 
     uint32_t dim_ms = power_dim_seconds() * 1000u;   // 0 = never
@@ -493,15 +570,23 @@ void power_saving_apply(bool on)
 already set in `sdkconfig.defaults`; automatic light sleep blanks or tears this
 panel.
 
-`min_freq_mhz == max_freq_mhz` is also not a default to revisit. An earlier
-revision of this snippet pinned `min_freq_mhz = 80` with `max_freq_mhz = 240`
-when saving was off. That shipped and caused the Phase 11 performance
-regression: with `CONFIG_PM_ENABLE=y`, nothing had ever called
-`esp_pm_configure()` before, so the SoC sat at `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ`
-= 240 and DFS was inert. Giving it a real range switched DFS on, and because no
-task in the tree takes an `ESP_PM_CPU_FREQ_MAX` lock, LVGL rendered at 80MHz —
-stuttering animations, slow app loads, and an idle CPU figure several times its
-old value. Energy Saving lowers both ends together; it does not widen the range.
+`min_freq_mhz == max_freq_mhz` is also not a default to revisit. Energy Saving
+switches the CPU **between two pinned clocks — 240MHz off, 80MHz on** — and at
+each setting both ends of the range are equal. It does not configure a range of
+80-240MHz and let the SoC choose.
+
+That distinction is the whole bug. An earlier revision of this snippet pinned
+`min_freq_mhz = 80` with `max_freq_mhz = 240` when saving was off. That shipped
+and caused the Phase 11 performance regression: with `CONFIG_PM_ENABLE=y`,
+nothing had ever called `esp_pm_configure()` before, so the SoC sat at
+`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ` = 240 and DFS was inert. Giving it a real range
+switched DFS on, and because no task in the tree takes an `ESP_PM_CPU_FREQ_MAX`
+lock, LVGL rendered at 80MHz — stuttering animations, slow app loads, and an idle
+CPU figure several times its old value.
+
+So when this is described as "throttling the CPU between 80MHz and 240MHz", read
+it as two discrete settings, one per toggle state. Anything that widens the gap
+between `min` and `max` re-introduces the regression.
 
 The brightness ceiling clamps the current value but must not overwrite the stored
 `brightness` — turning Energy Saving off restores what the user picked. That means
@@ -515,9 +600,14 @@ latency-sensitive network feature lands.
 
 D1 means an updated device dims where it did not before. Defaults above are 30 s
 dim / 60 s off, matching today's constants, so behaviour matches what the code
-always intended. If a wall-mounted always-on display is a supported deployment,
-the honest default is `off_s = 0` with dim retained, and that is a call to make
-before shipping rather than after the first complaint.
+always intended.
+
+The wall-mounted always-on case is what D8 answers. This section originally
+proposed defaulting `off_s = 0` for it; that was the wrong lever, because it
+changes the default for everyone to serve one deployment. `power.auto_dim` leaves
+the defaults alone and gives that user one switch to throw, in the quick panel and
+in Settings › Display & Power. The timeout values survive being switched off, so
+it is reversible without re-picking them.
 
 ## 5. Network: the HAL additions
 
@@ -865,10 +955,15 @@ not follow-up:
 - `DESIGN.md` §6 — the WiFi page's address changes: it is now a Network subpage,
   and the quick panel deep-links to it (D7).
 - `CODE_GUIDE.md` §Phase 11 — replace with a pointer to this document.
+- **Done during implementation:** `DESIGN.md` §4 and §8 carry D8 and the Home-pill
+  rule; `VALIDATION_CHECKLIST.md` holds the 2026-09-10 device results;
+  `PHASE_11_BUG_FIXES_V2.md` Bug 3 is marked superseded. Outstanding: whichever
+  durability route is chosen for the Brookesia Recents patch
+  (`PHASE_11_BUG_FIXES_V3.md`) needs recording here.
 - `IMPLEMENTATION_PLAN.md` §Phase 11 — the category list and exit criteria.
 - `README.md` — tick Phase 11 when the exit criteria pass.
 - `VALIDATION_CHECKLIST.md` — the regression rows from §13.
-- `SETTINGS_PROPOSAL.md` — a note that D1-D7 are settled here.
+- `SETTINGS_PROPOSAL.md` — a note that D1-D8 are settled here.
 
 ## 12. Build order
 
@@ -910,9 +1005,12 @@ From `IMPLEMENTATION_PLAN.md`, plus what the wider scope adds:
 - Energy Saving measurably lowers current draw.
 - Dim and off happen with Energy Saving **off** (D1), and Energy Saving shortens
   them rather than enabling them.
+- Auto Dimming off holds the panel at the user's brightness regardless of what the
+  two dropdowns say, and turning it back on restores those values (D8).
 - Back from inside a subpage returns to the Settings root, not to a card.
-- A bottom-edge swipe up with a system page open dismisses that page, not the card
-  underneath it. Repeat until the stack is empty; the card is only reached last.
+- A bottom-edge swipe up with a system page open closes the whole Settings stack
+  and restores the app Settings was opened from, or the launcher if it was opened
+  from there. One flick, however deep the stack.
 - A bottom-edge swipe up on a bare card still reaches the launcher (D6), and a tap
   in the bottom 24px of a card dismisses nothing.
 - Long-pressing the quick panel's WiFi tile lands on WiFi Networks with Network

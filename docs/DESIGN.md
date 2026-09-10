@@ -58,7 +58,7 @@ here.
 | --- | --- | --- | --- |
 | 0 | App content | `lv_scr_act()` | yes |
 | 1 | Indicator bar | Brookesia status bar | no (v1) |
-| 1 | Home pill | `lv_layer_top()` | no (cue only) |
+| 1 | Home pill | `lv_layer_top()` | cue only; its catcher owns the touch |
 | 2 | App switch cards | shell container | during drag only |
 | 3 | Keyboard overlay | shell container | yes |
 | 4 | Quick settings panel | shell container | yes |
@@ -67,14 +67,25 @@ here.
 
 Rules that follow from the ordering:
 
-- **The home pill** is the resting cue for the bottom edge, 172x6px at 50% white,
-  centred `kHomePillInset` above the bottom so it sits inside `kBottomBand`. It is
-  never clickable — the gesture arbiter owns that band, and a clickable object
-  there would swallow presses that must reach `on_gesture_pressing()`. Hidden while
-  the keyboard is open, because the keyboard takes the bottom edge and the arbiter
-  hands the band to the app. Crystal draws it because clearing
-  `enable_navigation_gesture` removed Brookesia's on app screens; Brookesia's was
-  drag-only (`size_min` width 0), so a resting pill is new behaviour.
+- **The home pill** is the resting cue for the bottom edge, 172x6px at 50% white
+  over a 1px black border at 30% (the border is what makes it visible on a white
+  app background), centred `kHomePillInset` above the bottom so it sits inside
+  `kBottomBand`. Hidden while the keyboard is open, because the keyboard takes the
+  bottom edge and the arbiter hands the band to the app. Crystal draws it because
+  clearing `enable_navigation_gesture` removed Brookesia's on app screens;
+  Brookesia's was drag-only (`size_min` width 0), so a resting pill is new
+  behaviour.
+- **The pill itself is inert; a separate catcher owns its input.** The pill object
+  is never clickable, but a transparent press-locked target of
+  `kHomePillHitWidth` x `kBottomBand` (the pill's 172px plus 8px each side) sits
+  over it and wins LVGL hit-testing. Without it, a text field under the pill takes
+  the press and opens the keyboard before the arbiter sees the drag. The catcher
+  keeps the touch after the drag leaves its bounds, so the gesture still resolves.
+  Touches elsewhere in the bottom band stay app-owned.
+- **The pill animates the drag.** Touch-down adds a white glow; upward travel maps
+  linearly over `kHomeSwipeTravel` to 0-8px of lift and a stronger glow. Reversing
+  to the start returns it to rest, and release or cancel eases both to zero over
+  `kHomePillSettleMs`. A wake-only touch must not leave it lifted or glowing.
 - **The pill is re-fronted, not just unhidden.** System pages are created on
   `lv_layer_top()` after it and cover it on z-order alone, so `update_home_pill()`
   calls `lv_obj_move_foreground()` and runs at the end of `system_page_push()` and
@@ -157,7 +168,7 @@ travel, and holds it until lift.
 | Drag left | right edge, ≤24px from right | `APP_SWITCH` | next app |
 | Drag down | top band ≤20px, **right 120px only** | `QUICK_SETTINGS` | pull panel |
 | Drag up | anywhere, panel open | `QUICK_SETTINGS` | dismiss panel |
-| Drag up | bottom 24px, no panel | `NAVIGATION` | dismiss one shell layer, or open launcher on a bare card |
+| Drag up | bottom 24px, no panel | `NAVIGATION` | Home: close the whole Settings stack and restore the previous app, else dismiss the panel, else launcher |
 | Tap | outside panel, panel open | `QUICK_SETTINGS` | dismiss panel |
 | Long press | quick settings WiFi button | — | close panel, open WiFi page |
 | Drag vertical | WiFi page SSID list | `APP` (list scrolls) | scroll SSIDs |
@@ -189,6 +200,14 @@ Crystal also owns the bottom edge. `CrystalApp` clears Brookesia's per-app
 `enable_navigation_gesture` flag at construction, then the shell forwards a
 committed bare-card swipe to Brookesia HOME itself. This prevents Brookesia from
 dismissing the card behind a shell page before the shell can consume the gesture.
+
+**The pill is Home; the Back button is Back.** They agree at the Settings root and
+differ below it: Back pops one subpage, the pill exits Settings from any depth and
+restores the app it was opened from (`s_last_app_before_settings`, `-1` for the
+launcher). Brookesia's own HOME cannot express "return to the app underneath" — it
+always resolves to the launcher — so the shell resolves the destination itself and
+only falls through to `sendNavigateEvent(HOME)` when a bare card is the front
+layer.
 
 The `kTopBand` restriction is the deliberate exception to rule 4. Without it, a
 swipe-down inside a scrolled app view opens quick settings when the user meant to
@@ -556,11 +575,15 @@ Notes:
   it, SNTP leaves the clock on UTC and the indicator bar shows the wrong hour.
 - **System › attribution** is where `esp-brookesia` and ESP-IDF are credited in
   the UI, alongside the root `NOTICE` file.
-- **Power saving** is one NVS flag with several effects: CPU capped at 80MHz,
-  `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened timeouts, and card
-  drags showing the icon card instead of the preview snapshot. The last of these
-  exists because loading a preview costs a SPIFFS read plus a ~103 KiB PSRAM
-  allocation per drag, which is the work that hurts most under the 80MHz cap.
+- **Power saving** is one NVS flag with several effects: the CPU pinned at 80MHz
+  instead of 240MHz, `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened
+  timeouts, and card drags showing the icon card instead of the preview snapshot.
+  The last of these exists because loading a preview costs a SPIFFS read plus a
+  ~103 KiB PSRAM allocation per drag, which is the work that hurts most under the
+  80MHz cap. **Both ends of `esp_pm_config_t` move together — 240/240 off, 80/80
+  on.** A range such as 80/240 enables DFS, and since no task holds an
+  `ESP_PM_CPU_FREQ_MAX` lock, LVGL would render at the minimum. That shipped once
+  and was the Phase 11 performance regression.
 - **Auto Dimming** is a separate NVS flag (`power.auto_dim`, default on) and the
   master switch for both timeouts. Off holds the panel at the user's brightness
   no matter what the timeouts say, and the configured values are retained so

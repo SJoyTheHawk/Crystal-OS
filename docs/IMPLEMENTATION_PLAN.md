@@ -709,10 +709,16 @@ sleep in v1**: the RGB panel is a continuous DMA scan-out and will blank or
 tear. Power saving is one NVS flag with several effects — CPU capped at 80MHz,
 `WIFI_PS_MAX_MODEM`, lower brightness ceiling, shorter timeouts.
 
+Auto Dimming (`power.auto_dim`, default on) is the master switch for both
+timeouts and is independent of Energy Saving: Energy Saving halves the timeouts and
+caps the clock, Auto Dimming decides whether the timeouts apply at all.
+
 Exit: static IP and DNS survive reboot; timezone changes apply live and survive
-reboot; power saving measurably lowers current draw; subpage Back and bottom-edge
-swipes peel one Settings layer at a time. See `PHASE_11_SETTINGS.md` for the full
-implementation and validation contract.
+reboot; power saving measurably lowers current draw; subpage Back peels one
+Settings layer at a time while the home pill exits Settings entirely and restores
+the app it was opened from. See `PHASE_11_SETTINGS.md` for the full implementation
+and validation contract, and `PHASE_11_BUG_FIXES_V3.md` for the open defects
+holding the phase.
 
 ### Phase 12 — Reliability
 
