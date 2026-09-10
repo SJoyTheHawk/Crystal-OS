@@ -36,11 +36,17 @@ constexpr int kBottomBand = 24;
 // Home pill geometry. Width matches iOS's proportion: its indicator is 140pt on
 // a 390pt-wide screen, 35.9%, which is 172px here. Stealth comes from opacity
 // instead -- 30% white, against app backgrounds that are all dark in this tree
-// (0x11181F, 0x101827), so it reads without a shadow or outline. The inset puts
-// it inside kBottomBand, so it marks the band it belongs to.
+// (0x11181F, 0x101827), so its resting state reads without a shadow. The inset
+// puts it inside kBottomBand, so it marks the band it belongs to.
 constexpr lv_coord_t kHomePillWidth = 172;
 constexpr lv_coord_t kHomePillHeight = 6;
 constexpr lv_coord_t kHomePillInset = 7;
+constexpr lv_coord_t kHomePillMaxLift = 8;
+constexpr uint32_t kHomePillSettleMs = 120;
+constexpr lv_opa_t kHomePillTouchGlowOpa = LV_OPA_20;
+constexpr lv_opa_t kHomePillMaxGlowOpa = LV_OPA_50;
+constexpr lv_coord_t kHomePillTouchGlowWidth = 6;
+constexpr lv_coord_t kHomePillMaxGlowWidth = 16;
 // Travel required to commit the bottom swipe. Brookesia only classifies a
 // direction after 50px (direction_vertical in the 480x480 stylesheet), so this
 // must exceed that or the owner is claimed on gestures that never resolve as UP.
@@ -86,6 +92,13 @@ CrystalGestureOwner s_gesture_owner = CrystalGestureOwner::None;
 ESP_Brookesia_Gesture *s_gesture = nullptr;
 lv_obj_t *s_page_dots = nullptr;
 lv_obj_t *s_home_pill = nullptr;
+struct HomePillFeedbackState {
+    lv_coord_t lift = 0;
+    lv_opa_t glow_opa = LV_OPA_TRANSP;
+    lv_coord_t settle_start_lift = 0;
+    lv_opa_t settle_start_glow_opa = LV_OPA_TRANSP;
+};
+HomePillFeedbackState s_home_pill_feedback;
 lv_obj_t *s_quick_root = nullptr;
 lv_obj_t *s_quick_panel = nullptr;
 lv_obj_t *s_quick_brightness = nullptr;
@@ -411,6 +424,74 @@ bool os_owns_gesture()
            s_gesture_owner == CrystalGestureOwner::Navigation;
 }
 
+void apply_home_pill_feedback(lv_coord_t lift, lv_opa_t glow_opa)
+{
+    s_home_pill_feedback.lift = lift;
+    s_home_pill_feedback.glow_opa = glow_opa;
+    if (s_home_pill == nullptr) {
+        return;
+    }
+
+    lv_obj_align(s_home_pill, LV_ALIGN_BOTTOM_MID, 0, -kHomePillInset - lift);
+    lv_coord_t glow_width = 0;
+    if (glow_opa <= kHomePillTouchGlowOpa) {
+        glow_width = (kHomePillTouchGlowWidth * glow_opa) / kHomePillTouchGlowOpa;
+    } else {
+        glow_width = kHomePillTouchGlowWidth +
+            ((kHomePillMaxGlowWidth - kHomePillTouchGlowWidth) *
+             (glow_opa - kHomePillTouchGlowOpa)) /
+                (kHomePillMaxGlowOpa - kHomePillTouchGlowOpa);
+    }
+    lv_obj_set_style_shadow_width(s_home_pill, glow_width, 0);
+    lv_obj_set_style_shadow_opa(s_home_pill, glow_opa, 0);
+}
+
+void home_pill_settle_anim(void *, int32_t progress)
+{
+    const int32_t remaining = 256 - progress;
+    apply_home_pill_feedback(
+        static_cast<lv_coord_t>((s_home_pill_feedback.settle_start_lift * remaining) / 256),
+        static_cast<lv_opa_t>((s_home_pill_feedback.settle_start_glow_opa * remaining) / 256));
+}
+
+void settle_home_pill_feedback()
+{
+    lv_anim_del(&s_home_pill_feedback, home_pill_settle_anim);
+    if (s_home_pill_feedback.lift == 0 && s_home_pill_feedback.glow_opa == LV_OPA_TRANSP) {
+        return;
+    }
+
+    s_home_pill_feedback.settle_start_lift = s_home_pill_feedback.lift;
+    s_home_pill_feedback.settle_start_glow_opa = s_home_pill_feedback.glow_opa;
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, &s_home_pill_feedback);
+    lv_anim_set_exec_cb(&animation, home_pill_settle_anim);
+    lv_anim_set_values(&animation, 0, 256);
+    lv_anim_set_time(&animation, kHomePillSettleMs);
+    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+    lv_anim_start(&animation);
+}
+
+void begin_home_pill_feedback()
+{
+    lv_anim_del(&s_home_pill_feedback, home_pill_settle_anim);
+    apply_home_pill_feedback(0, kHomePillTouchGlowOpa);
+}
+
+void update_home_pill_feedback(const ESP_Brookesia_GestureInfo_t &info)
+{
+    int32_t travel = info.start_y - info.stop_y;
+    if (travel < 0) travel = 0;
+    if (travel > kHomeSwipeTravel) travel = kHomeSwipeTravel;
+
+    const lv_coord_t lift = static_cast<lv_coord_t>((travel * kHomePillMaxLift) / kHomeSwipeTravel);
+    const lv_opa_t glow_opa = static_cast<lv_opa_t>(
+        kHomePillTouchGlowOpa +
+        (travel * (kHomePillMaxGlowOpa - kHomePillTouchGlowOpa)) / kHomeSwipeTravel);
+    apply_home_pill_feedback(lift, glow_opa);
+}
+
 // The pill hides when the keyboard is up, because the keyboard occupies the
 // bottom edge and the arbiter hands the band to the app while it is open, so the
 // cue would be pointing at a gesture that does not fire. It stays visible
@@ -428,6 +509,8 @@ void update_home_pill()
     // the only pill on every screen.
     if (s_keyboard_open) {
         ESP_LOGD(TAG, "Hiding pill: keyboard up");
+        lv_anim_del(&s_home_pill_feedback, home_pill_settle_anim);
+        apply_home_pill_feedback(0, LV_OPA_TRANSP);
         lv_obj_add_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
         return;
     }
@@ -500,6 +583,9 @@ bool init_indicator_overlay()
     lv_obj_set_style_border_width(s_home_pill, 1, 0);
     lv_obj_set_style_border_color(s_home_pill, lv_color_black(), 0);
     lv_obj_set_style_border_opa(s_home_pill, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_color(s_home_pill, lv_color_white(), 0);
+    lv_obj_set_style_shadow_width(s_home_pill, 0, 0);
+    lv_obj_set_style_shadow_opa(s_home_pill, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(s_home_pill, 0, 0);
     // Clickable to block touch-through. Without this, dragging from the pill
     // activates content underneath (e.g., the "System" button in Settings),
@@ -1319,8 +1405,11 @@ void on_gesture_press(lv_event_t *event)
     // Immediately set home gesture flag if touch starts in bottom band.
     // This prevents buttons from receiving events during fast swipes.
     auto *info = static_cast<ESP_Brookesia_GestureInfo_t *>(lv_event_get_param(event));
-    if (info != nullptr && (info->start_area & ESP_BROOKESIA_GESTURE_AREA_BOTTOM_EDGE)) {
+    if (!s_swallow_wake_touch && info != nullptr &&
+            (info->start_area & ESP_BROOKESIA_GESTURE_AREA_BOTTOM_EDGE) &&
+            s_home_pill != nullptr && !lv_obj_has_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN)) {
         s_home_gesture_active = true;
+        begin_home_pill_feedback();
         ESP_LOGD(TAG, "Bottom edge touch started, blocking input");
     } else {
         s_home_gesture_active = false;
@@ -1332,6 +1421,9 @@ void on_gesture_pressing(lv_event_t *event)
     auto *info = static_cast<ESP_Brookesia_GestureInfo_t *>(lv_event_get_param(event));
     if (info == nullptr || s_swallow_wake_touch) {
         return;
+    }
+    if (s_home_gesture_active) {
+        update_home_pill_feedback(*info);
     }
     if (s_gesture_owner == CrystalGestureOwner::AppSwitch) {
         update_card_transition(*info);
@@ -1409,6 +1501,11 @@ void on_gesture_release(lv_event_t *event)
     auto *info = static_cast<ESP_Brookesia_GestureInfo_t *>(lv_event_get_param(event));
     const CrystalGestureOwner owner = s_gesture_owner;
     s_gesture_owner = CrystalGestureOwner::None;
+    const bool home_gesture_active = s_home_gesture_active;
+    s_home_gesture_active = false;
+    if (home_gesture_active) {
+        settle_home_pill_feedback();
+    }
     if (s_swallow_wake_touch) {
         s_swallow_wake_touch = false;
         return;
@@ -1416,9 +1513,9 @@ void on_gesture_release(lv_event_t *event)
     if (owner == CrystalGestureOwner::Navigation) {
         // kHomeSwipeTravel, not ver_res / 2. Half the screen is right for card
         // switching, where the drag animates a card across and the commit point
-        // should be the midpoint. This gesture animates nothing: it is a flick,
-        // and demanding 240px of travel from a 24px band made it almost
-        // unreachable, so releases were silently dropped.
+        // should be the midpoint. This gesture moves only the home pill rather
+        // than the page content, so demanding 240px of travel from a 24px band
+        // made it almost unreachable and releases were silently dropped.
         if (info != nullptr && info->start_y - info->stop_y >= kHomeSwipeTravel) {
             ESP_LOGI(TAG, "Home gesture: travel=%d, depth=%zu, quick=%d, last_app=%d",
                      info->start_y - info->stop_y, s_system_page_depth, s_quick_settings_open,
@@ -1441,7 +1538,6 @@ void on_gesture_release(lv_event_t *event)
             ESP_LOGD(TAG, "Home gesture insufficient: travel=%d < %d",
                      info->start_y - info->stop_y, kHomeSwipeTravel);
         }
-        s_home_gesture_active = false;
         return;
     }
     if (owner == CrystalGestureOwner::QuickSettings && info != nullptr) {
