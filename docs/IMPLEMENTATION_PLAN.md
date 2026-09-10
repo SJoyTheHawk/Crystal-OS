@@ -717,8 +717,9 @@ Exit: static IP and DNS survive reboot; timezone changes apply live and survive
 reboot; power saving measurably lowers current draw; subpage Back peels one
 Settings layer at a time while the home pill exits Settings entirely and restores
 the app it was opened from. See `PHASE_11_SETTINGS.md` for the full implementation
-and validation contract, and `PHASE_11_BUG_FIXES_V3.md` for the open defects
-holding the phase.
+and validation contract. The fixes and regression results are recorded in
+`PHASE_11_BUG_FIXES_V3.md`; all Phase 11 validation rows pass and the phase is
+closed as of 2026-09-11.
 
 ### Phase 12 — Reliability
 

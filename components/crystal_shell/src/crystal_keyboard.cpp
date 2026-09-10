@@ -206,6 +206,25 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
 {
     if (field == nullptr || viewport == nullptr) return false;
     if (s_keyboard != nullptr && s_field == field) return true;
+
+    // Moving between fields in one form must not restore and shrink the viewport
+    // again. Apart from making the form jump under the active touch, that layout
+    // change can leave focus on the field that moved beneath the pointer. Rebind
+    // the existing keyboard in place, matching the stable behavior of the dense
+    // IP Settings form.
+    if (s_keyboard != nullptr && s_viewport == viewport) {
+        lv_obj_t *previous = s_field;
+        if (previous != nullptr && previous != viewport) {
+            lv_obj_remove_event_cb(previous, watched_object_deleted);
+            lv_event_send(previous, LV_EVENT_DEFOCUSED, nullptr);
+        }
+        s_field = field;
+        lv_keyboard_set_textarea(s_keyboard, field);
+        lv_obj_add_event_cb(field, watched_object_deleted, LV_EVENT_DELETE, nullptr);
+        center_covered_field();
+        return true;
+    }
+
     crystal_keyboard_hide();
 
     s_field = field;
@@ -289,6 +308,11 @@ void crystal_keyboard_hide()
     if (s_hiding) return;
     s_hiding = true;
     crystal_shell_set_keyboard_open(false);
+    // The indev reset below aborts LVGL's normal focus handoff. Defocus the old
+    // field explicitly so its cursor cannot remain visible after rebinding.
+    if (s_field != nullptr) {
+        lv_event_send(s_field, LV_EVENT_DEFOCUSED, nullptr);
+    }
     if (s_viewport != nullptr) {
         lv_obj_remove_event_cb(s_viewport, viewport_click_event);
         lv_obj_remove_event_cb(s_viewport, watched_object_deleted);

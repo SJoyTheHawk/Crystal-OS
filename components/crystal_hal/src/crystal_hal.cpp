@@ -534,8 +534,10 @@ private:
     static bool persist_ip_config(const IpConfig &config)
     {
         const uint8_t dhcp = config.dhcp ? 1 : 0;
-        return s_storage.set(kDhcpKey, &dhcp, sizeof(dhcp)) &&
-               s_storage.set("net.ip", &config.ip, sizeof(config.ip)) &&
+        if (!s_storage.set(kDhcpKey, &dhcp, sizeof(dhcp))) return false;
+        if (config.dhcp) return true;
+
+        return s_storage.set("net.ip", &config.ip, sizeof(config.ip)) &&
                s_storage.set("net.mask", &config.mask, sizeof(config.mask)) &&
                s_storage.set("net.gw", &config.gateway, sizeof(config.gateway)) &&
                s_storage.set("net.dns1", &config.dns1, sizeof(config.dns1)) &&

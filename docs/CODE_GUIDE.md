@@ -1556,8 +1556,9 @@ page stack, bottom-edge ownership, HAL additions, storage schema, timezone
 catalog, power policy, build order, and validation criteria. Keep those details
 there so interfaces and verified line references have one owner.
 
-The phase is implemented and has had its device pass. Five open defects and their
-fixes are in `PHASE_11_BUG_FIXES_V3.md`, which is the work-list for closing it.
+The phase is implemented, device-validated, and closed. The five resolved defects
+and their passing regression checklist are retained in
+`PHASE_11_BUG_FIXES_V3.md`.
 Two things there are general traps worth knowing outside Phase 11: bind LVGL
 handlers unconditionally and gate on state inside them rather than binding inside
 an `if` on state that changes while the page is open, and remember that a textarea

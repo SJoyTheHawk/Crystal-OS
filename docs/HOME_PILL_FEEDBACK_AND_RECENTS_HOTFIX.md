@@ -19,17 +19,15 @@ a restrained white glow on touch, plus up to 8 px of lift during an upward drag.
   classify a long bottom swipe as Recents when the widget does not exist.
 - Do not change Crystal's side switching or the one-running-app limit.
 
-`managed_components/` is Git-ignored. The Brookesia manager changes are local
-dependency patches and must be moved into a durable component override or
-reapplied whenever managed dependencies are regenerated.
+`managed_components/` is Git-ignored, so Crystal carries the pinned Brookesia
+0.4.2 component at `components/esp-brookesia`. ESP-IDF selects that project-local
+component ahead of managed dependencies, keeping the null-safety changes durable.
 
-**Status 2026-09-10.** The patched `esp_brookesia_phone_manager.cpp` was force-added
-past `.gitignore` in `62256ad`, so it is tracked and survives a clone — but a
-dependency re-resolve or `fullclean` regenerates the directory and reverts it
-silently. Because `enable_recents_screen = 0`, the symptom is a null dereference on
-side-switch rather than a build failure. The durability options are compared in
-`PHASE_11_BUG_FIXES_V3.md`; a durable component override is the recommendation and
-is still to be done.
+**Status 2026-09-11.** The old force-tracked manager source under
+`managed_components/` has been removed. A full clean removed and resolved the
+managed dependencies, selected the project-local component, and completed a
+firmware build. Physical side-switch validation remains part of the Phase 11
+device rerun.
 
 ## Home-pill feedback and input priority
 

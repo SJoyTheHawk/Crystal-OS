@@ -3,6 +3,7 @@
 #include "crystal_core.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -202,7 +203,9 @@ bool load_weather_location()
     if (!hal().storage->get("weather.lat", &lat, &n) || n != sizeof(lat)) return false;
     n = sizeof(lon);
     if (!hal().storage->get("weather.lon", &lon, &n) || n != sizeof(lon)) return false;
-    n = sizeof(s_weather_city) - 1;
+    // The stored blob includes its terminator, so a maximum-length city needs
+    // the full buffer capacity when it is read back.
+    n = sizeof(s_weather_city);
     if (hal().storage->get("weather.city", s_weather_city, &n)) s_weather_city[n < sizeof(s_weather_city) ? n : sizeof(s_weather_city) - 1] = '\0';
     s_weather_latitude = lat; s_weather_longitude = lon;
     return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
@@ -761,7 +764,8 @@ void crystal_weather_request() { s_weather_request.store(true); }
 
 bool crystal_weather_set_location(double latitude, double longitude, const char *city)
 {
-    if (latitude < -90.0 || latitude > 90.0 || longitude < -180.0 ||
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+            latitude < -90.0 || latitude > 90.0 || longitude < -180.0 ||
             longitude > 180.0 || city == nullptr || city[0] == '\0') return false;
     store_value<uint8_t>("loc.auto", 0);
     taskENTER_CRITICAL(&s_weather_location_mux);

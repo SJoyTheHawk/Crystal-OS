@@ -2,6 +2,7 @@
 
 #include "crystal_shell.hpp"
 
+#include <cmath>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -132,6 +133,21 @@ lv_obj_t *s_region_timezone_row = nullptr;
 lv_obj_t *s_region_format_row = nullptr;
 lv_obj_t *s_region_manual_time_row = nullptr;
 lv_obj_t *s_region_location_row = nullptr;
+struct LocationFormState {
+    lv_obj_t *page = nullptr;
+    lv_obj_t *city = nullptr;
+    lv_obj_t *latitude = nullptr;
+    lv_obj_t *longitude = nullptr;
+    lv_obj_t *status = nullptr;
+};
+LocationFormState s_location_form;
+struct ManualTimeFormState {
+    lv_obj_t *page = nullptr;
+    lv_obj_t *date = nullptr;
+    lv_obj_t *clock = nullptr;
+    lv_obj_t *status = nullptr;
+};
+ManualTimeFormState s_manual_time_form;
 char s_wifi_selected[33] = {};
 char s_wifi_connecting[33] = {};
 void (*s_quick_after_close)() = nullptr;
@@ -1921,6 +1937,8 @@ void clear_page_cache(lv_obj_t *page)
             crystal_shell_set_modal_open(false);
         }
     }
+    if (page == s_location_form.page) s_location_form = {};
+    if (page == s_manual_time_form.page) s_manual_time_form = {};
     memset(s_ip_fields, 0, sizeof(s_ip_fields));
     s_ip_apply_status = nullptr;
     if (s_system_page_depth == 0) {
@@ -2032,6 +2050,17 @@ void settings_row_set_summary(lv_obj_t *row, const char *summary)
     // Phase 11 edit end.
 }
 
+lv_obj_t *settings_status_label(lv_obj_t *parent)
+{
+    lv_obj_t *status = lv_label_create(parent);
+    lv_label_set_text(status, "");
+    lv_obj_set_width(status, LV_PCT(100));
+    lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(status, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(status, lv_color_hex(0xf59e0b), 0);
+    return status;
+}
+
 // Trims the summary label so it stops short of a right-aligned control instead of
 // running underneath it. No-op for rows created without a summary.
 void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width)
@@ -2130,15 +2159,26 @@ void ip_apply(lv_event_t *event)
     lv_obj_t *dhcp_switch = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
     IWifi::IpConfig config = {};
     config.dhcp = lv_obj_has_state(dhcp_switch, LV_STATE_CHECKED);
-    if (!config.dhcp) {
-        uint32_t *values[] = {&config.ip, &config.mask, &config.gateway, &config.dns1, &config.dns2};
-        for (size_t i = 0; i < 5; ++i) {
-            const char *text = lv_textarea_get_text(s_ip_fields[i]);
-            if ((i < 4 && (text == nullptr || text[0] == '\0')) ||
-                    (text != nullptr && text[0] != '\0' && inet_aton(text, reinterpret_cast<in_addr *>(values[i])) == 0)) {
+    uint32_t *values[] = {&config.ip, &config.mask, &config.gateway, &config.dns1, &config.dns2};
+    bool complete = true;
+    for (size_t i = 0; i < 5; ++i) {
+        const char *text = s_ip_fields[i] != nullptr ? lv_textarea_get_text(s_ip_fields[i]) : nullptr;
+        if (text == nullptr || text[0] == '\0') {
+            if (i < 4) complete = false;
+            continue;
+        }
+        if (inet_aton(text, reinterpret_cast<in_addr *>(values[i])) == 0) {
+            *values[i] = 0;
+            if (!config.dhcp) {
                 lv_label_set_text(s_ip_apply_status, "Enter valid dotted-quad addresses");
                 return;
             }
+        }
+    }
+    if (!config.dhcp) {
+        if (!complete) {
+            lv_label_set_text(s_ip_apply_status, "Enter valid dotted-quad addresses");
+            return;
         }
         const uint32_t mask = ntohl(config.mask);
         const uint32_t wildcard = ~mask;
@@ -2168,10 +2208,24 @@ void settings_push_ip()
     lv_obj_t *mode = settings_row(content, "Automatic (DHCP)", stored_dhcp ? "Router assigns the address" : "Manual configuration");
     lv_obj_t *dhcp_switch = settings_switch(mode, stored_dhcp != 0);
     lv_obj_add_event_cb(dhcp_switch, [](lv_event_t *e) {
-        const bool automatic = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
+        auto *target = static_cast<lv_obj_t *>(lv_event_get_target(e));
+        const bool automatic = lv_obj_has_state(target, LV_STATE_CHECKED);
+        if (automatic) crystal_keyboard_hide();
         set_ip_fields_enabled(!automatic);
-        settings_row_set_summary(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))),
+        settings_row_set_summary(lv_obj_get_parent(target),
                                  automatic ? "Router assigns the address" : "Manual configuration");
+        if (!automatic) {
+            lv_label_set_text(s_ip_apply_status, "Enter the addresses below, then press Apply");
+            return;
+        }
+        IWifi::IpConfig config = {};
+        config.dhcp = true;
+        if (hal().wifi != nullptr && hal().wifi->set_ip_config(config)) {
+            lv_label_set_text(s_ip_apply_status, "Automatic addressing enabled");
+            settings_row_set_summary(s_network_details_row, "Connected - DHCP");
+        } else {
+            lv_label_set_text(s_ip_apply_status, "Could not enable automatic addressing");
+        }
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     static const char *labels[] = {"IP address", "Subnet mask", "Gateway", "Primary DNS", "Secondary DNS (optional)"};
     static const char *keys[] = {"net.ip", "net.mask", "net.gw", "net.dns1", "net.dns2"};
@@ -2192,15 +2246,7 @@ void settings_push_ip()
     set_ip_fields_enabled(stored_dhcp == 0);
     lv_obj_t *apply = settings_row(content, "Apply", "Validates all fields before changing the interface");
     lv_obj_add_event_cb(apply, ip_apply, LV_EVENT_CLICKED, dhcp_switch);
-    s_ip_apply_status = lv_label_create(content);
-    // Phase 11 edit begin: suppress LVGL's default label text until validation runs.
-    // empty until validation or Apply produces a message.
-    lv_label_set_text(s_ip_apply_status, "");
-    // Phase 11 edit end.
-    lv_obj_set_width(s_ip_apply_status, LV_PCT(100));
-    lv_label_set_long_mode(s_ip_apply_status, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(s_ip_apply_status, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(s_ip_apply_status, lv_color_hex(0xf59e0b), 0);
+    s_ip_apply_status = settings_status_label(content);
 }
 
 void settings_push_network()
@@ -2355,63 +2401,214 @@ void settings_push_timezones()
     }
 }
 
+void set_location_fields_enabled(bool enabled)
+{
+    for (lv_obj_t *field : {s_location_form.city, s_location_form.latitude,
+                            s_location_form.longitude}) {
+        if (field == nullptr) continue;
+        if (enabled) lv_obj_clear_state(field, LV_STATE_DISABLED);
+        else lv_obj_add_state(field, LV_STATE_DISABLED);
+    }
+}
+
+void location_mode_changed(lv_event_t *event)
+{
+    const bool automatic = lv_obj_has_state(
+        static_cast<lv_obj_t *>(lv_event_get_target(event)), LV_STATE_CHECKED);
+    if (automatic) crystal_keyboard_hide();
+    crystal_weather_set_automatic(automatic);
+    set_location_fields_enabled(!automatic);
+    settings_row_set_summary(s_region_location_row, automatic ? "Automatic" : "Manual");
+    settings_row_set_summary(s_root_region_row,
+                             automatic ? current_timezone_label() : "Manual location");
+    if (s_location_form.status != nullptr) {
+        lv_label_set_text(s_location_form.status,
+                          automatic ? "" : "Enter a city label and coordinates below");
+    }
+}
+
+void location_apply(lv_event_t *)
+{
+    if (s_location_form.city == nullptr || s_location_form.latitude == nullptr ||
+            s_location_form.longitude == nullptr || s_location_form.status == nullptr) return;
+
+    const char *city = lv_textarea_get_text(s_location_form.city);
+    const char *lat_text = lv_textarea_get_text(s_location_form.latitude);
+    const char *lon_text = lv_textarea_get_text(s_location_form.longitude);
+    if (city == nullptr || city[0] == '\0') {
+        lv_label_set_text(s_location_form.status, "Enter a city label for Weather");
+        return;
+    }
+    if (lat_text == nullptr || lat_text[0] == '\0' ||
+            lon_text == nullptr || lon_text[0] == '\0') {
+        lv_label_set_text(s_location_form.status,
+                          "Enter latitude and longitude. A city name alone cannot set the location.");
+        return;
+    }
+
+    char *end = nullptr;
+    const double latitude = strtod(lat_text, &end);
+    if (end == lat_text || end == nullptr || *end != '\0') {
+        lv_label_set_text(s_location_form.status, "Latitude must be a number, e.g. 25.03");
+        return;
+    }
+    end = nullptr;
+    const double longitude = strtod(lon_text, &end);
+    if (end == lon_text || end == nullptr || *end != '\0') {
+        lv_label_set_text(s_location_form.status, "Longitude must be a number, e.g. 121.57");
+        return;
+    }
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+            latitude < -90.0 || latitude > 90.0 ||
+            longitude < -180.0 || longitude > 180.0) {
+        lv_label_set_text(s_location_form.status,
+                          "Latitude must be -90 to 90 and longitude -180 to 180");
+        return;
+    }
+    if (!crystal_weather_set_location(latitude, longitude, city)) {
+        lv_label_set_text(s_location_form.status, "Could not save the manual location");
+        return;
+    }
+    settings_row_set_summary(s_region_location_row, "Manual");
+    settings_row_set_summary(s_root_region_row, "Manual location");
+    system_page_pop();
+}
+
 void settings_push_location()
 {
     lv_obj_t *content = system_page_push("Location");
     if (content == nullptr) return;
+    s_location_form.page = lv_obj_get_parent(content);
     lv_obj_t *auto_row = settings_row(content, "Automatic Location", "Uses the network location");
     lv_obj_t *automatic = settings_switch(auto_row, crystal_weather_location_automatic());
-    lv_obj_t *city = lv_textarea_create(content); lv_obj_set_size(city, LV_PCT(100), 52); lv_textarea_set_one_line(city, true); lv_textarea_set_placeholder_text(city, "City name"); lv_textarea_set_max_length(city, 23);
-    lv_obj_t *lat = lv_textarea_create(content); lv_obj_set_size(lat, LV_PCT(100), 52); lv_textarea_set_one_line(lat, true); lv_textarea_set_placeholder_text(lat, "Latitude (-90 to 90)"); lv_textarea_set_max_length(lat, 16);
-    lv_obj_t *lon = lv_textarea_create(content); lv_obj_set_size(lon, LV_PCT(100), 52); lv_textarea_set_one_line(lon, true); lv_textarea_set_placeholder_text(lon, "Longitude (-180 to 180)"); lv_textarea_set_max_length(lon, 16);
-    for (lv_obj_t *field : {city, lat, lon}) lv_obj_add_event_cb(field, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
-    auto set_manual_enabled = [city, lat, lon](bool enabled) { for (lv_obj_t *field : {city, lat, lon}) { if (enabled) lv_obj_clear_state(field, LV_STATE_DISABLED); else lv_obj_add_state(field, LV_STATE_DISABLED); } };
-    set_manual_enabled(!crystal_weather_location_automatic());
-    lv_obj_add_event_cb(automatic, [](lv_event_t *e) {
-        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
-        crystal_weather_set_automatic(enabled);
-        lv_obj_t *content_obj = lv_obj_get_parent(lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))));
-        for (uint32_t i = 1; i <= 3; ++i) {
-            lv_obj_t *field = lv_obj_get_child(content_obj, i);
-            if (field != nullptr) {
-                if (enabled) lv_obj_add_state(field, LV_STATE_DISABLED);
-                else lv_obj_clear_state(field, LV_STATE_DISABLED);
-            }
+    s_location_form.city = lv_textarea_create(content);
+    lv_obj_set_size(s_location_form.city, LV_PCT(100), 52);
+    lv_textarea_set_one_line(s_location_form.city, true);
+    lv_textarea_set_placeholder_text(s_location_form.city, "City label for display (required)");
+    lv_textarea_set_max_length(s_location_form.city, 23);
+    if (hal().storage != nullptr) {
+        char city[24] = {};
+        size_t length = sizeof(city);
+        if (hal().storage->get("weather.city", city, &length)) {
+            city[length < sizeof(city) ? length : sizeof(city) - 1] = '\0';
+            lv_textarea_set_text(s_location_form.city, city);
         }
-        settings_row_set_summary(s_region_location_row, enabled ? "Automatic" : "Manual");
-        settings_row_set_summary(s_root_region_row, enabled ? current_timezone_label() : "Manual location");
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+    s_location_form.latitude = lv_textarea_create(content);
+    lv_obj_set_size(s_location_form.latitude, LV_PCT(100), 52);
+    lv_textarea_set_one_line(s_location_form.latitude, true);
+    lv_textarea_set_placeholder_text(s_location_form.latitude, "Latitude -90 to 90 (required)");
+    lv_textarea_set_max_length(s_location_form.latitude, 16);
+    s_location_form.longitude = lv_textarea_create(content);
+    lv_obj_set_size(s_location_form.longitude, LV_PCT(100), 52);
+    lv_textarea_set_one_line(s_location_form.longitude, true);
+    lv_textarea_set_placeholder_text(s_location_form.longitude, "Longitude -180 to 180 (required)");
+    lv_textarea_set_max_length(s_location_form.longitude, 16);
+    if (hal().storage != nullptr) {
+        double latitude = 0.0;
+        double longitude = 0.0;
+        size_t length = sizeof(latitude);
+        const bool has_latitude = hal().storage->get("weather.lat", &latitude, &length) &&
+                                  length == sizeof(latitude);
+        length = sizeof(longitude);
+        const bool has_longitude = hal().storage->get("weather.lon", &longitude, &length) &&
+                                   length == sizeof(longitude);
+        char coordinate[24] = {};
+        if (has_latitude && std::isfinite(latitude)) {
+            snprintf(coordinate, sizeof(coordinate), "%.6f", latitude);
+            lv_textarea_set_text(s_location_form.latitude, coordinate);
+        }
+        if (has_longitude && std::isfinite(longitude)) {
+            snprintf(coordinate, sizeof(coordinate), "%.6f", longitude);
+            lv_textarea_set_text(s_location_form.longitude, coordinate);
+        }
+    }
+    for (lv_obj_t *field : {s_location_form.city, s_location_form.latitude,
+                            s_location_form.longitude}) {
+        lv_obj_add_event_cb(field, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    }
+    set_location_fields_enabled(!crystal_weather_location_automatic());
+    lv_obj_add_event_cb(automatic, location_mode_changed, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *apply = settings_row(content, "Apply Manual Location", "Refreshes Weather immediately");
-    lv_obj_add_event_cb(apply, [](lv_event_t *e) {
-        lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e)));
-        lv_obj_t *city_field = lv_obj_get_child(content_obj, 1);
-        lv_obj_t *lat_field = lv_obj_get_child(content_obj, 2);
-        lv_obj_t *lon_field = lv_obj_get_child(content_obj, 3);
-        const char *lat_text = lv_textarea_get_text(lat_field);
-        const char *lon_text = lv_textarea_get_text(lon_field);
-        if (lat_text == nullptr || lat_text[0] == '\0' || lon_text == nullptr || lon_text[0] == '\0') return;
-        char *end = nullptr;
-        const double latitude = strtod(lat_text, &end);
-        if (end == nullptr || *end != '\0') return;
-        const double longitude = strtod(lon_text, &end);
-        if (end == nullptr || *end != '\0') return;
-        if (crystal_weather_set_location(latitude, longitude, lv_textarea_get_text(city_field))) {
-            settings_row_set_summary(s_region_location_row, "Manual");
-            settings_row_set_summary(s_root_region_row, "Manual location");
-            system_page_pop();
-        }
-    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(apply, location_apply, LV_EVENT_CLICKED, nullptr);
+    s_location_form.status = settings_status_label(content);
+}
+
+bool parse_digits(const char *text, size_t offset, size_t count, int *out)
+{
+    if (text == nullptr || out == nullptr) return false;
+    int value = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const char c = text[offset + i];
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + c - '0';
+    }
+    *out = value;
+    return true;
+}
+
+void manual_time_apply(lv_event_t *)
+{
+    if (s_manual_time_form.date == nullptr || s_manual_time_form.clock == nullptr ||
+            s_manual_time_form.status == nullptr) return;
+    const char *date = lv_textarea_get_text(s_manual_time_form.date);
+    const char *clock = lv_textarea_get_text(s_manual_time_form.clock);
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    if (date == nullptr || clock == nullptr || strlen(date) != 10 || strlen(clock) != 5 ||
+            date[4] != '-' || date[7] != '-' || clock[2] != ':' ||
+            !parse_digits(date, 0, 4, &year) || !parse_digits(date, 5, 2, &month) ||
+            !parse_digits(date, 8, 2, &day) || !parse_digits(clock, 0, 2, &hour) ||
+            !parse_digits(clock, 3, 2, &minute)) {
+        lv_label_set_text(s_manual_time_form.status, "Use YYYY-MM-DD and HH:MM");
+        return;
+    }
+
+    struct tm value = {};
+    value.tm_year = year - 1900;
+    value.tm_mon = month - 1;
+    value.tm_mday = day;
+    value.tm_hour = hour;
+    value.tm_min = minute;
+    value.tm_isdst = -1;
+    struct tm normalized = value;
+    const time_t epoch = mktime(&normalized);
+    if (epoch < 1577836800 || normalized.tm_year != value.tm_year ||
+            normalized.tm_mon != value.tm_mon || normalized.tm_mday != value.tm_mday ||
+            normalized.tm_hour != value.tm_hour || normalized.tm_min != value.tm_min) {
+        lv_label_set_text(s_manual_time_form.status, "Check the date and time values");
+        return;
+    }
+    if (!crystal_time_set(&value)) {
+        lv_label_set_text(s_manual_time_form.status, "Could not update the system clock and RTC");
+        return;
+    }
+    system_page_pop();
 }
 
 void settings_push_manual_time()
 {
     lv_obj_t *content = system_page_push("Set Date & Time");
     if (content == nullptr) return;
-    lv_obj_t *date = lv_textarea_create(content); lv_obj_set_size(date, LV_PCT(100), 52); lv_textarea_set_one_line(date, true); lv_textarea_set_placeholder_text(date, "YYYY-MM-DD"); lv_textarea_set_max_length(date, 10);
-    lv_obj_t *clock = lv_textarea_create(content); lv_obj_set_size(clock, LV_PCT(100), 52); lv_textarea_set_one_line(clock, true); lv_textarea_set_placeholder_text(clock, "HH:MM"); lv_textarea_set_max_length(clock, 5);
-    lv_obj_add_event_cb(date, ip_field_focus, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(clock, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    s_manual_time_form.page = lv_obj_get_parent(content);
+    s_manual_time_form.date = lv_textarea_create(content);
+    lv_obj_set_size(s_manual_time_form.date, LV_PCT(100), 52);
+    lv_textarea_set_one_line(s_manual_time_form.date, true);
+    lv_textarea_set_placeholder_text(s_manual_time_form.date, "YYYY-MM-DD");
+    lv_textarea_set_max_length(s_manual_time_form.date, 10);
+    s_manual_time_form.clock = lv_textarea_create(content);
+    lv_obj_set_size(s_manual_time_form.clock, LV_PCT(100), 52);
+    lv_textarea_set_one_line(s_manual_time_form.clock, true);
+    lv_textarea_set_placeholder_text(s_manual_time_form.clock, "HH:MM");
+    lv_textarea_set_max_length(s_manual_time_form.clock, 5);
+    lv_obj_add_event_cb(s_manual_time_form.date, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(s_manual_time_form.clock, ip_field_focus, LV_EVENT_FOCUSED, nullptr);
     lv_obj_t *apply = settings_row(content, "Set Date & Time", "Writes the system clock and RTC");
-    lv_obj_add_event_cb(apply, [](lv_event_t *e) { lv_obj_t *content_obj = lv_obj_get_parent(static_cast<lv_obj_t *>(lv_event_get_target(e))); int year = 0, month = 0, day = 0, hour = 0, minute = 0; if (sscanf(lv_textarea_get_text(lv_obj_get_child(content_obj, 0)), "%d-%d-%d", &year, &month, &day) != 3 || sscanf(lv_textarea_get_text(lv_obj_get_child(content_obj, 1)), "%d:%d", &hour, &minute) != 2 || year < 2020 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return; struct tm value = {}; value.tm_year = year - 1900; value.tm_mon = month - 1; value.tm_mday = day; value.tm_hour = hour; value.tm_min = minute; value.tm_isdst = -1; if (crystal_time_set(&value)) system_page_pop(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(apply, manual_time_apply, LV_EVENT_CLICKED, nullptr);
+    s_manual_time_form.status = settings_status_label(content);
 }
 
 void settings_push_region_time()
@@ -2454,7 +2651,9 @@ void settings_push_region_time()
     lv_obj_t *manual = settings_row(content, "Set Date & Time", crystal_time_auto_enabled() ? "Turn automatic time off first" : "Manual");
     s_region_manual_time_row = manual;
     if (crystal_time_auto_enabled()) lv_obj_add_state(manual, LV_STATE_DISABLED);
-    else lv_obj_add_event_cb(manual, [](lv_event_t *) { settings_push_manual_time(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(manual, [](lv_event_t *) {
+        if (!crystal_time_auto_enabled()) settings_push_manual_time();
+    }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *location = settings_row(content, "Location", crystal_weather_location_automatic() ? "Automatic" : "Manual");
     s_region_location_row = location;
     lv_obj_add_event_cb(location, [](lv_event_t *) { settings_push_location(); }, LV_EVENT_CLICKED, nullptr);

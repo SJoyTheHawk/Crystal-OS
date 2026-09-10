@@ -319,8 +319,10 @@ contains the intended display options.
 
 ## Phase 11: Settings and power
 
-Device pass run 2026-09-10 on the physical panel. Nine of thirteen rows pass; the
-four open items are tracked in `PHASE_11_BUG_FIXES_V3.md`.
+Device pass run 2026-09-10 on the physical panel. The five V3 fixes were
+implemented and build-verified on 2026-09-11. The V3 rerun passed the network,
+time, location, shared-keyboard, and disabled-Recents regressions. The final timer
+alert-policy test passed on 2026-09-11.
 
 - [x] The ESP-IDF firmware builds and fits the smallest OTA partition.
 - [x] The standalone host HAL mock compiles against the current interfaces.
@@ -334,11 +336,11 @@ four open items are tracked in `PHASE_11_BUG_FIXES_V3.md`.
   `PHASE_11_SETTINGS.md` §2.1 for why the two differ.)
 - [x] Long-pressing the quick-panel WiFi tile opens WiFi Networks with Network
   and Settings beneath it.
-- [ ] A validated static IP, gateway, mask, and primary DNS survive reboot and
+- [x] A validated static IP, gateway, mask, and primary DNS survive reboot and
   Weather still resolves hostnames; invalid and incomplete forms never apply.
-  **Static config applies and survives reboot, and validation rejects bad forms.
-  Open: applying with DHCP on zeroes the five stored addresses, so the static
-  values are gone at the next boot.** V3 bug 2.
+  **V3 bugs 1 and 2 passed:** DHCP applies immediately and persists only the mode,
+  while the stored static tuple is retained and can be applied again without
+  retyping it.
 - [x] Dim and off timeouts work with Energy Saving off. With it on, the effective
   timeouts are halved and current draw is measurably lower.
 - [x] Auto Dimming off holds the panel at the user's brightness whatever the
@@ -347,25 +349,24 @@ four open items are tracked in `PHASE_11_BUG_FIXES_V3.md`.
   in both directions, including restoring saved brightness after Energy Saving.
 - [x] Every timezone choice applies to the status bar without reboot and survives
   reboot; DST-observing entries cross a known transition correctly.
-- [ ] Automatic/manual time and location modes persist, manual time updates the
+- [x] Automatic/manual time and location modes persist, manual time updates the
   RTC, and a manual location triggers an immediate Weather refresh.
-  **Blocked: Set Date & Time is unreachable — the row only binds its handler when
-  automatic time is already off at page build, so turning the switch off in place
-  leaves a dead row. Manual location rejects a city name with no message; it needs
-  latitude and longitude, and there is no geocoding.** V3 bugs 3 and 4.
-- [ ] Timer alert policy and Test Sound behave independently as specified.
-  **Test Sound verified. The policy half needs an app that raises the timer chime
-  to confirm `sound.alerts` suppresses it; deferred to the Clock app timer.**
+  **V3 bugs 3 and 4 passed:** the manual-time row remains bound as its state
+  changes, both forms report actionable validation failures, the RTC restores
+  manual time offline, manual Location refreshes Weather, and saved Location
+  values repopulate the form when it is re-entered.
+- [x] Timer alert policy and Test Sound behave independently as specified. On the
+  physical panel, timer expiry chimed with alerts enabled, remained silent with
+  alerts disabled, and Test Sound remained available independently.
 - [x] About, Legal, Device Status refresh, and restart confirmation work without
   adding a battery polling timer.
 
-Not part of this gate, tracked in V3: the DHCP switch does not apply until Apply
-is pressed (bug 1), and a second blinking cursor can be left behind in a
-previously focused text field (bug 5).
+The focused V3 rerun also confirms saved values appear when Location is re-entered,
+the cursor remains with the selected field while the keyboard moves the viewport,
+and the disabled-Recents side-switch paths remain stable.
 
 Completion gate: all hardware-dependent rows above pass on the physical panel.
-Phase 11 stays open until the four V3 defects are fixed and the three unticked
-rows above pass.
+All Phase 11 rows and V3 regressions pass. Phase 11 is closed.
 
 ## Post-cleanup checklist (2026-09-05)
 

@@ -12,6 +12,12 @@ why, and the fix. Everything here was traced in the source rather than inferred
 from the symptom — the LVGL findings in bug 5 in particular are against the
 vendored 8.4.0 tree, not upstream master.
 
+**Closed, 2026-09-11:** all five fixes are implemented and the
+firmware passes both incremental and full-clean builds. Brookesia 0.4.2 is now a
+project-local component, so its disabled-Recents guards survive managed dependency
+regeneration. The complete V3 physical-panel rerun and the independent timer
+alert-policy test pass. Phase 11 is closed.
+
 | # | Defect | Blocks a validation row | Where |
 |---|---|---|---|
 | 1 | DHCP switch does not apply until Apply is pressed | no (behaviour) | `crystal_shell.cpp:2170` |
@@ -562,43 +568,113 @@ and it is already there.
 
 ---
 
-## Still open, not a code bug: the Brookesia Recents patch is not durable
+## Closed: the Brookesia Recents patch is durable
 
-Not part of the five, but it holds the phase in the same way and belongs on the
-work-list.
+This item is no longer open. Crystal owns the pinned Brookesia 0.4.2 component at
+`components/esp-brookesia`, including the disabled-Recents null-safety guards.
+ESP-IDF gives this project-local component precedence over the registry-managed
+copy, so dependency regeneration cannot replace the fix.
 
-`managed_components/` is git-ignored (`.gitignore:2`), and the Recents null-safety
-fix in `esp_brookesia_phone_manager.cpp` was force-added past that ignore in
-`62256ad`. It is tracked, so it survives a clone — but a dependency re-resolve or a
-`fullclean` regenerates the directory and silently reverts it. With
-`enable_recents_screen = 0` in `main.cpp:119`, the result is a null dereference on
-the next side-switch, not a compile error, so the failure looks like a new gesture
-bug rather than a missing patch.
+The old force-tracked manager source under `managed_components/` was removed. On
+2026-09-11, `idf.py fullclean` removed and resolved managed dependencies, configure
+selected `components/esp-brookesia`, and the subsequent firmware build completed.
+The durable override is also recorded in `PHASE_11_SETTINGS.md` §11 and
+`HOME_PILL_FEEDBACK_AND_RECENTS_HOTFIX.md`.
 
-Options, cheapest first:
+The durability problem is therefore closed. Repeated physical side-switching is
+still an acceptance test for the Recents behavior, not outstanding implementation
+work.
 
-1. **A durable component override.** Copy the file into a Crystal-owned component
-   that takes precedence over the managed one, so dependency regeneration cannot
-   touch it. This is the real fix.
-2. **A patch file plus a build step** that reapplies it, which at least fails loudly.
-3. **Document the reapply step** in `PHASE_11_SETTINGS.md` and accept the risk. This
-   is what `HOME_PILL_FEEDBACK_AND_RECENTS_HOTFIX.md` currently says to do, and it
-   is the weakest of the three because nothing enforces it.
+## Bug Fixes V3 checklist
 
-Whichever is chosen, record it in `PHASE_11_SETTINGS.md` §11 as a document edit that
-is part of the phase.
+### Build and durability
 
-## Closing Phase 11
+- [x] The standalone HAL mock passes its C++ syntax check.
+- [x] An incremental ESP-IDF firmware build completes.
+- [x] `idf.py fullclean` followed by a clean build completes.
+- [x] Clean configure selects `components/esp-brookesia` instead of the managed
+  Brookesia copy.
+- [x] The application image fits the smallest 5 MB OTA slot.
+- [x] The application image flashes with hash verification and boots without a
+  panic, watchdog reset, or reboot loop.
 
-After these land:
+### Bugs 1 and 2: DHCP and saved static configuration
 
-1. Rebuild and reflash. Confirm size still fits the 5 MB OTA slots.
-2. Re-run the three unticked hardware rows in `VALIDATION_CHECKLIST.md` §Phase 11,
-   plus the Phase 10 keyboard regression rows that bug 5 touches.
-3. The timer-alert-policy row needs an app that raises the chime. Either wire the
-   Clock app's timer to it or move that row to the phase that ships the timer, and
-   say which in the checklist rather than leaving it unticked with no owner.
-4. Tick Phase 11 in `README.md` and remove the pointer to this document.
+- [x] Apply a valid static IP, subnet mask, gateway, and primary DNS; reboot and
+  confirm all values survive and Weather still resolves hostnames.
+- [x] Turn Automatic on and confirm DHCP applies immediately without pressing
+  Apply; Connection Details changes to the leased address after reconnection.
+- [x] Reboot in Automatic mode and confirm Automatic remains selected while the
+  saved static fields retain their previous values.
+- [x] Switch back to Manual, press Apply, and confirm the retained static
+  configuration applies without retyping it.
+- [x] Confirm blank, malformed, or internally inconsistent required Manual fields
+  show an error and never reach the network interface.
+- [x] Toggle Automatic and Manual repeatedly and confirm reconnection completes
+  without a crash or an orphaned keyboard.
 
+### Bug 3: manual date and time
 
+- [x] On a fresh Region & Time page, turn Set Time Automatically off and confirm
+  Set Date & Time opens immediately without leaving and re-entering the page.
+- [x] Re-enter Region & Time with automatic time already off and confirm the row
+  still opens.
+- [x] Turn automatic time on and confirm the row is disabled and cannot open.
+- [x] Enter malformed text and confirm the format message appears without changing
+  the clock.
+- [x] Enter an impossible or out-of-range date/time and confirm the value message
+  appears without changing the clock.
+- [x] Apply a valid date/time, reboot without network access, and confirm the RTC
+  restores it.
+- [x] Re-enable automatic time and confirm an in-flight synchronization cannot
+  overwrite a later manual commit unexpectedly.
 
+### Bug 4: manual location
+
+- [x] Enter only a city label and confirm Apply explains that latitude and
+  longitude are required.
+- [x] Enter non-numeric latitude or longitude and confirm the corresponding parse
+  message appears without committing.
+- [x] Enter coordinates outside `-90..90` latitude or `-180..180` longitude and
+  confirm the range message appears without committing.
+- [x] Apply a valid city label and coordinates and confirm the page closes, the
+  Region & Time summary reads Manual, and Weather refreshes immediately.
+- [x] Reboot and confirm manual location mode and values survive.
+- [x] Re-enter the Location page and confirm its city, latitude, and longitude
+  fields are populated from the saved manual values. **Follow-up implemented:**
+  the page now hydrates these fields from the same NVS values used by Weather,
+  following IP Settings' stored-field initialization pattern.
+- [x] Return Location to Automatic and confirm automatic resolution resumes and
+  survives reboot.
+
+### Bug 5: keyboard focus and cursor ownership
+
+- [x] In IP Settings, tap all five fields in sequence and confirm exactly one
+  cursor blinks at a time.
+- [x] In Location, move among city, latitude, and longitude and confirm no cursor
+  remains in the previous field, including after toggling Automatic.
+  **Follow-up implemented:** moving between fields in the same viewport now
+  rebinds the existing keyboard instead of restoring and resizing the page during
+  the focus handoff.
+- [x] Close the keyboard using Done, a background tap, and subpage Back; confirm no
+  field is left focused after each route.
+- [x] Switch fields and type; confirm text always enters the field showing the
+  cursor.
+- [x] Re-run the Phase 10 keyboard checks for viewport restoration, scroll
+  position, the WiFi credential dialog, and Calculator.
+
+### Disabled Recents regression
+
+- [x] Repeatedly side-switch among apps with `max_running_num = 1`; confirm the old
+  app closes, the new app starts, and no null dereference or reboot occurs.
+- [x] Perform long bottom-edge drag-and-hold gestures and confirm Recents never
+  opens or changes app lifecycle unexpectedly.
+
+### Phase 11 closure
+
+- [x] Complete the remaining hardware row in `VALIDATION_CHECKLIST.md`
+  §Phase 11: run one Clock timer expiry with alerts enabled and one disabled.
+- [x] Confirm every V3 bug-fix and regression item above passes on the physical
+  panel.
+- [x] Mark Phase 11 complete in `README.md`; retain this document as the defect and
+  validation record rather than an open work-list.

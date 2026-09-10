@@ -7,3 +7,8 @@
 /.cache/
 *.elf
 .DS_Store
+
+# Registry integrity metadata no longer matches this locally patched component.
+# Keep the vendored source itself tracked as Crystal's durable Brookesia override.
+/components/esp-brookesia/.component_hash
+/components/esp-brookesia/CHECKSUMS.json

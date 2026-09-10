@@ -12,12 +12,12 @@ Scope is the full proposal: five root categories, all must-ship and should-ship
 rows. The build order in §12 is arranged so anything cut late is cut cleanly,
 because the exit criteria land in the first three steps.
 
-**Status (2026-09-10).** Every §12 step is implemented and the device pass is done
-except two rows. Four defects are open and hold the phase: see
-`PHASE_11_BUG_FIXES_V3.md`, which is the work-list for closing it. `D8` in §0 and
-the Home-pill semantics in §2.1 were both added *after* the original guide shipped
-and reflect what is on the device; where an older Phase 11 document disagrees with
-this one, this one is current.
+**Closed (2026-09-11).** Every §12 step, Phase 11 validation row, V3 defect fix,
+and focused regression passes on the physical panel. `PHASE_11_BUG_FIXES_V3.md`
+is retained as the defect and validation record. `D8` in §0 and the Home-pill
+semantics in §2.1 were both added *after* the original guide shipped and reflect
+what is on the device; where an older Phase 11 document disagrees with this one,
+this one is current.
 
 ## 0. Decisions this phase settles
 
@@ -957,9 +957,10 @@ not follow-up:
 - `CODE_GUIDE.md` §Phase 11 — replace with a pointer to this document.
 - **Done during implementation:** `DESIGN.md` §4 and §8 carry D8 and the Home-pill
   rule; `VALIDATION_CHECKLIST.md` holds the 2026-09-10 device results;
-  `PHASE_11_BUG_FIXES_V2.md` Bug 3 is marked superseded. Outstanding: whichever
-  durability route is chosen for the Brookesia Recents patch
-  (`PHASE_11_BUG_FIXES_V3.md`) needs recording here.
+  `PHASE_11_BUG_FIXES_V2.md` Bug 3 is marked superseded. The Brookesia 0.4.2
+  component is now vendored at `components/esp-brookesia`, where project-component
+  precedence makes its disabled-Recents null guards survive dependency regeneration
+  and `idf.py fullclean`. `LOCAL_PATCHES.md` in that component records the patch.
 - `IMPLEMENTATION_PLAN.md` §Phase 11 — the category list and exit criteria.
 - `README.md` — tick Phase 11 when the exit criteria pass.
 - `VALIDATION_CHECKLIST.md` — the regression rows from §13.
@@ -1024,4 +1025,3 @@ From `IMPLEMENTATION_PLAN.md`, plus what the wider scope adds:
 - A keyboard left open on the manual-IP form does not survive a subpage change.
 - No `lv_*` call from the service task, and no I2C poll added to a settings page.
 - The firmware builds; the simulator builds.
-
