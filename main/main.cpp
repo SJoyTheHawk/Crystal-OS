@@ -116,6 +116,7 @@ extern "C" void app_main(void)
         ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
     stylesheet->core.manager.app.max_running_num = 1;
+    stylesheet->home.flags.enable_recents_screen = 0;
     stylesheet->manager.gesture.threshold.direction_horizon = 12;
     stylesheet->manager.gesture.threshold.direction_vertical = 12;
     stylesheet->manager.gesture.threshold.horizontal_edge = 24;
