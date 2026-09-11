@@ -19,13 +19,27 @@ crystal-os/
 │   ├── crystal_core/          # Phase 3 — event queue, service task, toast, time
 │   ├── crystal_app/           # Phase 4 — CrystalApp, CrystalState
 │   ├── crystal_shell/         # Phases 6-10 — arbiter, switcher, quick settings, keyboard
-│   ├── bsp_extra/             # reused from the reference
-│   └── apps/
-│       ├── app_table.cpp      # Phase 5 — the compiled-in catalog
-│       └── <app>/
+│   ├── crystal_registry/      # Phase 5 — enabled/slot flags over NVS
+│   └── <app>_app/             # one component per app, not a shared apps/ dir
 ├── sim/                       # Phase 2 — LVGL SDL host
 └── assets/                    # → SPIFFS, not compiled in
 ```
+
+**As built, not as drawn.** There is no `components/apps/app_table.cpp` and no
+`bsp_extra` component: the catalog is `kApps` in `main/main.cpp:33`, each app is a
+top-level component (`clock_app`, `weather_app`, `calculator_app`, `dev_tester`),
+and codec/volume access lives behind `crystal_hal_set_volume()`. `hello_app`,
+`state_test_app`, and `perf_spike` are still on disk but appear in neither
+`main/CMakeLists.txt`'s `REQUIRES` nor `kApps`, so they are not linked. They are
+kept as references; restoring one means editing both places.
+
+`crystal_shell` is the large component — ~3000 lines carrying the arbiter, the
+Phase 7.5 crossover, the quick panel, the keyboard host, the whole Settings page
+stack, and the WiFi page. New shell surfaces (including Phase 12's update page)
+land there and build on `system_page_push()`. Splitting it is not free: the
+Settings pages, the arbiter's suppression flags, and the crossover all share
+file-scope state, so a split has to move that state deliberately rather than by
+cutting the file in half.
 
 ## Phase 0 — boot (complete)
 
@@ -75,12 +89,8 @@ extern "C" void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    ESP_LOGI(TAG, "reset reason: %d", esp_reset_reason());   // Phase 12
-    crystal_coredump_check();                                // Phase 12
-    ESP_ERROR_CHECK(bsp_spiffs_mount());
-    ESP_ERROR_CHECK(bsp_extra_codec_init());
-
     crystal_time_init();          // PCF85063 -> settimeofday, before first frame
+    ESP_ERROR_CHECK(bsp_spiffs_mount());
 
     lv_display_t *disp = bsp_display_start();
     if (disp && disp->driver) {
@@ -101,14 +111,26 @@ extern "C" void app_main(void)
     phone->registerLvUnlockCallback((ESP_Brookesia_LvUnlockCallback_t)bsp_display_unlock);
     phone->begin();
 
-    crystal_core_init(phone);     // event queue + service task + toast layer
-    crystal_registry_install(phone);   // Phase 5: only enabled apps
+    // Status-bar callbacks are passed in, so crystal_core never includes Brookesia.
+    crystal_core_init(display, update_status_clock, update_status_connectivity,
+                      update_status_battery, phone);
+    crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0]));
+    crystal_shell_init(phone);
 
+    lv_refr_now(display);
     bsp_display_unlock();
-
-    crystal_wifi_start();         // returns immediately; never blocks first frame
+    // WiFi is not started here: service_task calls hal().wifi->start() after a
+    // 1200 ms delay, so nothing on the boot path can block the first frame.
 }
 ```
+
+The shipped `app_main` differs from earlier revisions of this section in three
+ways worth stating, because the old shapes are still quoted elsewhere: there is no
+`crystal_nvs_*` API (shell state is `hal().storage`, app state is `CrystalState`),
+`crystal_core_init()` takes the display plus three status-bar callbacks rather than
+the phone, and `crystal_registry_install()` takes the app table explicitly. The
+Phase 12 boot calls are added to this function in the order given under
+"Phase 12 — reliability" below.
 
 `crystal_rounder_cb` is the reference's `my_rounder_cb` unchanged:
 
@@ -264,8 +286,9 @@ void crystal_time_init(void)
         struct timeval tv = { .tv_sec = mktime(&t), .tv_usec = 0 };
         settimeofday(&tv, nullptr);
     }
-    char tz[40];
-    crystal_nvs_get_str("tz", tz, sizeof(tz), "UTC0");   // Phase 11 setting
+    char tz[40] = "UTC0";                   // fallback if nothing is stored
+    size_t length = sizeof(tz);
+    (void)hal().storage->get("tz", tz, &length);   // Phase 11 setting
     setenv("TZ", tz, 1);
     tzset();
 }
@@ -292,10 +315,12 @@ plus `onBack()`. `onStart()`/`onStop()` are declared but not dispatched in v1 (s
 not dispatch app hooks. Because
 Brookesia owns screen creation and recycling, `onCreate()` builds the active
 screen tree whenever `run()` creates a screen; app data belongs in
-`CrystalState`, not in LVGL objects. `StateTestApp` is the reference conversion
-used to verify that a counter survives app switching and reboot. Each lifecycle
-entry is logged with the app name under the `crystal_app` tag; resumes over
-80 ms also emit a warning.
+`CrystalState`, not in LVGL objects. `StateTestApp` was the original conversion used
+to verify that a counter survives app switching and reboot; it is still in
+`components/state_test_app` but is no longer linked, so read `CalculatorApp` for the
+current reference conversion — its in-progress formula is the same property, tested by
+a shipping app. Each lifecycle entry is logged with the app name under the
+`crystal_app` tag; resumes over 80 ms also emit a warning.
 
 `run()` and `close()` are sealed `final` so no app can bypass the lifecycle. The
 reference's apps call `getVisualArea()` themselves and one of them hardcodes a
@@ -393,7 +418,14 @@ Five changes, all inside `crystal_app` except the `max_running_num` override.
 A state member makes the ordering enforceable rather than assumed:
 
 ```cpp
-enum class LifecycleState { INSTALLED, CREATED, STARTED, RESUMED, PAUSED, DESTROYED };
+// As shipped, in crystal_app.hpp:33 — a nested enum, mixed case, not SHOUTING.
+class CrystalApp : public ESP_Brookesia_PhoneApp {
+public:
+    enum class LifecycleState : uint8_t {
+        Installed, Created, Started, Resumed, Paused, Destroyed,
+    };
+    LifecycleState lifecycle_state() const;
+};
 ```
 
 **`onPause()` before `onDestroy()`.** The guarantee Android gives and Phase 4
@@ -402,14 +434,14 @@ does not. `close()` becomes:
 ```cpp
 bool CrystalApp::close()
 {
-    if (state_machine_ != LifecycleState::PAUSED) {
+    if (lifecycle_state_ != LifecycleState::Paused) {
         // Not already paused by Brookesia: this is the common path (return to
         // launcher, or destroy-on-switch). Give the app its chance to write.
         dispatch_pause();
     }
     ESP_LOGI(TAG, "%s lifecycle: onDestroy", getName());
     (void)onDestroy();                      // see "return values" below
-    state_machine_ = LifecycleState::DESTROYED;
+    lifecycle_state_ = LifecycleState::Destroyed;
     return true;
 }
 ```
@@ -435,8 +467,8 @@ could override them and step outside the framework. They are sealed and only
 update the framework state:
 
 ```cpp
-bool init()   final { state_machine_ = LifecycleState::INSTALLED; return true; }
-bool deinit() final { state_machine_ = LifecycleState::DESTROYED; return true; }
+bool init()   final { lifecycle_state_ = LifecycleState::Installed; return true; }
+bool deinit() final { lifecycle_state_ = LifecycleState::Destroyed; return true; }
 ```
 
 There are no `onInstall()`/`onUninstall()` app hooks. Once-per-boot work belongs
@@ -445,16 +477,26 @@ reconcile its service and app-owned timer keys without repeating the reset on
 every launch. Registry installation and Phase 13 clear-data are platform
 operations, not app lifecycle callbacks.
 
-**Occlusion hooks.** Defined here, fired by the Phase 7 arbiter — it is the only
-component that knows what covers what. Until Phase 7 they are never called.
+**Occlusion hooks — declared, never fired.** Phase 4.5 provisionally assigned the
+call sites to the Phase 7 arbiter. Phase 7 closed without them and **v1 does not
+dispatch them at all**: the lifecycle is four states plus `onBack`, and that is
+settled (`DESIGN.md` §5.5). They stay as base-class no-ops so a later version can
+fire them without an ABI break.
 
 ```cpp
-virtual bool onStart() { return true; }  // becoming visible again
-virtual bool onStop()  { return true; }  // fully occluded: stop timers, drop work
+virtual bool onStart() { return true; }  // reserved: becoming visible again
+virtual bool onStop()  { return true; }  // reserved: fully occluded
 ```
 
-Clock's 1s `lv_timer` is the motivating case: redrawing behind an opaque
-quick-settings panel costs bandwidth on a panel that measured 7-8 FPS at G1.
+An app must not override either one expecting to be called. Anything that has to
+happen when the app stops being foreground goes in `onPause()`, which does fire, and
+on this device is the same event — a card is destroyed on switch, so there is no
+visible-but-not-foreground state to distinguish. Clock's 1s `lv_timer` is deleted in
+`onPause()` for exactly this reason.
+
+The reserved case is screen-off, which the four states genuinely cannot express:
+backlight off means the card is invisible, but tearing down its tree would make wake
+slow. If that ever ships, `onStop()` is where it goes.
 
 **Return values are advisory.** Brookesia force-closes an app whose `pause()`
 returns `false` (`core_manager.cpp:279`), which punishes an app for honestly
@@ -467,7 +509,7 @@ void CrystalApp::dispatch_pause()
     if (!onPause()) {
         ESP_LOGW(TAG, "%s onPause reported failure; continuing teardown", getName());
     }
-    state_machine_ = LifecycleState::PAUSED;
+    lifecycle_state_ = LifecycleState::Paused;
 }
 ```
 
@@ -496,7 +538,7 @@ existing `crystal` namespace. App IDs therefore must remain stable across
 firmware updates.
 
 ```cpp
-// components/apps/app_table.cpp
+// main/main.cpp — the table ships as CrystalAppEntry with an explicit slot
 struct AppEntry {
     const char *id;
     CrystalApp *(*factory)();
@@ -518,10 +560,9 @@ void crystal_registry_install(ESP_Brookesia_Phone *phone)
 
     for (auto &e : kApps) {
         char key[32];
-        snprintf(key, sizeof(key), "app.%s.en", e.id);
-        if (!crystal_nvs_get_bool(key, e.default_enabled)) continue;   // "uninstalled"
-        snprintf(key, sizeof(key), "app.%s.slot", e.id);
-        rows.push_back({ &e, crystal_nvs_get_i32(key, 999) });
+        // Hashed keys, not "app.<id>.en": NVS caps a key at 15 characters.
+        if (!crystal_registry_enabled(e.id, e.default_enabled)) continue;  // "uninstalled"
+        rows.push_back({ &e, crystal_registry_slot(e.id, 999) });
     }
     std::sort(rows.begin(), rows.end(),
               [](const Row &a, const Row &b) { return a.slot < b.slot; });
@@ -747,8 +788,11 @@ void quick_settings_on_release(int y_offset)
 static void brightness_bar_cb(lv_event_t *e)
 {
     int pct = lv_bar_get_value(lv_event_get_target(e));
-    hal().brightness->set(pct);          // clamp lives in the HAL, not here
-    crystal_nvs_set_i32("brightness", pct);
+    // As shipped this goes through crystal_brightness_set(), which owns both the
+    // HAL call and the persistence so the ramp and the saved value cannot diverge.
+    const uint8_t level = (uint8_t)pct;
+    hal().brightness->set(level);        // clamp lives in the HAL, not here
+    (void)hal().storage->set("brightness", &level, sizeof(level));
 }
 ```
 
@@ -826,13 +870,23 @@ Expiry belongs to the service, not the app:
 // crystal_service, core 0 — runs whether or not Clock exists
 static void service_tick_1s(void)
 {
-    int32_t end_at = crystal_nvs_get_i32("app.clock.end_at", 0);
-    if (end_at && time(nullptr) >= end_at) {
-        crystal_nvs_set_i32("app.clock.end_at", 0);
+    int32_t end_at = 0;
+    size_t length = sizeof(end_at);
+    (void)hal().storage->get("timer.end", &end_at, &length);
+    if (end_at != 0 && time(nullptr) >= end_at) {
+        const int32_t cleared = 0;
+        (void)hal().storage->set("timer.end", &cleared, sizeof(cleared));
         crystal_ui_post(UI_EVT_TIMER_EXPIRED, nullptr, 0);   // toast + chime
     }
 }
 ```
+
+The shipped service goes further than this sketch: it keeps the deadline in RAM and
+falls back to a monotonic uptime deadline when the RTC and SNTP have never produced a
+valid wall clock, since a device that does not know the time must still be able to run
+a three-minute timer. Only the wall-clock form is persisted, which is what preserves
+the documented "countdown cleared after reboot" behaviour. The absolute-instant rule
+is the part to copy; the storage call is illustrative.
 
 Paused state stores remaining seconds plus a flag rather than an end time, since
 there is no end instant while paused.
@@ -1568,50 +1622,265 @@ keeps drawing its cursor until something sends it `LV_EVENT_DEFOCUSED` — LVGL 
 
 ## Phase 12 — reliability
 
-The sdkconfig side is done. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`,
-`_DATA_FORMAT_ELF`, and `_CHECKSUM_CRC32` are in `sdkconfig.defaults`, and
-`CONFIG_ESP_COREDUMP_CHECK_BOOT=y` is set, so a corrupt image is rejected before
-you try to read it. What is missing is the boot-time check and the quiet
-surfacing.
+Three coredump options are in `sdkconfig.defaults` — `ENABLE_TO_FLASH`,
+`DATA_FORMAT_ELF`, `CHECKSUM_CRC32`. `CONFIG_ESP_COREDUMP_CHECK_BOOT` is **not**
+written there; it defaults to `y` in IDF, which is the behaviour wanted (a corrupt
+image is rejected before you try to read it) but is worth pinning explicitly, since
+an option you rely on and never state is an option that changes under you on an IDF
+bump.
+
+**One option is missing and it gates an exit criterion.**
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is absent. Without it the bootloader never
+marks a freshly written image `PENDING_VERIFY`, so a bad OTA cannot roll back — it
+just boots and stays broken. Add it in the same change as the OTA path, not after:
+
+```
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+```
+
+Everything else in this phase is new code. It has three parts — the coredump
+report, the validity handshake, and the update path — and they are independent
+enough to land in that order.
+
+### Where the boot calls go
 
 ```cpp
+extern "C" void app_main(void)
+{
+    // ... nvs_flash_init() ...
+
+    ESP_LOGI(TAG, "reset reason: %s", crystal_reset_reason_name());
+    crystal_coredump_check();     // safe here: see below
+
+    crystal_time_init();
+    ESP_ERROR_CHECK(bsp_spiffs_mount());
+    // ... display, phone, core, registry, shell ...
+
+    lv_refr_now(display);
+    bsp_display_unlock();
+}
+```
+
+`crystal_coredump_check()` writes through `hal().storage`, and it is legal this
+early because `s_hal` is a statically initialised table of pointers to
+statically constructed adapters (`crystal_hal.cpp:946`) — `crystal_hal_init()`
+only *restores saved settings*, it does not construct the HAL. Do not read that as
+licence to call any HAL method before `crystal_hal_init()`: brightness and volume
+are un-restored at that point, and the display does not exist at all.
+
+### The coredump report
+
+Two records, written in one pass and read by two different surfaces. The toast
+flag is consumed once; the detail row survives until the next crash.
+
+```cpp
+struct CrystalCrashRecord {          // 15-char NVS key limit: store one blob
+    uint32_t pc;
+    uint32_t reset_reason;           // esp_reset_reason_t at the crash boot
+    int32_t  when;                   // time(nullptr), 0 if the RTC was invalid
+    char     task[16];               // exc_task is already bounded
+};
+
 void crystal_coredump_check(void)
 {
     esp_core_dump_summary_t summary = {};
     if (esp_core_dump_get_summary(&summary) != ESP_OK) return;   // ELF format only
 
-    ESP_LOGE(TAG, "coredump: PC=0x%08lx task=%s",
-             (unsigned long)summary.exc_pc, summary.exc_task);
+    ESP_LOGE(TAG, "coredump: PC=0x%08" PRIx32 " task=%s",
+             summary.exc_pc, summary.exc_task);
 
-    const uint8_t recovered = 1;
+    CrystalCrashRecord record = {};
+    record.pc           = summary.exc_pc;
+    record.reset_reason = (uint32_t)esp_reset_reason();
+    record.when         = (int32_t)time(nullptr);
+    strlcpy(record.task, summary.exc_task, sizeof(record.task));
+
+    const uint8_t pending = 1;
     if (hal().storage != nullptr) {
-        hal().storage->set("recovered", &recovered, sizeof(recovered));
+        (void)hal().storage->set("crash.last", &record, sizeof(record));
+        (void)hal().storage->set("crash.new", &pending, sizeof(pending));
     }
     (void)esp_core_dump_image_erase();      // so it reports exactly once
 }
 ```
 
-Note the storage call: there is no `crystal_nvs_*` API in this tree. Shell-level
-state is `hal().storage`, app state is `CrystalState`.
+`crystal_coredump_check()` runs before `crystal_time_init()`, so `time(nullptr)`
+is whatever the last `settimeofday()` left — usually 0 on a cold boot. That is
+correct rather than unfortunate: a crash timestamp the device cannot vouch for
+should read "unknown", and the Device Status row formats `when == 0` that way
+instead of printing 1 Jan 1970. Moving the check after `crystal_time_init()` to
+"fix" this trades a truthful blank for a plausible lie about when the crash was.
 
-Log `esp_reset_reason()` alongside it — it is the only cheap way to separate a
-panic from a brownout or a watchdog reset, and brownouts on this board look like
-random reboots.
+There is no `crystal_nvs_*` API in this tree: shell state is `hal().storage`, app
+state is `CrystalState`.
+
+**The coredump partition is plaintext.** `NVS_ENCRYPTION` protects NVS, not the
+`coredump` partition — a dump is a register and stack snapshot, so a WiFi password
+still sitting in a stack buffer at crash time is readable with
+`esptool read_flash`. That is acceptable for developer hardware and is a real
+consideration before handing a crashed unit to anyone; erasing the image at boot,
+which this function already does, is most of the mitigation.
+
+### The quiet notice
+
+Reported once, on the boot after the crash, then the flag clears. The toast layer
+already exists, so the surfacing is one queue post — but not from `app_main`, which
+runs before `crystal_core_init()` creates the queue. Post it from `service_task`'s
+startup, in place of the current unconditional "Core services ready":
+
+```cpp
+// service_task, after the 1200 ms settle. The flag is cleared here rather than
+// in crystal_coredump_check(), so a crash during boot still gets reported on the
+// next successful boot instead of being swallowed by the one that crashed.
+uint8_t pending = 0;
+size_t  length  = sizeof(pending);
+if (hal().storage->get("crash.new", &pending, &length) && pending == 1) {
+    (void)hal().storage->erase("crash.new");
+    static constexpr char kMessage[] = "Recovered from an error";
+    (void)crystal_ui_post(UI_EVT_TOAST, kMessage, sizeof(kMessage) - 1);
+}
+```
+
+Keep the message free of PC values and task names. The toast is a reassurance that
+the device noticed; the detail belongs in Settings › System › Device Status, which
+reads `crash.last` and formats a `Last Crash` row beside the existing `Last Reset`
+one (`crystal_shell.cpp:2708`). One crash, two audiences.
+
+`esp_reset_reason()` is worth logging on every boot, crash or not — it is the only
+cheap way to separate a panic from a brownout or a watchdog reset, and brownouts on
+this board look like random reboots. `ISystemInfo::reset_reason()`
+(`crystal_hal.cpp:810`) already maps it to a string; use that rather than a second
+switch.
 
 Decode with `idf.py coredump-info` / `coredump-debug`. **This works only against
 the exact ELF that produced the dump.** Archive `build/crystal_os.elf` with every
-image handed to anyone; without that habit the dump is unreadable hex.
+image handed to anyone; without that habit the dump is unreadable hex. The same
+archive is what makes the OTA below auditable, so archive the `.bin` and the `.elf`
+as a pair keyed by version string.
 
 Watch `CONFIG_ESP_TASK_WDT_TIMEOUT_S` with panic disabled: the likeliest trip is
 a slow `onResume()` holding the LVGL lock. Since `onResume()` runs on the LVGL
 task, anything blocking there — a storage read loop, a fetch — is a watchdog
 candidate. Post to the service task instead.
 
-OTA over WiFi plus the USB wrapper as recovery transport: same image, two paths.
-The dual 5M slots have existed since Phase 0 precisely so this phase does not
-need a repartition.
+### Version strings need a source
 
-Exit: a deliberate crash produces a symbolised backtrace; a bad OTA rolls back.
+`ISystemInfo::app_version()` returns `esp_app_get_description()->version`
+(`crystal_hal.cpp:825`), which with no `PROJECT_VER` set is derived from
+`git describe` — so it changes on every commit and is empty in a tarball build. An
+update flow compares versions, so pin it in the root `CMakeLists.txt` *before*
+`project()`:
+
+```cmake
+set(PROJECT_VER "1.0.0")
+project(crystal_os)
+```
+
+Comparing them is string equality, not ordering. Semantic-version ordering on a
+device invites a downgrade that the manifest did not intend; "the manifest offers
+something other than what is running" is the whole predicate needed.
+
+### The validity handshake
+
+With rollback enabled, a new image boots as `PENDING_VERIFY` and the bootloader
+reverts to the previous slot on the next reset unless something confirms it. What
+counts as confirmation is a judgement call, and the wrong answer makes rollback
+useless:
+
+```cpp
+// WRONG — app_main returning proves the linker worked, nothing more. A firmware
+// that boots and then wedges the LVGL task confirms itself and cannot roll back.
+esp_ota_mark_app_valid_cancel_rollback();
+```
+
+Confirm from `service_task`, after the display, the shell, and the first frame have
+all survived a settling period. The service task's existing 1200 ms delay is
+already the point at which the UI is known to be up:
+
+```cpp
+// service_task, once, after the crash notice above.
+const esp_partition_t *running = esp_ota_get_running_partition();
+esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
+        ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+    ESP_LOGI(TAG, "confirming new image after successful UI bring-up");
+    (void)esp_ota_mark_app_valid_cancel_rollback();
+}
+```
+
+A boot loop before that point is exactly what rollback is for, so nothing here
+should try to be clever about retrying. If the new image cannot reach a first
+frame, letting it revert is the correct outcome.
+
+### The update path
+
+Settings › System › Software Update, one page in `crystal_shell` via
+`system_page_push()`. The image comes from an HTTPS manifest whose URL is
+compiled in as a default and editable in that page — `esp_https_ota` with the
+certificate bundle, which `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY`
+already accommodates for rotating roots.
+
+```json
+{ "version": "1.0.1", "url": "https://.../crystal_os-1.0.1.bin", "notes": "..." }
+```
+
+Parse it with the `strstr` + `sscanf` pattern from the weather fetch against a
+1 KiB static buffer, and honour the constraint stated there: **that parser must not
+grow.** Three known scalar fields in a document you control is what it is for. Read
+the body with `open`/`fetch_headers`/`read`/`close` — `esp_http_client_perform()`
+drains the body and leaves you nothing, which is documented under Phase 9.5 and
+bites identically here.
+
+Both the check and the write run on `crystal_service`. Its stack is 8192 bytes and
+already carries a TLS handshake for weather, so the handshake is affordable; the OTA
+write is flash-bound rather than stack-bound. Nothing in this path calls `lv_*` —
+progress reaches the UI as a queued event:
+
+```cpp
+enum crystal_evt_t : uint8_t { /* ... */ UI_EVT_OTA_PROGRESS, UI_EVT_OTA_RESULT };
+```
+
+`EventMessage` carries a fixed `kEventDataMax` payload (`crystal_core.cpp:39`), so
+send a small POD — a percentage plus a state byte — and let the page format it. Do
+not send strings through it.
+
+Three things the page owns that the OTA library does not:
+
+**Hold the screen on.** A ten-minute download under the 60-second screen-off
+timeout looks exactly like a crash. Suppress auto-dim for the duration and restore
+the user's setting afterwards, including on the failure path. `crystal_power_set_auto_dim()`
+is the switch; the restore belongs in one place so an early return cannot skip it.
+
+**Block navigation during the write.** `crystal_shell_set_modal_open(true)` for the
+write phase only — the arbiter already treats a modal as blocking everything
+(`DESIGN.md` §4 precedence 1). Leaving the page mid-write does not stop the flash
+write, so the choice is between a UI that lies about what is happening and one that
+does not offer the exit. Checking for an update is cancellable; writing is not.
+
+**Report the reboot as deliberate.** After a successful write the device restarts
+into `PENDING_VERIFY`. Say so before calling `esp_restart()`, or the user reads an
+unannounced reboot as the crash the previous section apologises for.
+
+### What this does not protect against
+
+Stated because the gap is easy to mistake for a feature. TLS plus the certificate
+bundle authenticates the *host*, so nobody on the network can substitute an image.
+It does not authenticate the *image*: whoever controls the manifest host controls
+what every device installs, and there is no signature check, because
+`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT` is not enabled and no key is provisioned.
+For a self-hosted manifest that is a reasonable v1 position. If images are ever
+served from infrastructure that is not yours, signed images are the fix — and
+anti-rollback (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) is deliberately *not* enabled,
+because it burns efuses and permanently forecloses installing an older image on that
+unit.
+
+The USB wrapper stays the recovery transport: same image, two paths. The dual 5M
+slots have existed since Phase 0 precisely so this phase needs no repartition.
+
+Exit: a deliberate crash produces a symbolised backtrace and a single quiet toast on
+the next boot, with detail in Device Status; a good OTA installs, confirms itself,
+and reports its new version; a bad OTA rolls back to the previous slot without
+manual intervention.
 
 ## Phase 13 — app catalog
 
@@ -1679,12 +1948,15 @@ extern const lv_img_dsc_t clock_icon;
 Keep to this for icons. It costs less flash than either alternative, needs no
 filesystem, and cannot fail at runtime the way a missing file can.
 
-**SPIFFS is not mounted yet.** The `storage` partition exists in
-`partitions.csv` and `assets/` is empty; nothing calls `esp_vfs_spiffs_register`.
-So `lv_img_set_src(icon, "S:/...")` will not work today — it needs a mount first.
-The SPIFFS route stays the right answer for genuine bitmap content (photos,
-multi-frame art, anything a loop cannot draw), and when the first such asset
-lands, mounting is part of that work:
+**SPIFFS is mounted, but `assets/` is empty.** `bsp_spiffs_mount()` runs on the
+boot path (`main/main.cpp:101`) and Phase 7.5 already writes card previews to
+`/spiffs`, so the partition is live. What does not exist is an asset *pipeline* —
+nothing converts a PNG to an LVGL binary image and nothing ships one. So
+`lv_img_set_src(icon, "S:/...")` needs an asset put there first, and the LVGL
+filesystem drive letter has to be registered for that path form to resolve. SPIFFS
+stays the right answer for genuine bitmap content (photos, multi-frame art,
+anything a loop cannot draw), and the pipeline is part of the first such asset's
+work:
 
 ```cpp
 lv_img_set_src(icon, "S:/assets/foo/art.bin");   // requires the mount to exist

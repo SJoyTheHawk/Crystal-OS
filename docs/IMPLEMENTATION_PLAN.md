@@ -228,8 +228,10 @@ ones their names imply. This phase closes the gaps that matter before any real
 app is built on the framework. It is small and entirely inside
 `components/crystal_app` plus one stylesheet value. The pause-before-destroy
 ordering, advisory teardown results, sealed install bookkeeping, and
-one-resident-app policy land here. `onStart()`/`onStop()` are defined as dormant API hooks; their
-dispatch belongs to Phase 7 when the gesture arbiter owns occluding overlays.
+one-resident-app policy land here. `onStart()`/`onStop()` are defined as dormant API
+hooks and **stay dormant for all of v1** — the note below proposing Phase 7 as their
+dispatch point was not carried out and is not outstanding work. See §"Sequencing
+notes" and `DESIGN.md` §5.5.
 
 Keep the six Android lifecycle hooks declared, with `onStart()`/`onStop()`
 reserved until the shell has a real visibility transition to dispatch. The
@@ -263,10 +265,16 @@ explicit platform operations.
 keyboard overlay (Phase 10) cover the app opaquely with no callback at all, so a
 1s `lv_timer` keeps redrawing behind a fully occluding panel. On a single-buffer
 RGB panel that already measured 7-8 FPS at gate G1, that is wasted bandwidth in
-exactly the moment an animation needs it. `onStop()` is the hook Clock, Weather,
-and the Phase 1 benchmark all want. Fired by the Phase 7 arbiter, which is the
-only component that knows what is covering what — so the hooks land here and the
-call sites land in Phase 7. Until then they are defined and never fired.
+exactly the moment an animation needs it. `onStop()` was proposed as the hook Clock,
+Weather, and the Phase 1 benchmark would want, fired by the Phase 7 arbiter as the
+only component that knows what covers what.
+
+**Superseded: the hooks are declared and never fired, in v1 and beyond it.** Phase 7
+closed without the call sites and v1 keeps a four-state lifecycle. The corner panel of
+Phase 8.5 also narrowed the original argument considerably — it covers 306x306 rather
+than the full screen, so the app beneath is genuinely still visible and pausing it
+would be wrong. Nothing here is an open item; `DESIGN.md` §5.5 reserves the pair for
+screen-off, and that is the standing answer.
 
 **4. Decide `max_running_num`.** §2 calls destroy-on-switch settled and
 `DESIGN.md` §5 justifies the snapshot design by stating resident apps are not
@@ -292,15 +300,18 @@ logs a warning and returns `true` unconditionally. The same argument applies to
 `onDestroy()` — there is nothing productive Brookesia can do with a failed
 teardown.
 
-A `LifecycleState` enum member (`INSTALLED`/`CREATED`/`STARTED`/`RESUMED`/
-`PAUSED`/`DESTROYED`) backs items 1 and 5, asserts legal transitions in debug
-builds, and covers Brookesia's error paths, which call `processClose()` from
-inside a failed `pause()` and would otherwise re-enter the hooks.
+A `LifecycleState` enum member backs items 1 and 5, asserts legal transitions in
+debug builds, and covers Brookesia's error paths, which call `processClose()` from
+inside a failed `pause()` and would otherwise re-enter the hooks. As shipped it is an
+`enum class` nested in `CrystalApp` with mixed-case values —
+`Installed`/`Created`/`Started`/`Resumed`/`Paused`/`Destroyed`
+(`crystal_app.hpp:33`) — reachable through `lifecycle_state()`, which Weather's
+liveness check already uses.
 
 **Progress (2026-09-04):** Implemented the lifecycle state guard, ordered
 pause/destroy teardown, sealed install bookkeeping, advisory teardown returns,
 80 ms `onCreate()` timing, and `max_running_num = 1`. State Test now writes its
-counter only in `onPause()`. `onStart()`/`onStop()` remain dormant until Phase 7.
+counter only in `onPause()`. `onStart()`/`onStop()` remain dormant for v1.
 
 **Documentation and verification record (2026-09-04):** The handoff is closed.
 `git diff --check` passes, and active ABI, example, validation, design, and
@@ -723,20 +734,68 @@ closed as of 2026-09-11.
 
 ### Phase 12 — Reliability
 
-- `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y` + ELF format + CRC32. Check
-  `esp_core_dump_image_get()` at boot, log it, surface a quiet "recovered from an
-  error", then erase. Log `esp_reset_reason()` to separate panics from brownouts
-  and watchdog resets.
+The next phase. Nothing in it is built yet: the coredump options are in
+`sdkconfig.defaults` but nothing reads a dump, `esp_reset_reason()` is only rendered
+as a Device Status string, and the dual OTA slots are unused. Full shapes in
+`CODE_GUIDE.md` §"Phase 12 — reliability"; user-facing behaviour in `DESIGN.md` §8.5.
+
+Three independent pieces, in this order.
+
+**1. Crash reporting.** `esp_core_dump_get_summary()` at boot, before
+`crystal_time_init()`. Write one blob (`crash.last`: PC, task, reset reason, and a
+timestamp that is legitimately 0 on a cold boot) plus a one-shot `crash.new` flag,
+then erase the image so it reports exactly once. The flag is consumed by
+`service_task`, which raises the toast — `app_main` cannot, because
+`crystal_core_init()` has not created the UI queue at that point. Device Status gains
+a `Last Crash` row beside `Last Reset`.
+
+The `coredump` partition is plaintext regardless of `NVS_ENCRYPTION`, so a dump can
+contain credentials that were in a stack buffer at crash time. Erasing at boot is the
+mitigation; know it before handing a crashed unit to anyone.
+
+**2. Rollback.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is **missing from
+`sdkconfig.defaults`** and is a prerequisite, not a detail — without it the
+bootloader never marks an image `PENDING_VERIFY` and the phase's rollback exit
+criterion cannot be met. Confirm validity from `service_task` after the shell and
+first frame are up, never from the end of `app_main`: a firmware that links and then
+wedges the LVGL task would otherwise confirm itself and become unrecoverable.
+
+**3. OTA.** Settings › System › Software Update, one `system_page_push()` page in
+`crystal_shell`. An HTTPS JSON manifest (version, URL, notes) at a compiled-in
+default URL that the page exposes and lets the user edit; `esp_https_ota` with the
+existing certificate bundle. Manual check, manual install — an unattended data
+display must not reboot itself into new firmware. Both check and write run on
+`crystal_service`; progress reaches the page through two new queued event types
+carrying a small POD, never a string.
+
+Three page responsibilities that the OTA library does not cover: suppress auto-dim
+for the duration and restore it on every exit path, take
+`crystal_shell_set_modal_open(true)` for the write phase only, and announce the
+reboot before `esp_restart()`.
+
+`PROJECT_VER` must be set in the root `CMakeLists.txt` before `project()`. Today it
+is unset, so `app_version()` is a `git describe` string that changes every commit and is
+empty in a tarball build — an update flow needs a version it can compare.
+
+The threat model, stated so it is not mistaken for more than it is: TLS
+authenticates the manifest host, not the image. v1 ships no image signing, which is
+reasonable for a self-hosted source and is the thing to revisit if images are ever
+served from infrastructure you do not control. Anti-rollback stays off deliberately —
+it burns efuses and permanently prevents installing an older image on that unit.
+
 - **Archive `build/crystal_os.elf` for every image given to anyone.** Coredumps
   decode only against the exact ELF that produced them; without this habit they
-  are unreadable hex.
-- OTA over WiFi, plus the USB wrapper as the recovery transport. Same image, two
-  paths.
+  are unreadable hex. Archive the `.bin` and `.elf` as a pair keyed by version.
+- The USB wrapper stays the recovery transport: same image, two paths.
 
 Watch `CONFIG_ESP_TASK_WDT_TIMEOUT_S=5` (panic disabled): a slow `onResume()`
 holding the LVGL lock is the likeliest way to trip it.
 
-Exit: a deliberate crash produces a symbolised backtrace; a bad OTA rolls back.
+Exit: a deliberate crash produces a symbolised backtrace and one quiet toast on the
+next boot with detail in Device Status; a good OTA installs, confirms itself after
+the UI comes up, and reports its new version; a bad OTA rolls back to the previous
+slot with no user intervention; a failed write leaves the running firmware unchanged
+and says so.
 
 ### Phase 13 — App catalog
 
@@ -786,6 +845,22 @@ CONFIG_NVS_ENCRYPTION=y
 CONFIG_BSP_DISPLAY_LVGL_TASK_STACK_SIZE_KB=10   # was 6
 ```
 
+Two more land with Phase 12. `ROLLBACK_ENABLE` is the one that gates an exit
+criterion; `CHECK_BOOT` already defaults to `y` in IDF and is written down so an IDF
+bump cannot change it silently:
+
+```
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_COREDUMP_CHECK_BOOT=y
+```
+
+Shipped since this list was written, and worth knowing when reading a generated
+`sdkconfig`: two RGB framebuffers with `BSP_DISPLAY_LVGL_AVOID_TEAR` and direct mode
+(Phase 6.5), `MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` for the weather and
+geolocation endpoints (Phase 9.5), and `LV_FONT_MONTSERRAT_48` for Weather's hero
+number — a fourth text size beyond the three §10 of `DESIGN.md` specifies, taken
+deliberately at ~40 KiB of flash.
+
 Keep as-is: `SPIRAM_MODE_OCT`, `SPIRAM_SPEED_80M`, `SPIRAM_FETCH_INSTRUCTIONS`,
 `SPIRAM_RODATA`, `COMPILER_OPTIMIZATION_PERF`, `FREERTOS_HZ=1000`,
 `ESP_BROOKESIA_MEMORY_USE_CUSTOM` with the PSRAM allocator override in
@@ -801,7 +876,24 @@ large, plus the indicator bar size). Each unused size is dead flash. Drop
 Phases 0-3 are prerequisites for everything. 4-5 unlock app work. 4.5 should land
 before 5.5, since Clock is the first app to depend on `onPause()` actually being
 called and guarded once-per-boot reconciliation. 6 waits on G1. 7 should precede 8 and 10,
-since both depend on the arbiter existing, and it is where Phase 4.5's
-`onStart()`/`onStop()` get their call sites. 12 can
+since both depend on the arbiter existing. 12 can
 start any time after 0 and should not be left to the end — coredumps are most
 valuable while the system is least stable.
+
+**State as of 2026-09-11.** Phases 0 through 11 are closed and device-validated.
+Phase 12 is next, and its first piece — crash reporting — is the part that should
+have landed earlier by the note above; it needs nothing from 13. Within 12, the three
+pieces are independent, so crash reporting can ship on its own while OTA is still
+being built. 13 depends on `CrystalState::clear()`, which still does not exist.
+
+**`onStart()`/`onStop()` stay undispatched, and that is the decision, not a gap.**
+v1 has four lifecycle states — `onCreate`, `onResume`, `onPause`, `onDestroy` — plus
+the `onBack` gesture callback. Phase 4.5 provisionally assigned occlusion call sites
+to Phase 7; Phase 7 closed without them and v1 is not adding them. The two hooks
+remain declared as base-class no-ops so a later version can fire them without an ABI
+break, which is the whole reason they exist in the header. `DESIGN.md` §5.5 is the
+authority and reserves them for screen-off, the case the four cannot express.
+
+Do not write this up as outstanding work. If redrawing behind an opaque quick panel
+ever proves to cost measurable frames, that is a new measurement opening a new
+question — not a Phase 7 item that was missed.

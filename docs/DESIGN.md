@@ -565,7 +565,7 @@ computed, replacing the dialog's private copy.
 | Display & Power | brightness; dim/off timeouts; dim level; Energy Saving; battery |
 | Sound | volume; timer/alarm sounds; test sound |
 | Region & Time | automatic/manual time; timezone; 12/24-hour format; location |
-| System | About; Legal & Attribution; Device Status; Restart |
+| System | About; Legal & Attribution; Device Status; Software Update; Restart |
 
 Notes:
 
@@ -575,6 +575,8 @@ Notes:
   it, SNTP leaves the clock on UTC and the indicator bar shows the wrong hour.
 - **System › attribution** is where `esp-brookesia` and ESP-IDF are credited in
   the UI, alongside the root `NOTICE` file.
+- **System › Software Update** is Phase 12 and is described in §8.5. Device Status
+  gains a `Last Crash` row there, beside the existing `Last Reset`.
 - **Power saving** is one NVS flag with several effects: the CPU pinned at 80MHz
   instead of 240MHz, `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened
   timeouts, and card drags showing the icon card instead of the preview snapshot.
@@ -598,6 +600,89 @@ Notes:
 - Dim and off timeouts always apply while Auto Dimming is on, whether or not
   Energy Saving is enabled. Energy Saving halves their effective values without
   changing the values shown in Settings.
+
+## 8.5 Reliability and updates
+
+Phase 12. Two user-visible surfaces over machinery that is mostly invisible, which
+is the intent: the device recovers from crashes and takes updates without asking
+the user to understand either.
+
+### Recovered from a crash
+
+The device notices, says so once, and does not dwell.
+
+- **One toast**, on the boot after the crash: "Recovered from an error". No PC, no
+  task name, no error code — the toast is a reassurance that the device knows, not a
+  diagnostic. It clears when shown, so a single crash produces exactly one notice
+  however many times the device reboots afterwards.
+- **Detail lives in Settings › System › Device Status**, as a `Last Crash` row
+  showing the faulting task, the program counter, and when — beside the `Last Reset`
+  row that already reports `esp_reset_reason()`. It persists until the next crash
+  overwrites it, so a report can be gathered days later.
+- **The timestamp may be honestly unknown.** The crash record is written before the
+  RTC is read, so a cold boot has no valid wall clock. The row shows "time unknown"
+  rather than an invented instant.
+
+The split follows the toast/dialog rule from §1: an outcome is a toast, and a crash
+the device already recovered from is an outcome. Nothing modal, nothing blocking, and
+no crash dialog on a device whose whole point is showing data unattended.
+
+### Software Update
+
+A sub-page of Settings › System, reached like any other row.
+
+```
+┌──────────────────────────────────────────────┐
+│  <  Software Update                          │
+├──────────────────────────────────────────────┤
+│  Installed              1.0.0                │
+│  Update source          updates.example.com  │
+│                                              │
+│  Available              1.0.1                │
+│  [ Install 1.0.1 ]                           │
+└──────────────────────────────────────────────┘
+```
+
+- **Manual, not automatic.** Checking happens when the user opens the page or taps
+  check; installing happens when the user taps install. An appliance that reboots
+  itself mid-reading to install something is the opposite of what §0 asks for.
+- **The source is visible and editable.** An HTTPS manifest URL with a compiled-in
+  default. Visible because a device that silently fetches firmware from somewhere the
+  owner cannot see is not one they can audit.
+- **Progress is a percentage, and the screen stays on.** Auto-dim is suppressed for
+  the duration and restored afterwards, including on failure. A download that dims
+  the panel to black looks like the crash the section above exists to report.
+- **Checking is cancellable; writing is not.** During the flash write the page is
+  modal in the §4 sense: no card switching, no pull-down, no back. Leaving would not
+  stop the write, so offering the exit would only misrepresent what is happening.
+- **The reboot is announced.** The device restarts to run the new image; saying so
+  first is what separates it from a fault.
+
+States, and none of them is a spinner:
+
+| Condition | Shows |
+| --- | --- |
+| Up to date | installed version, "No update available" |
+| Update available | both versions, an install action |
+| Offline | installed version, "Connect to WiFi to check" pointing at Network |
+| Manifest unreachable or malformed | installed version, "Update source unavailable" |
+| Installing | percentage, modal, screen held on |
+| Failed mid-write | the failure, and the fact that the running firmware is unchanged |
+
+That last row is the one worth building deliberately. A failed write leaves the
+*inactive* slot corrupt and the running slot untouched, so the honest message is
+"update failed, nothing changed" — and it is true, which is why the dual slots exist.
+
+**A bad image that boots and then fails is a separate mechanism.** The bootloader
+holds a new image as unconfirmed and reverts on the next reset unless the firmware
+confirms itself after the UI is genuinely up. The user sees their previous version
+come back; there is no dialog, because there is nothing for them to decide.
+
+**What is authenticated is the host, not the image.** HTTPS with the certificate
+bundle stops anyone on the network from substituting firmware. It does not stop
+whoever controls the manifest host, since v1 ships no image signing. Acceptable for
+a self-hosted source and stated plainly rather than implied by the padlock;
+`CODE_GUIDE.md` §Phase 12 carries the conditions under which that has to change.
 
 ## 9. Manage Apps
 
@@ -797,7 +882,13 @@ Easy to forget until they appear on a device:
 - RTC read fails → `--:--` in the bar.
 - Only one app installed → edge drags must no-op cleanly, not wrap to self.
 - All apps uninstalled → launcher needs an empty state pointing at Manage Apps.
-- Recovered from a crash → quiet notice, once, then the flag clears.
+- Recovered from a crash → quiet notice, once, then the flag clears (§8.5). Owned by
+  Phase 12; the toast fires from the service task, not the boot path, because the UI
+  queue does not exist yet in `app_main`.
+- Update interrupted mid-write → running firmware unchanged, and the UI says so
+  rather than reporting a generic failure (§8.5).
+- New image boots but wedges before the first frame → the bootloader reverts to the
+  previous slot on the next reset, with no user decision to make (§8.5).
 - `onCreate()` exceeds its 80ms budget → warn in debug builds; the 5s task
   watchdog is the real failure mode, since it runs under the LVGL lock. This is
   the launch path, so it is the one that matters — `onResume()` only fires for a
