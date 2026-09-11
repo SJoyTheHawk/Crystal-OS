@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <vector>
 
 #include "crystal_app.hpp"
 #include "crystal_core.hpp"
@@ -55,11 +54,12 @@ constexpr lv_coord_t kHomePillMaxGlowWidth = 16;
 // must exceed that or the owner is claimed on gestures that never resolve as UP.
 // 80px is a comfortable flick and still far above a tap in the band.
 constexpr int kHomeSwipeTravel = 80;
-// Crop the captured app area to 90% x 90% about its centre, then store it at
+// Crop the captured app area to 90% x 90% about its centre, then render it at
 // 1/kSnapshotScaleDivisor of the app's resolution. On this panel the observed
 // 480x440 app area produces a 240x220 snapshot (~103 KiB).
 constexpr uint32_t kSnapshotCropPercent = 90;
 constexpr uint32_t kSnapshotScaleDivisor = 2;
+constexpr uint32_t kIdentityRevealPercent = 10;
 constexpr uint32_t kCrossoverCommitPercent = 50;
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
@@ -79,8 +79,6 @@ constexpr size_t kSystemPageDepthMax = 4;
 // reach the panel before the next one starts.
 constexpr uint32_t kCommitStageMs = 20;
 constexpr char kCurrentCardKey[] = "shell.card";
-constexpr char kPreviewPathPrefix[] = "/spiffs/crystal_preview_";
-constexpr uint32_t kPreviewMagic = 0x43525056;
 
 ESP_Brookesia_Phone *s_phone = nullptr;
 size_t s_current_index = 0;
@@ -159,10 +157,6 @@ bool s_quick_closing = false;
 static lv_coord_t s_quick_cols[] = {kQuickCell, kQuickCell, kQuickCell, kQuickCell, LV_GRID_TEMPLATE_LAST};
 static lv_coord_t s_quick_rows[] = {kQuickCell, kQuickCell, kQuickCell, kQuickCell, LV_GRID_TEMPLATE_LAST};
 
-struct CardPane {
-    lv_img_dsc_t *image = nullptr;
-};
-
 enum class CardTransitionPhase {
     Idle,
     Dragging,
@@ -173,9 +167,8 @@ struct CardTransition {
     CardTransitionPhase phase = CardTransitionPhase::Idle;
     lv_obj_t *root = nullptr;
     lv_obj_t *incoming_card = nullptr;
-    lv_obj_t *incoming_image = nullptr;
-    lv_img_dsc_t *outgoing = nullptr;
-    size_t original_index = SIZE_MAX;
+    lv_obj_t *identity_icon = nullptr;
+    lv_obj_t *identity_name = nullptr;
     size_t target_index = SIZE_MAX;
     lv_coord_t width = 0;
     lv_coord_t progress = 0;
@@ -183,12 +176,10 @@ struct CardTransition {
     bool commit = false;
 };
 
-std::vector<CardPane> s_pane_cache;
 CardTransition s_card_transition;
 
 bool start_card(size_t index, bool animate = true);
 lv_area_t active_app_area();
-lv_img_dsc_t *capture_app_area_full();
 lv_img_dsc_t *downscale_crop(const lv_img_dsc_t *source, const lv_area_t &crop,
                              lv_coord_t dest_w, lv_coord_t dest_h);
 
@@ -684,183 +675,6 @@ lv_area_t active_app_area()
                      static_cast<lv_coord_t>(lv_disp_get_ver_res(nullptr) - 1)};
 }
 
-lv_img_dsc_t *capture_app_area_full()
-{
-    lv_img_dsc_t *screen = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
-    if (screen == nullptr || screen->header.w == 0 || screen->header.h == 0) {
-        return nullptr;
-    }
-
-    const lv_area_t area = active_app_area();
-    const lv_coord_t width = lv_area_get_width(&area);
-    const lv_coord_t height = lv_area_get_height(&area);
-    // Brookesia's active app screen is normally app-area sized, so its snapshot
-    // uses local (0, 0) coordinates even though getVisualArea() is expressed in
-    // display coordinates below the status bar. Keep supporting a full-display
-    // snapshot as well, since LVGL screen sizing can vary by app configuration.
-    const lv_coord_t source_x = screen->header.w == width ? 0 : area.x1;
-    const lv_coord_t source_y = screen->header.h == height ? 0 : area.y1;
-    if (width <= 0 || height <= 0 || source_x < 0 || source_y < 0 ||
-            source_x + width > static_cast<lv_coord_t>(screen->header.w) ||
-            source_y + height > static_cast<lv_coord_t>(screen->header.h)) {
-        ESP_LOGE(TAG, "cannot crop app pane: source=%ux%u area=(%d,%d %dx%d)",
-                 screen->header.w, screen->header.h, area.x1, area.y1, width, height);
-        lv_snapshot_free(screen);
-        return nullptr;
-    }
-
-    lv_img_dsc_t *pane = lv_img_buf_alloc(width, height, LV_IMG_CF_TRUE_COLOR);
-    if (pane == nullptr) {
-        lv_snapshot_free(screen);
-        return nullptr;
-    }
-
-    const auto *source = reinterpret_cast<const lv_color_t *>(screen->data);
-    auto *dest = reinterpret_cast<lv_color_t *>(const_cast<uint8_t *>(pane->data));
-    for (lv_coord_t y = 0; y < height; ++y) {
-        memcpy(dest + static_cast<size_t>(y) * width,
-               source + static_cast<size_t>(source_y + y) * screen->header.w + source_x,
-               static_cast<size_t>(width) * sizeof(lv_color_t));
-    }
-    lv_snapshot_free(screen);
-
-    return pane;
-}
-
-struct PreviewFileHeader { uint32_t magic; uint16_t width; uint16_t height; };
-
-bool preview_path(size_t index, char *path, size_t size)
-{
-    const char *id = crystal_registry_installed_id(index);
-    if (id == nullptr || path == nullptr || size == 0) return false;
-    char safe[40]; size_t n = 0;
-    for (; id[n] != '\0' && n + 1 < sizeof(safe); ++n) {
-        const char c = id[n];
-        safe[n] = ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                   (c >= '0' && c <= '9') || c == '_' || c == '-') ? c : '_';
-    }
-    safe[n] = '\0';
-    const int written = snprintf(path, size, "%s%s.bin", kPreviewPathPrefix, safe);
-    return written > 0 && static_cast<size_t>(written) < size;
-}
-
-lv_img_dsc_t *load_persistent_preview(size_t index)
-{
-    const char *id = crystal_registry_installed_id(index);
-    char path[96];
-    if (!preview_path(index, path, sizeof(path))) {
-        ESP_LOGW(TAG, "preview load: id=%s path construction failed", id != nullptr ? id : "<null>");
-        return nullptr;
-    }
-    FILE *file = fopen(path, "rb");
-    if (file == nullptr) {
-        ESP_LOGI(TAG, "preview load: id=%s path=%s result=missing",
-                 id != nullptr ? id : "<null>", path);
-        return nullptr;
-    }
-    PreviewFileHeader header{}; lv_img_dsc_t *image = nullptr;
-    const bool header_ok = fread(&header, sizeof(header), 1, file) == 1 &&
-                           header.magic == kPreviewMagic && header.width > 0 && header.height > 0;
-    if (!header_ok) {
-        ESP_LOGW(TAG, "preview load: id=%s path=%s result=invalid-header",
-                 id != nullptr ? id : "<null>", path);
-    } else {
-        image = lv_img_buf_alloc(header.width, header.height, LV_IMG_CF_TRUE_COLOR);
-        if (image == nullptr) {
-            ESP_LOGW(TAG, "preview load: id=%s path=%s result=allocation-failed size=%ux%u",
-                     id != nullptr ? id : "<null>", path, header.width, header.height);
-        } else if (fread(const_cast<uint8_t *>(image->data), image->data_size, 1, file) != 1) {
-            ESP_LOGW(TAG, "preview load: id=%s path=%s result=truncated expected_bytes=%u",
-                     id != nullptr ? id : "<null>", path, static_cast<unsigned>(image->data_size));
-            lv_img_buf_free(image);
-            image = nullptr;
-        } else {
-            ESP_LOGI(TAG, "preview load: id=%s path=%s result=success size=%ux%u bytes=%u",
-                     id != nullptr ? id : "<null>", path, header.width, header.height,
-                     static_cast<unsigned>(image->data_size));
-        }
-    }
-    fclose(file);
-    return image;
-}
-
-void save_persistent_preview(size_t index, const lv_img_dsc_t *image)
-{
-    const char *id = crystal_registry_installed_id(index);
-    if (image == nullptr) {
-        ESP_LOGW(TAG, "preview save: id=%s result=no-image", id != nullptr ? id : "<null>");
-        return;
-    }
-    char path[96];
-    if (!preview_path(index, path, sizeof(path))) {
-        ESP_LOGW(TAG, "preview save: id=%s path construction failed", id != nullptr ? id : "<null>");
-        return;
-    }
-    // SPIFFS is configured with a 32-character object-name limit. Appending
-    // ".tmp" to the full preview filename makes the state_test object too
-    // long, so use a short temporary basename and retain the stable ID.
-    const char *stable_name = path + strlen(kPreviewPathPrefix);
-    const size_t stable_name_len = strlen(stable_name);
-    const size_t id_len = stable_name_len > 4 ? stable_name_len - 4 : stable_name_len;
-    char temp[104];
-    const int written = snprintf(temp, sizeof(temp), "/spiffs/.tmp_%.*s",
-                                 static_cast<int>(id_len), stable_name);
-    if (written <= 0 || static_cast<size_t>(written) >= sizeof(temp)) {
-        ESP_LOGW(TAG, "preview save: id=%s path=%s result=temp-path-failed",
-                 id != nullptr ? id : "<null>", path);
-        return;
-    }
-    FILE *file = fopen(temp, "wb");
-    if (file == nullptr) {
-        ESP_LOGW(TAG, "preview save: id=%s path=%s result=open-failed",
-                 id != nullptr ? id : "<null>", path);
-        return;
-    }
-    const PreviewFileHeader header = {kPreviewMagic, image->header.w, image->header.h};
-    const bool ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
-                    fwrite(image->data, image->data_size, 1, file) == 1;
-    fclose(file);
-    if (ok && remove(path) == 0) {
-        // Removing an existing file is expected on refresh; continue to rename.
-    }
-    const int rename_result = ok ? rename(temp, path) : -1;
-    if (rename_result == 0) {
-        ESP_LOGI(TAG, "preview save: id=%s path=%s result=success size=%ux%u bytes=%u",
-                 id != nullptr ? id : "<null>", path, image->header.w, image->header.h,
-                 static_cast<unsigned>(image->data_size));
-    } else {
-        ESP_LOGW(TAG, "preview save: id=%s path=%s result=%s bytes=%u",
-                 id != nullptr ? id : "<null>", path, ok ? "rename-failed" : "write-failed",
-                 static_cast<unsigned>(image->data_size));
-        (void)remove(temp);
-    }
-}
-
-void replace_cached_pane(size_t index, lv_img_dsc_t *image)
-{
-    if (index >= s_pane_cache.size()) {
-        if (image != nullptr) {
-            lv_img_buf_free(image);
-        }
-        return;
-    }
-    if (s_pane_cache[index].image != nullptr && s_pane_cache[index].image != image) {
-        lv_img_buf_free(s_pane_cache[index].image);
-    }
-    s_pane_cache[index].image = image;
-}
-
-void prune_pane_cache(size_t current_index)
-{
-    for (size_t i = 0; i < s_pane_cache.size(); ++i) {
-        const bool neighbour = (i + 1 == current_index) || (i == current_index + 1);
-        if (!neighbour && s_pane_cache[i].image != nullptr) {
-            lv_img_buf_free(s_pane_cache[i].image);
-            s_pane_cache[i].image = nullptr;
-        }
-    }
-}
-
 // Box-averages `crop` out of `source` into a freshly allocated dest_w x dest_h
 // image. Both images must be LV_IMG_CF_TRUE_COLOR. Returns nullptr on failure.
 lv_img_dsc_t *downscale_crop(const lv_img_dsc_t *source, const lv_area_t &crop,
@@ -1113,67 +927,77 @@ void set_transition_progress(void *, int32_t value)
         ? static_cast<lv_coord_t>(transition.progress - transition.width)
         : static_cast<lv_coord_t>(transition.width - transition.progress);
     lv_obj_set_x(transition.incoming_card, x);
-}
 
-// Downscaling the outgoing pane and writing it to storage is the heaviest work
-// in the whole gesture. It is deferred to its own stage so it cannot stall the
-// slide or the destination's first frame; the caller hands over ownership of the
-// full-resolution buffer.
-struct PendingPreview {
-    lv_img_dsc_t *outgoing = nullptr;
-    size_t index = SIZE_MAX;
-};
-PendingPreview s_pending_preview;
-
-void store_outgoing_preview(lv_img_dsc_t *outgoing, size_t index)
-{
-    if (outgoing == nullptr) {
-        return;
+    const lv_coord_t reveal_progress = LV_MAX(1, static_cast<lv_coord_t>(
+        (static_cast<int32_t>(transition.width) * kIdentityRevealPercent) / 100));
+    const lv_coord_t opaque_progress = LV_MAX(reveal_progress + 1, static_cast<lv_coord_t>(
+        (static_cast<int32_t>(transition.width) * kCrossoverCommitPercent) / 100));
+    const lv_coord_t icon_half_width = transition.identity_icon != nullptr
+        ? static_cast<lv_coord_t>(lv_obj_get_width(transition.identity_icon) / 2) : 0;
+    lv_coord_t screen_center;
+    if (transition.progress <= reveal_progress) {
+        screen_center = transition.direction > 0
+            ? static_cast<lv_coord_t>(-icon_half_width)
+            : static_cast<lv_coord_t>(transition.width + icon_half_width);
+    } else if (transition.progress < opaque_progress) {
+        const int32_t range = opaque_progress - reveal_progress;
+        const int32_t elapsed = transition.progress - reveal_progress;
+        const lv_coord_t start = transition.direction > 0
+            ? static_cast<lv_coord_t>(-icon_half_width)
+            : static_cast<lv_coord_t>(transition.width + icon_half_width);
+        const lv_coord_t end = transition.direction > 0
+            ? static_cast<lv_coord_t>(opaque_progress / 2)
+            : static_cast<lv_coord_t>(transition.width - opaque_progress / 2);
+        screen_center = static_cast<lv_coord_t>(start +
+            (static_cast<int32_t>(end - start) * elapsed) / range);
+    } else {
+        screen_center = transition.direction > 0
+            ? static_cast<lv_coord_t>(transition.progress / 2)
+            : static_cast<lv_coord_t>(transition.width - transition.progress / 2);
     }
-    if (index < s_pane_cache.size()) {
-        const lv_coord_t preview_w = LV_MAX(1, static_cast<lv_coord_t>(
-            outgoing->header.w / kSnapshotScaleDivisor));
-        const lv_coord_t preview_h = LV_MAX(1, static_cast<lv_coord_t>(
-            outgoing->header.h / kSnapshotScaleDivisor));
-        const lv_area_t source_area = {0, 0,
-                                       static_cast<lv_coord_t>(outgoing->header.w - 1),
-                                       static_cast<lv_coord_t>(outgoing->header.h - 1)};
-        lv_img_dsc_t *preview = downscale_crop(outgoing, source_area, preview_w, preview_h);
-        replace_cached_pane(index, preview);
-        save_persistent_preview(index, preview);
+    const lv_coord_t card_center = static_cast<lv_coord_t>(screen_center - x);
+    if (transition.identity_icon != nullptr) {
+        lv_obj_set_x(transition.identity_icon,
+                     static_cast<lv_coord_t>(card_center - lv_obj_get_width(transition.identity_icon) / 2));
     }
-    lv_img_buf_free(outgoing);
-}
+    if (transition.identity_name != nullptr) {
+        lv_obj_set_x(transition.identity_name,
+                     static_cast<lv_coord_t>(card_center - lv_obj_get_width(transition.identity_name) / 2));
+    }
 
-void preview_persist_cb(lv_timer_t *timer)
-{
-    lv_timer_del(timer);
-    const PendingPreview pending = s_pending_preview;
-    s_pending_preview = PendingPreview{};
-    store_outgoing_preview(pending.outgoing, pending.index);
+    const bool identity_visible = transition.progress >= reveal_progress;
+    if (transition.identity_icon != nullptr) {
+        if (identity_visible) {
+            lv_obj_clear_flag(transition.identity_icon, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(transition.identity_icon, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (transition.identity_name != nullptr) {
+        if (identity_visible) {
+            lv_obj_clear_flag(transition.identity_name, LV_OBJ_FLAG_HIDDEN);
+            const int32_t fade_progress = LV_CLAMP(
+                0, static_cast<int32_t>(transition.progress - reveal_progress),
+                static_cast<int32_t>(opaque_progress - reveal_progress));
+            const lv_opa_t opacity = static_cast<lv_opa_t>(
+                (fade_progress * LV_OPA_COVER) / (opaque_progress - reveal_progress));
+            lv_obj_set_style_opa(transition.identity_name, opacity, 0);
+        } else {
+            lv_obj_add_flag(transition.identity_name, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 void finish_card_transition(lv_anim_t *)
 {
     CardTransition &transition = s_card_transition;
     const bool committed = transition.commit;
-    const size_t original_index = transition.original_index;
     const size_t active_index = s_current_index;
-    lv_img_dsc_t *outgoing = transition.outgoing;
 
     if (transition.root != nullptr) {
         lv_obj_del(transition.root);
     }
     transition = CardTransition{};
-
-    if (committed && outgoing != nullptr) {
-        s_pending_preview = PendingPreview{outgoing, original_index};
-        lv_timer_create(preview_persist_cb, kCommitStageMs, nullptr);
-    } else if (outgoing != nullptr) {
-        lv_img_buf_free(outgoing);
-    }
-
-    prune_pane_cache(active_index);
     ESP_LOGI(TAG, "card crossover %s; active=%u, PSRAM free=%u",
              committed ? "committed" : "cancelled",
              static_cast<unsigned>(active_index + 1),
@@ -1222,30 +1046,6 @@ void schedule_card_commit(lv_anim_t *)
     lv_timer_create(card_commit_cb, kCommitStageMs, nullptr);
 }
 
-bool attach_incoming_image(lv_img_dsc_t *pane)
-{
-    CardTransition &transition = s_card_transition;
-    if (pane == nullptr || transition.incoming_card == nullptr) {
-        return false;
-    }
-    if (transition.incoming_image == nullptr) {
-        transition.incoming_image = lv_img_create(transition.incoming_card);
-        if (transition.incoming_image == nullptr) {
-            return false;
-        }
-        lv_obj_clear_flag(transition.incoming_image,
-                          LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    }
-    lv_img_set_src(transition.incoming_image, pane);
-    const uint32_t zoom_x = (static_cast<uint32_t>(transition.width) * 256u + pane->header.w - 1) /
-                            pane->header.w;
-    const uint32_t zoom_y = (static_cast<uint32_t>(lv_obj_get_height(transition.incoming_card)) * 256u +
-                             pane->header.h - 1) / pane->header.h;
-    lv_img_set_zoom(transition.incoming_image, static_cast<uint16_t>(LV_MAX(zoom_x, zoom_y)));
-    lv_obj_center(transition.incoming_image);
-    return true;
-}
-
 bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
 {
     if (s_card_transition.phase != CardTransitionPhase::Idle || s_phone == nullptr ||
@@ -1272,17 +1072,12 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     const lv_area_t app_area = active_app_area();
     const lv_coord_t width = lv_area_get_width(&app_area);
     const lv_coord_t height = lv_area_get_height(&app_area);
-    lv_img_dsc_t *outgoing = capture_app_area_full();
-    if (outgoing == nullptr || width <= 0 || height <= 0) {
-        if (outgoing != nullptr) {
-            lv_img_buf_free(outgoing);
-        }
+    if (width <= 0 || height <= 0) {
         return false;
     }
 
     lv_obj_t *root = lv_obj_create(lv_layer_top());
     if (root == nullptr) {
-        lv_img_buf_free(outgoing);
         return false;
     }
     lv_obj_set_size(root, width, height);
@@ -1293,22 +1088,11 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *outgoing_image = lv_img_create(root);
     lv_obj_t *incoming_card = lv_obj_create(root);
-    if (outgoing_image == nullptr || incoming_card == nullptr) {
+    if (incoming_card == nullptr) {
         lv_obj_del(root);
-        lv_img_buf_free(outgoing);
         return false;
     }
-
-    lv_img_set_src(outgoing_image, outgoing);
-    const uint32_t outgoing_zoom_x = (static_cast<uint32_t>(width) * 256u + outgoing->header.w - 1) /
-                                     outgoing->header.w;
-    const uint32_t outgoing_zoom_y = (static_cast<uint32_t>(height) * 256u + outgoing->header.h - 1) /
-                                     outgoing->header.h;
-    lv_img_set_zoom(outgoing_image, static_cast<uint16_t>(LV_MAX(outgoing_zoom_x, outgoing_zoom_y)));
-    lv_obj_center(outgoing_image);
-    lv_obj_clear_flag(outgoing_image, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_set_size(incoming_card, width, height);
     lv_obj_set_style_radius(incoming_card, 12, 0);
@@ -1323,50 +1107,49 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     lv_obj_set_style_shadow_ofs_x(incoming_card, direction > 0 ? 4 : -4, 0);
     lv_obj_clear_flag(incoming_card, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
+    lv_obj_t *identity_icon = nullptr;
+    lv_obj_t *identity_name = nullptr;
     CrystalApp *target_app = crystal_registry_installed_app(target_index);
     if (target_app != nullptr) {
         const void *icon_resource = target_app->getLauncherIcon().resource;
         if (icon_resource != nullptr) {
-            lv_obj_t *icon = lv_img_create(incoming_card);
-            if (icon != nullptr) {
-                lv_img_set_src(icon, icon_resource);
-                lv_obj_align(icon, LV_ALIGN_CENTER, 0, -34);
-                lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+            identity_icon = lv_img_create(incoming_card);
+            if (identity_icon != nullptr) {
+                lv_img_set_src(identity_icon, icon_resource);
+                lv_obj_set_y(identity_icon, static_cast<lv_coord_t>(
+                    (height - lv_obj_get_height(identity_icon)) / 2 - 34));
+                lv_obj_set_style_opa(identity_icon, LV_OPA_COVER, 0);
+                lv_obj_add_flag(identity_icon, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(identity_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
             }
         }
-        lv_obj_t *name = lv_label_create(incoming_card);
-        if (name != nullptr) {
-            lv_obj_set_width(name, static_cast<lv_coord_t>(width - 40));
-            lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-            lv_label_set_text(name, target_app->getName());
-            lv_obj_set_style_text_font(name, &lv_font_montserrat_20, 0);
-            lv_obj_set_style_text_color(name, lv_color_hex(0x1C2A36), 0);
-            lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_align(name, LV_ALIGN_CENTER, 0, 42);
-            lv_obj_clear_flag(name, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        identity_name = lv_label_create(incoming_card);
+        if (identity_name != nullptr) {
+            lv_obj_set_width(identity_name, static_cast<lv_coord_t>(width - 40));
+            lv_label_set_long_mode(identity_name, LV_LABEL_LONG_DOT);
+            lv_label_set_text(identity_name, target_app->getName());
+            lv_obj_set_style_text_font(identity_name, &lv_font_montserrat_20, 0);
+            lv_obj_set_style_text_color(identity_name, lv_color_hex(0x1C2A36), 0);
+            lv_obj_set_style_text_align(identity_name, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_opa(identity_name, LV_OPA_TRANSP, 0);
+            lv_obj_set_y(identity_name, static_cast<lv_coord_t>(
+                (height - lv_obj_get_height(identity_name)) / 2 + 42));
+            lv_obj_add_flag(identity_name, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(identity_name, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         }
     }
+    // Resolve the image descriptor and label dimensions once before the first
+    // progress update. Per-frame layout would make the drag unnecessarily heavy.
+    lv_obj_update_layout(incoming_card);
 
     s_card_transition.phase = CardTransitionPhase::Dragging;
     s_card_transition.root = root;
     s_card_transition.incoming_card = incoming_card;
-    s_card_transition.outgoing = outgoing;
-    s_card_transition.original_index = s_current_index;
+    s_card_transition.identity_icon = identity_icon;
+    s_card_transition.identity_name = identity_name;
     s_card_transition.target_index = target_index;
     s_card_transition.width = width;
     s_card_transition.direction = direction;
-    // Energy Saving drags the bare icon card. The icon and name are already built
-    // above, so skipping the overlay leaves them visible -- no separate card
-    // variant to keep in sync. This avoids a SPIFFS read and a ~103 KiB PSRAM
-    // allocation per drag, which is the work that hurts most at the 80MHz cap.
-    if (target_index < s_pane_cache.size() && !crystal_power_saving_enabled()) {
-        lv_img_dsc_t *pane = s_pane_cache[target_index].image;
-        if (pane == nullptr) {
-            pane = load_persistent_preview(target_index);
-            if (pane != nullptr) s_pane_cache[target_index].image = pane;
-        }
-        (void)attach_incoming_image(pane);
-    }
 
     const int dx = info.stop_x - info.start_x;
     set_transition_progress(nullptr, direction > 0 ? dx : -dx);
@@ -1634,7 +1417,6 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
     s_gesture = gesture;
     crystal_app_set_shell_back_hook(shell_consume_back);
     s_current_index = load_current_index();
-    s_pane_cache.resize(crystal_registry_installed_count());
     lv_obj_add_event_cb(gesture->getEventObj(), on_gesture_press,
                         gesture->getPressEventCode(), nullptr);
     lv_obj_add_event_cb(gesture->getEventObj(), on_gesture_pressing,

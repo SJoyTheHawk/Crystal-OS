@@ -1,5 +1,9 @@
 # Phase 6.5 — Finger-tracked 50% crossover
 
+> Historical measurement record. The current crossover uses an icon-only card
+> with no drag-time snapshot capture or persistent preview loading. See
+> `CODE_GUIDE.md` Phase 7.5 for current behavior.
+
 ## Status — closed (measurement and display-path correction)
 
 Implementation guide and completion record. Steps 0 and 1 ran on hardware on

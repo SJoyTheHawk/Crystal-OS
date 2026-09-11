@@ -256,29 +256,24 @@ accuracy and charging indication remain a deferred hardware follow-up.
 
 ## Phase 7.5: 50% visual crossover
 
-- [x] The incoming preview follows the finger while the outgoing app is stationary.
+- [x] The incoming icon card follows the finger while the outgoing app is stationary.
 - [x] The incoming card is created at direction lock, without a blank or blocked
   frame during the drag.
-- [x] A first visit shows the destination identity card without constructing the
-  target app during the drag.
-- [x] Visited-app previews use a downscaled app-area image during motion and are
-  enlarged to the card area without covering the status bar.
+- [x] Visited and unvisited apps use the same destination identity card without
+  constructing the target app during the drag.
+- [ ] At 10% the icon's entering edge begins to appear; the name alone fades to
+  full opacity at 50%, with both centred in the exposed card area at 50%.
 - [x] Crossing 10% has no lifecycle effect; release at or beyond 50% commits the
-  destination live app behind the preview.
+  destination live app behind the icon card.
 - [x] Releasing before 50% cancels without changing the active app.
 - [x] Releasing after 50% completes the switch and destroys the outgoing app.
 - [x] Touch transfers only after the destination is live; no event leaks across
   gesture owners.
-- [x] App-area clipping keeps the preview below the status bar at every offset.
-- [x] The physical panel shows no obvious tearing throughout drag and settle.
-
-Persistent preview files are implemented under `/spiffs` and keyed by stable app
-ID; persistence across reboot is validated for Hello, Clock, and State Test.
-
-Persistence finding: SPIFFS allows a maximum 32-character object name. The
-original State Test temporary filename exceeded that limit and caused
-`result=open-failed`; short `/spiffs/.tmp_<stable-app-id>` names now avoid the
-limit. The final preview path remains unchanged.
+- [x] App-area clipping keeps the icon card below the status bar at every offset.
+- [ ] The physical panel shows smooth motion and no obvious tearing throughout
+  drag and settle after removal of capture, preview rendering, and SPIFFS I/O.
+- [x] Existing `/spiffs/crystal_preview_*.bin` files are ignored without reads,
+  writes, deletion, or migration.
 
 ## Phase 9.6: Calculator app
 
@@ -381,16 +376,14 @@ All Phase 11 rows and V3 regressions pass. Phase 11 is closed.
 
 ### Phase 7.5
 
-- [x] Preview/lifecycle state machine remains unchanged by the cleanup.
-- [x] Dragging remains preview-only; no lifecycle callbacks occur during drag.
+- [x] Icon-card/lifecycle state machine remains unchanged by the cleanup.
+- [x] Dragging remains identity-only; no lifecycle callbacks occur during drag.
 - [x] Release below 50% cancels; release at or above 50% commits after cover.
-- [x] Persistent previews remain keyed by stable app ID under `/spiffs`.
-- [x] No stale preview path references remain in the implementation documents.
-- [x] Re-test card transitions and persistent preview loading after an app-only
-  production flash.
+- [x] Preview capture, cache, loading, and persistence are absent from the drag path.
+- [ ] Re-test icon-card transitions after an app-only production flash.
 
-Phase 7.5 completion: all visual, lifecycle, persistence, and no-tearing checks
-passed on hardware; phase closed.
+Phase 7.5's original preview implementation passed hardware validation. The
+icon-only replacement retains open physical-panel checks above.
 
 ### Deferred
 

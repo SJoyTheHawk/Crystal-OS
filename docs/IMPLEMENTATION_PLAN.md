@@ -502,11 +502,12 @@ documented reset-after-reboot behavior is preserved for an unsynchronised device
 ### Phase 7.5 — Required 50% visual crossover
 
 Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
-Phase 7's gesture arbiter. The incoming preview follows the edge drag while the
-outgoing app remains stationary. The destination is preview-only during dragging;
-10% has no lifecycle effect, and 50% remains the live commit threshold on release.
+Phase 7's gesture arbiter. The incoming icon card follows the edge drag while the
+outgoing app remains stationary. The destination is identity-only during dragging;
+10% begins revealing the identity without lifecycle work, and 50% remains the live commit
+threshold on release.
 After a qualifying release, complete the card cover animation, then construct it
-behind the preview and transfer touch only when its live content is ready. Release before
+behind the icon card and transfer touch only when its live content is ready. Release before
 the threshold cancels; release after it completes the switch.
 
 Start from the Phase 6 tear-free path: retain two RGB framebuffers, avoid-tear
@@ -519,26 +520,16 @@ Exit: the card tracks the finger, both sides of the 50% threshold behave as
 specified, touch ownership transfers without leaking events, the status bar is
 never covered, and physical-panel testing shows no obvious tearing.
 
-**Implementation record (2026-09-04):** The shell now has an explicit
-idle/dragging/settling crossover state machine. A full-resolution outgoing
-app-area snapshot remains stationary while one rounded incoming half-resolution
-card follows the finger 1:1 and is enlarged to the card area. At direction lock,
-the destination preview is attached from the shell cache or identity fallback;
-no target app is created. The 50% point is the commit threshold evaluated on
-release. The card reaches full app-area coverage before `start_card()` runs; the
-cover remains in place during lifecycle work. Release uses 50% of the app area's
-width as the commit threshold and a 250 ms ease-out for both commit and
-cancel. The transition root clips all drawing below the status bar and blocks
-input until settle completes. Cached RGB565 panes are pruned to immediate
-neighbours; committed outgoing panes are downscaled and persisted under stable
-app IDs in `/spiffs`, while a missing preview uses the neutral card face with
-launcher icon and app name. The one-resident-app lifecycle is unchanged during
-cancellation and is committed only after release at or beyond 50%.
-
-Compilation and physical-panel validation passed. State Test persistence was
-initially blocked by the SPIFFS 32-character object-name limit on its temporary
-filename; shortening that temporary name fixed the save path. App-only flashing
-preserves the runtime preview files. Phase 7.5 is closed.
+**Current implementation record (2026-09-11):** The shell retains the explicit
+idle/dragging/settling crossover state machine but uses an icon-only incoming
+card in every power mode. The live outgoing app remains stationary beneath the
+transparent transition root, so direction lock performs no snapshot capture or
+SPIFFS access. At 10% drag the icon's entering edge reaches the screen and the
+app name begins fading in, reaching full opacity at 50%. Both reach the centre
+of the exposed card area at 50%. The 50% release threshold, 250 ms settle, staged
+lifecycle commit, input blocking, and app-area clipping remain unchanged. The
+former RAM and persistent RGB565 preview repository is retired; existing files
+are ignored and left untouched.
 
 ### Phase 8 — Quick settings
 

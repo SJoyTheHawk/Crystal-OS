@@ -1,5 +1,9 @@
 # Phase 7.5 — Preview lifecycle and deferred app switching
 
+> Historical implementation record. As of 2026-09-11, edge transitions always
+> use the launcher icon and app name; preview capture, loading, caching, and
+> persistence are retired. See `CODE_GUIDE.md` Phase 7.5 for current behavior.
+
 ## Purpose
 
 This document defines the lifecycle-safe card preview model for the Phase 7.5

@@ -48,7 +48,7 @@ Board wiring and pin assignments are maintained in the
 
 ## Current features
 
-- **Card shell:** horizontal swipe navigation with 50% visual crossover and persistent previews
+- **Card shell:** horizontal swipe navigation with 50% visual crossover and early icon cards
 - **Gesture arbiter:** unified edge-gesture ownership for app switching and system overlays
 - **Status bar:** time, Wi-Fi, battery, and page indicators
 - **Quick Settings:** brightness, volume, Wi-Fi, and energy-saving toggle
@@ -76,7 +76,7 @@ validation remains. Details and evidence live in
 - [x] Phase 6 — card shell and app switcher baseline
 - [x] Phase 6.5 — measured crossover re-gate
 - [x] Phase 7 — gesture arbiter and indicator bar
-- [x] Phase 7.5 — 50% visual crossover and persistent previews
+- [x] Phase 7.5 — 50% visual crossover and icon-only transition cards
 - [x] Phase 8 — quick settings
 - [x] Phase 8.5 — corner-anchored quick panel
 - [x] Phase 9 — Wi-Fi product integration

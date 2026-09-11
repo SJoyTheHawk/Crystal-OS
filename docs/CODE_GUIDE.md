@@ -590,6 +590,10 @@ lv_img_set_src(img, "S:/assets/notes/header.bin");   // not LV_IMG_DECLARE
 
 ## Phase 6 — snapshot and blur
 
+This section records the superseded Phase 6 transition baseline. The current
+finger-tracked switcher uses the icon-only path documented in Phase 7.5 below;
+these buffers are not retained or rendered during an edge drag.
+
 Full-size is 460KB; the 1/8 buffer is ~7KB. Blur the small one and let LVGL
 upscale on draw.
 
@@ -668,16 +672,16 @@ seconds and posts the result back through the UI queue.
 
 ## Phase 7.5 — finger-tracked crossover
 
-**A drag is pixels, not lifecycle.** A card preview is a shell-owned image. It
-must never start, resume, pause, or destroy a Brookesia app. The outgoing app is
-the only live app until the finger lifts past the commit threshold. See
-`PHASE_7_5_PREVIEW_LIFECYCLE.md`; it is the authority for this phase, and
-`DESIGN.md` §5 is the authority for the interaction it serves.
+**A drag is pixels, not lifecycle.** The icon card is shell-owned UI. It must
+never start, resume, pause, or destroy a Brookesia app. The outgoing app is the
+only live app until the finger lifts past the commit threshold. `DESIGN.md` §5
+is the authority for the interaction; `PHASE_7_5_PREVIEW_LIFECYCLE.md` records
+the retired preview implementation.
 
 The crossover uses an app-area-clipped overlay on `lv_layer_top()`. The outgoing
-app is captured at direction lock and stays visually stationary. A single incoming
-card moves 1:1 with horizontal touch distance, drawing a half-resolution RGB565
-preview enlarged to the card area.
+app remains live and visually stationary beneath the transparent overlay. A
+single incoming card moves 1:1 with horizontal touch distance and always draws
+the destination's launcher icon and name.
 
 There is one threshold, and it is tested on release:
 
@@ -685,18 +689,19 @@ There is one threshold, and it is tested on release:
 constexpr uint32_t kCrossoverCommitPercent = 50;  // of app-area width
 ```
 
-10% is **not** a threshold. Earlier revisions prepared the destination there, which
-meant an app was constructed by a drag the user had not finished. Passing 10% now
-does nothing beyond moving the card. Do not reintroduce a mid-drag preparation
-percentage; if a preview is missing at 10%, the fix is a better cache or the
-identity card, never an early `start_card()`.
+10% is a **visual reveal point only**. The icon stays clipped outside the card's
+visible screen area until its entering edge reaches the boundary at 10%, then
+moves to the exposed-area centre at 50%. The name follows the same motion while
+fading linearly from transparent at 10% to opaque at 50%. This has no lifecycle
+effect; never call `start_card()` before a qualifying release.
 
 The state machine stays `Idle` -> `Dragging` -> `Settling`.
 
 | Event | Visual | Lifecycle |
 |---|---|---|
-| Direction lock | build overlay, outgoing capture, target preview | none |
-| Drag, any distance | card follows finger | **none** |
+| Direction lock | build transparent overlay and target icon card | none |
+| Drag below 10% | card follows finger; identity remains clipped and hidden | **none** |
+| Drag from 10% | icon edge enters; name fades toward 50% | **none** |
 | Release below 50% | card animates back off-screen | **none** |
 | Release at/above 50% | card animates to full width and is painted | `start_card()` once, a frame later |
 
@@ -717,12 +722,6 @@ The shell never invokes an app's hooks by hand; it sends the start event and let
 the manager dispatch. `max_running_num = 1`, so there is no state in which two
 apps are live.
 
-Downscaling the outgoing capture and writing it to storage is the heaviest work in
-the gesture, so it is a fourth deferred stage (`preview_persist_cb()`) rather than
-part of teardown. Run inline, it stalls the destination's first frame. The pending
-full-resolution buffer is owned by `s_pending_preview` between stages and freed
-there.
-
 Do not collapse these stages back into one callback. If the slide starts feeling
 like it runs in parallel with the switch, a stage boundary has been removed.
 
@@ -736,38 +735,17 @@ visual area, so neither the card nor its shadow can cover the status bar. Keep i
 in place across a committed transition — it is what hides the target's
 construction — and delete it only once the target is live and resumed.
 
-## Phase 7.5 — preview repository
+## Phase 7.5 — icon identity motion
 
-Previews belong to `crystal_shell`, keyed by **stable app ID** — not by card index.
-Indices shift when apps are installed or uninstalled; a preview keyed by index
-shows the user the wrong app's picture after a registry change.
+`set_transition_progress()` owns all drag-derived visuals. It keeps the identity
+outside the visible screen area through 10%, interpolates it to the exposed
+slice's centre at 50%, then follows that centre until the card settles fully
+open. Apply the same calculation during commit and cancel settling so motion
+reverses without a discontinuity.
 
-```text
-in-memory neighbour cache  ->  /spiffs/crystal_preview_<stable-app-id>.bin  ->  identity card
-```
-
-Resolution order is strict, and the third entry is not optional. A missing,
-truncated, or unreadable preview file must fall through to the shell-rendered
-identity card — launcher icon plus app name, which `begin_card_transition()`
-already builds. A blank or black card is a bug, not a fallback.
-
-`CrystalState` is for small values. Image blobs go to the filesystem; do not push
-~103 KiB of RGB565 through NVS.
-
-Two capture points, both on an app that is already live:
-
-- after its first stable frame, so the current card is immediately cacheable;
-- on the `onPause()` path, while its LVGL tree still exists — this is the last
-  moment a real preview can be taken before Brookesia destroys the app.
-
-Never instantiate an app to populate the cache. A never-visited app correctly
-shows its identity card until the user has actually opened it once. Capture the
-app area only, downscale to the established preview size, and free the temporary
-full-resolution buffer in the same call — `capture_app_preview()` does this, and
-it is the pattern to follow.
-
-Cache retention stays bounded to the current card's immediate neighbours
-(`prune_pane_cache()`). RAM is the cache; the filesystem is the record.
+The switcher no longer captures, caches, loads, or persists app previews. Old
+`/spiffs/crystal_preview_<stable-app-id>.bin` files are ignored and deliberately
+left untouched; do not add startup deletion or migration I/O for them.
 
 ## Phase 8 — quick settings
 
@@ -1949,8 +1927,9 @@ Keep to this for icons. It costs less flash than either alternative, needs no
 filesystem, and cannot fail at runtime the way a missing file can.
 
 **SPIFFS is mounted, but `assets/` is empty.** `bsp_spiffs_mount()` runs on the
-boot path (`main/main.cpp:101`) and Phase 7.5 already writes card previews to
-`/spiffs`, so the partition is live. What does not exist is an asset *pipeline* —
+boot path (`main/main.cpp:101`), so the partition is live. The retired Phase 7.5
+preview files may remain on upgraded devices but are no longer read or written.
+What does not exist is an asset *pipeline* —
 nothing converts a PNG to an LVGL binary image and nothing ships one. So
 `lv_img_set_src(icon, "S:/...")` needs an asset put there first, and the LVGL
 filesystem drive letter has to be registered for that path form to resolve. SPIFFS

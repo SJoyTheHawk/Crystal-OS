@@ -235,18 +235,20 @@ Frames during a rightward drag from the left edge (revealing the previous app):
     idle              dragging 30%           past 50%            settled
 ┌───────────┐      ┌──┬─────────┐      ┌──────┬──────┐      ┌───────────┐
 │           │      │  │         │      │      │      │      │           │
-│  current  │      │p │ current │      │ prev │ curr │      │   prev    │
+│  current  │      │i │ current │      │ icon │ curr │      │   prev    │
 │           │      │  │         │      │      │      │      │           │
 └───────────┘      └──┴─────────┘      └──────┴──────┘      └───────────┘
-                    ^ incoming card      ^ crossover:         ^ current
-                      = blurred snap       live render,         destroyed
+                    ^ incoming card      ^ release may         ^ current
+                      = icon identity      commit here           destroyed
                                            touch transfers
 ```
 
 Behaviour:
 
-- The **incoming** app is drawn as its 1/8 blurred snapshot on a card that
-  follows the finger. Cheap, and it hides the fact that nothing is loaded yet.
+- The **incoming** app is represented by its launcher icon and name on a card
+  that follows the finger. The icon's entering edge becomes visible at 10% drag
+  and moves to the exposed-area centre by 50%; the name follows that path while
+  fading from transparent at 10% to fully opaque at 50%.
 - The **outgoing** app stays centred and live underneath. It does not move.
 - **Crossover at 50%.** Past that point the incoming app is really instantiated
   (`onCreate()` — nothing is resident to resume, see below), the card is replaced
@@ -275,11 +277,11 @@ Animation: 250ms, ease-out, on release. During drag the card tracks the finger
 Card styling: 12px corner radius, a soft shadow on the leading edge to separate
 it from the app beneath, no scrim on the outgoing app in v1.
 
-**Why snapshots and not resident apps.** The snapshot pair costs ~14KB total
-regardless of how many apps have ever been opened, where keeping apps resident
-costs their whole LVGL object tree each. The user-visible result is the same
-because the rebuild happens behind the card. This is the central memory decision
-of v1 and the switcher exists in this shape to serve it.
+**Why icon cards and not previews or resident apps.** The live outgoing app stays
+stationary until the icon card covers it, so the drag needs neither a captured
+preview nor a second resident app. The destination rebuild still happens behind
+the fully settled card. This avoids snapshot rendering, PSRAM allocation, and
+SPIFFS I/O in the gesture path.
 
 **Contingent on gate G1.** If a full-screen drag with a blurred backdrop
 measures under ~20 FPS on one RGB buffer, the fallbacks in order are: enable
@@ -394,10 +396,10 @@ Backlight off means the card is not visible, but tearing down its UI would make
 wake slow, so screen-off wants a pause without a teardown. Declared now, unused
 in v1.
 
-Steady-state cost is **one live card's LVGL tree plus two ~7KB snapshots**, and
-that figure does not change whether the device carries 3 cards or 30. Peak is
-briefly two trees, because the incoming card is built before the outgoing one is
-destroyed at the 50% crossover — bounded and momentary, not accumulating.
+Steady-state cost is **one live card's LVGL tree**. During a drag, the shell adds
+only the incoming card, icon, and label; it does not allocate image buffers or
+construct the destination app. After a committed card fully covers the app area,
+Brookesia tears down the outgoing tree and constructs the destination behind it.
 
 This works because **data lives in services, not in card instances** (the timer
 and Weather patterns). A card is a view over service-owned state, so rebuilding it
@@ -578,11 +580,9 @@ Notes:
 - **System › Software Update** is Phase 12 and is described in §8.5. Device Status
   gains a `Last Crash` row there, beside the existing `Last Reset`.
 - **Power saving** is one NVS flag with several effects: the CPU pinned at 80MHz
-  instead of 240MHz, `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, shortened
-  timeouts, and card drags showing the icon card instead of the preview snapshot.
-  The last of these exists because loading a preview costs a SPIFFS read plus a
-  ~103 KiB PSRAM allocation per drag, which is the work that hurts most under the
-  80MHz cap. **Both ends of `esp_pm_config_t` move together — 240/240 off, 80/80
+  instead of 240MHz, `WIFI_PS_MAX_MODEM`, lowered brightness ceiling, and
+  shortened timeouts. Card drags use the same icon-only path in both modes.
+  **Both ends of `esp_pm_config_t` move together — 240/240 off, 80/80
   on.** A range such as 80/240 enables DFS, and since no task holds an
   `ESP_PM_CPU_FREQ_MAX` lock, LVGL would render at the minimum. That shipped once
   and was the Phase 11 performance regression.
