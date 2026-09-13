@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
  *
  * Arithmetic and input rules adapted from the Waveshare esp-brookesia
  * calculator example. UI ownership and lifecycle are Crystal OS specific.

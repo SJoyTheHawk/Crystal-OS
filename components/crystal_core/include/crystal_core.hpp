@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 #pragma once
 
 #include <stddef.h>
@@ -50,6 +50,7 @@ void crystal_weather_request();
 bool crystal_weather_set_location(double latitude, double longitude, const char *city);
 void crystal_weather_set_automatic(bool automatic);
 bool crystal_weather_location_automatic();
+bool crystal_location_get(double *latitude, double *longitude, char *city, size_t city_size);
 
 // Called by the gesture arbiter on touch-down. Returns true exactly when that
 // touch must wake the display without being delivered as an app interaction.

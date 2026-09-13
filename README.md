@@ -1,5 +1,7 @@
 # Crystal OS
 
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE.md)
+
 Crystal OS is an ESP32-S3 touch-device shell and app framework built on
 LVGL and Espressif's `esp-brookesia` phone UI.
 
@@ -186,8 +188,16 @@ by the production startup path. The display currently uses two RGB buffers:
 
 ## License and attribution
 
-See [`LICENSE.md`](LICENSE.md) for the Crystal OS non-commercial distribution
-terms and third-party license boundary. See [`NOTICE`](NOTICE) for project
-attribution requirements and third-party credits. The exact dependency license
-files under `managed_components/` remain authoritative for redistributed
-components.
+Crystal OS is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md)
+(`PolyForm-Noncommercial-1.0.0`). Copyright (c) 2026 is jointly held by
+[Rocky Road Studio](https://rockyroad.studio) and
+[Bubstal Limited](https://bubstal.com). The project is authored by
+Johnny "SJoyTheHawk" Sze. Commercial licensing enquiries may be sent to
+[rockyroadstudio@outlook.com](mailto:rockyroadstudio@outlook.com).
+
+This license applies only to original Crystal OS software, documentation, and
+artwork. Third-party dependencies and reference materials retain their own
+licenses. See [`NOTICE`](NOTICE) for third-party credits; the exact dependency
+license files under `managed_components/` remain authoritative for
+redistributed components.

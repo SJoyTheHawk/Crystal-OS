@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 
 #include "crystal_core.hpp"
 
@@ -759,6 +759,18 @@ void service_task(void *)
 } // namespace
 
 ESP_EVENT_DEFINE_BASE(CRYSTAL_NETWORK_EVENT);
+
+bool crystal_location_get(double *latitude, double *longitude, char *city, size_t city_size)
+{
+    if (latitude == nullptr || longitude == nullptr) return false;
+    taskENTER_CRITICAL(&s_weather_location_mux);
+    *latitude = s_weather_latitude;
+    *longitude = s_weather_longitude;
+    if (city != nullptr && city_size > 0) strlcpy(city, s_weather_city, city_size);
+    taskEXIT_CRITICAL(&s_weather_location_mux);
+    return *latitude >= -90.0 && *latitude <= 90.0 &&
+           *longitude >= -180.0 && *longitude <= 180.0;
+}
 
 void crystal_weather_request() { s_weather_request.store(true); }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
  */
 
 #include <inttypes.h>
@@ -8,6 +8,8 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
 #include "esp_brookesia.hpp"
@@ -15,6 +17,7 @@
 #include "clock_app.hpp"
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
+#include "bus_app.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
@@ -29,12 +32,14 @@ static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
 static CrystalApp *make_weather_app() { return new WeatherApp(); }
 static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
+static CrystalApp *make_bus_app() { return new BusApp(); }
 
 static const CrystalAppEntry kApps[] = {
     {"dev_tester", make_dev_tester_app, true, 0},
     {"clock", make_clock_app, true, 2},
     {"weather", make_weather_app, true, 3},
     {"calculator", make_calculator_app, true, 4},
+    {"bus",        make_bus_app,        true, 5},
 };
 
 static void update_status_clock(void *context, int hour, int minute, bool is_pm, bool format24)
@@ -160,5 +165,9 @@ extern "C" void app_main(void)
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;
     ESP_LOGI(TAG, "first-frame baseline: %" PRId64 " ms", elapsed_ms);
+    // The card's onCreate() and LVGL's recursive draw both ran on this stack, so
+    // this number is the real headroom on the deepest widget tree Crystal builds.
+    ESP_LOGI(TAG, "main task stack headroom: %u bytes",
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     bsp_display_unlock();
 }

@@ -58,3 +58,31 @@ CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
 # this option the bundle can only anchor a chain whose last certificate it holds
 # directly, which is not how CAs are currently rotating roots.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+
+# Phase 9.7. mbedtls_ssl_setup() returned -0x008D (MBEDTLS_ERR_SSL_ALLOC_FAILED,
+# = PSA_ERROR_INSUFFICIENT_MEMORY) on every KMB ETA request. The default
+# INTERNAL_MEM_ALLOC forces every mbedtls allocation into DRAM, and one session
+# wants ~20 KB of that for its record buffers alone -- CONFIG_MBEDTLS_
+# SSL_IN_CONTENT_LEN is 16384. On this board the RGB framebuffers, LVGL's draw
+# buffers, and the WiFi/lwIP pools have already taken the internal heap by the
+# time an app asks for a socket, so a handshake that would fit at boot does not
+# fit from inside a running app.
+#
+# TLS record buffers are memcpy targets, never DMA descriptors, so PSRAM is a
+# correct home for them and not just a bigger one. SPIRAM_USE_MALLOC is already
+# set, which is what this option depends on.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# Phase 9.7. The transit app opens a new connection per stage -- variants, stops,
+# names, ETA -- and every one of them paid a full handshake to a host it had
+# already talked to. Both feeds issue session tickets, so resumption turns the
+# second and later handshakes into one round trip. This is the difference between
+# a chooser that appears and one that takes a beat.
+CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y
+
+# Phase 9.7. app_main builds the first card and calls lv_refr_now() on the main
+# task, so both the app's onCreate() and LVGL's recursive draw walk run on this
+# stack. The 3,584-byte default overflowed once Bus nested a scrolling flex list
+# inside a tabview page: the draw recursion descends one frame per object level.
+# The main task is deleted when app_main returns, so this costs nothing at rest.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
