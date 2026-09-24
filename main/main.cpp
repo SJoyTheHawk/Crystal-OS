@@ -17,7 +17,6 @@
 #include "clock_app.hpp"
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
-#include "bus_app.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
@@ -32,14 +31,12 @@ static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
 static CrystalApp *make_weather_app() { return new WeatherApp(); }
 static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
-static CrystalApp *make_bus_app() { return new BusApp(); }
 
 static const CrystalAppEntry kApps[] = {
     {"dev_tester", make_dev_tester_app, true, 0},
     {"clock", make_clock_app, true, 2},
     {"weather", make_weather_app, true, 3},
     {"calculator", make_calculator_app, true, 4},
-    {"bus",        make_bus_app,        true, 5},
 };
 
 static void update_status_clock(void *context, int hour, int minute, bool is_pm, bool format24)

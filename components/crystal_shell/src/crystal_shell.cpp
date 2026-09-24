@@ -12,7 +12,6 @@
 #include "crystal_hal.hpp"
 #include "crystal_registry.hpp"
 #include "weather_app.hpp"
-#include "transit_service.h"
 #include "esp_brookesia.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -2490,22 +2489,6 @@ void settings_push_status()
         uint32_t used = 0, total = 0; if (info->storage_bytes(&used, &total)) { snprintf(value, sizeof(value), "%lu / %lu KiB", static_cast<unsigned long>(used / 1024), static_cast<unsigned long>(total / 1024)); (void)settings_row(content, "Storage Used", value); }
         (void)settings_row(content, "Last Reset", info->reset_reason());
     }
-    // The place a user looks when a bus route key greys out that shouldn't. Read
-    // through the service getter, not by opening its NVS namespace.
-    const int32_t route_list_checked = transit_service_index_checked_at();
-    if (route_list_checked == 0) {
-        strlcpy(value, "Built-in list", sizeof(value));
-    } else {
-        const time_t when = static_cast<time_t>(route_list_checked);
-        struct tm local = {};
-        if (localtime_r(&when, &local) != nullptr) {
-            snprintf(value, sizeof(value), "Confirmed %04d-%02d-%02d",
-                     local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
-        } else {
-            strlcpy(value, "Built-in list", sizeof(value));
-        }
-    }
-    (void)settings_row(content, "Route list", value);
     lv_obj_t *refresh = settings_row(content, "Refresh", "Read current cached and system values");
     lv_obj_add_event_cb(refresh, [](lv_event_t *) { system_page_pop(); settings_push_status(); }, LV_EVENT_CLICKED, nullptr);
 }
