@@ -87,9 +87,9 @@ bool BusApp::onCreate()
 
     // Create root container
     root_ = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(root_);
     lv_obj_set_size(root_, width, height);
     lv_obj_set_pos(root_, 0, 0);  // NOT area.x1, area.y1
-    lv_obj_remove_style_all(root_);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(root_, lv_color_hex(kBgColor), 0);
     lv_obj_set_style_pad_all(root_, 0, 0);
@@ -343,23 +343,28 @@ void BusApp::buildKeypad(lv_coord_t width)
         lv_obj_add_event_cb(btn, onKeyPressed, LV_EVENT_CLICKED, this);
     }
 
-    // Letter strip (scrollable)
+    // Alphabet strip: four tiles are visible at once beside the keypad. The
+    // remaining route letters can be reached with a vertical swipe.
     lv_obj_t *letter_strip = lv_obj_create(keypad_container_);
-    lv_obj_set_size(letter_strip, LV_PCT(100), 64);
-    lv_obj_set_pos(letter_strip, 0, 280);
+    constexpr lv_coord_t letter_tile = 60;
+    constexpr lv_coord_t letter_gap = 8;
+    constexpr lv_coord_t letter_visible_height = letter_tile * 4 + letter_gap * 3;
+    lv_obj_set_size(letter_strip, letter_tile, letter_visible_height);
+    lv_obj_set_pos(letter_strip, width * 9 / 10 - letter_tile, 0);
     lv_obj_set_style_bg_color(letter_strip, lv_color_hex(kBgColor), 0);
     lv_obj_set_style_border_width(letter_strip, 0, 0);
-    lv_obj_set_flex_flow(letter_strip, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(letter_strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_scroll_dir(letter_strip, LV_DIR_HOR);
+    lv_obj_set_style_pad_all(letter_strip, 0, 0);
+    lv_obj_set_style_pad_row(letter_strip, letter_gap, 0);
+    lv_obj_set_flex_flow(letter_strip, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(letter_strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(letter_strip, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(letter_strip, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_pad_column(letter_strip, 8, 0);
 
     // Add letter buttons
     const char *letters = BUS_ROUTE_CHARSET + 10;  // Skip digits
     for (const char *p = letters; *p; p++) {
         lv_obj_t *btn = lv_btn_create(letter_strip);
-        lv_obj_set_size(btn, 56, 56);
+        lv_obj_set_size(btn, letter_tile, letter_tile);
         lv_obj_set_style_bg_color(btn, lv_color_hex(kCardBg), 0);
 
         lv_obj_t *label = lv_label_create(btn);
