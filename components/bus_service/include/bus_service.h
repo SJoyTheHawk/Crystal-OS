@@ -116,6 +116,11 @@ uint32_t bus_service_request_route_catalog(void);
 // True only when a complete KMB + CTB catalog is loaded in memory.
 bool bus_service_route_catalog_ready(void);
 
+// Read cached KMB route variants for a route. Returns the number copied.
+uint8_t bus_service_get_cached_route_variants(const char *route,
+                                               bus_route_variant_t *out,
+                                               uint8_t max_count);
+
 // Request stops for a route
 uint32_t bus_service_request_stops(const char *route,
                                      uint8_t op,

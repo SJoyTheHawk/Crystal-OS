@@ -58,8 +58,14 @@ private:
     uint8_t favorite_refresh_failures_ = 0;
     bool favorite_refresh_active_ = false;
     bool catalog_ready_ = false;
+    bool catalog_request_started_ = false;
+    bool catalog_bootstrap_checked_ = false;
+    esp_event_handler_instance_t network_handler_ = nullptr;
+    lv_timer_t *catalog_bootstrap_timer_ = nullptr;
     uint32_t current_request_id_ = 0;
     bus_route_variant_t current_route_;
+    bus_route_variant_t route_variants_[32] = {};
+    uint8_t route_variant_count_ = 0;
     char search_buffer_[5] = {0};
 
     // Timers
@@ -77,6 +83,8 @@ private:
 
     // Event handlers
     static void onBusEvent(const bus_event_t *event, void *user_data);
+    static void onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *data);
+    static void onCatalogBootstrapTimer(lv_timer_t *timer);
     static void onTabChanged(lv_event_t *e);
     static void onFavoriteClicked(lv_event_t *e);
     static void onKeyPressed(lv_event_t *e);
@@ -84,14 +92,17 @@ private:
     static void onReset(lv_event_t *e);
     static void onEnter(lv_event_t *e);
     static void onRouteResultClicked(lv_event_t *e);
+    static void onRouteVariantClicked(lv_event_t *e);
     static void onRefreshTimer(lv_timer_t *timer);
 
     // Helpers
     void updateKeypadState();
     void rebuildSearchResults();
+    void rebuildRouteVariantResults();
     void loadFavoritesFromNVS();
     void saveFavoritesToNVS();
     void refreshFavoriteETAs();
     void updateFavoriteCard(int index);
     void showError(const char *message);
+    void evaluateCatalogBootstrap();
 };

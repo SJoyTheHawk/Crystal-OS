@@ -17,6 +17,22 @@ static const bus_route_name_t *active_index(uint16_t *count)
     return bus_route_index;
 }
 
+static bool route_matches_prefix(const bus_route_name_t *route,
+                                 const char *prefix,
+                                 size_t prefix_len)
+{
+    if (route == NULL || prefix == NULL || prefix_len > sizeof(route->name)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < prefix_len; i++) {
+        if (route->name[i] != (char)toupper((unsigned char)prefix[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void bus_route_catalog_reset(void)
 {
     s_catalog_count = 0;
@@ -66,7 +82,7 @@ bool bus_route_catalog_get(uint16_t index, bus_route_name_t *out)
 // Get allowed next characters for prefix
 uint32_t bus_route_next_mask(const char *prefix, size_t prefix_len)
 {
-    if (prefix_len >= 4) {
+    if (prefix == NULL || prefix_len >= sizeof(s_catalog[0].name)) {
         return 0;  // No more chars allowed
     }
 
@@ -87,7 +103,7 @@ uint32_t bus_route_next_mask(const char *prefix, size_t prefix_len)
         uint16_t count = 0;
         const bus_route_name_t *index = active_index(&count);
         for (uint16_t i = 0; i < count; i++) {
-            if (memcmp(index[i].name, test, prefix_len + 1) == 0) {
+            if (route_matches_prefix(&index[i], test, prefix_len + 1)) {
                 mask |= (1u << c);
                 break;
             }
@@ -100,7 +116,7 @@ uint32_t bus_route_next_mask(const char *prefix, size_t prefix_len)
 // Check if name is complete route
 uint8_t bus_route_is_complete(const char *name, size_t len)
 {
-    if (len == 0 || len > 4) {
+    if (name == NULL || len == 0 || len > sizeof(s_catalog[0].name)) {
         return 0;
     }
 
@@ -112,7 +128,7 @@ uint8_t bus_route_is_complete(const char *name, size_t len)
     uint16_t count = 0;
     const bus_route_name_t *index = active_index(&count);
     for (uint16_t i = 0; i < count; i++) {
-        if (memcmp(index[i].name, test, 4) == 0) {
+        if (route_matches_prefix(&index[i], test, sizeof(test))) {
             return 1;
         }
     }
@@ -123,7 +139,7 @@ uint8_t bus_route_is_complete(const char *name, size_t len)
 // Get operators for route
 uint8_t bus_route_get_operators(const char *name, size_t len)
 {
-    if (len == 0 || len > 4) {
+    if (name == NULL || len == 0 || len > sizeof(s_catalog[0].name)) {
         return 0;
     }
 
@@ -135,7 +151,7 @@ uint8_t bus_route_get_operators(const char *name, size_t len)
     uint16_t count = 0;
     const bus_route_name_t *index = active_index(&count);
     for (uint16_t i = 0; i < count; i++) {
-        if (memcmp(index[i].name, test, 4) == 0) {
+        if (route_matches_prefix(&index[i], test, sizeof(test))) {
             return index[i].ops;
         }
     }

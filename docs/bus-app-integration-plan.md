@@ -34,15 +34,15 @@ The existing code also contains correctness issues that must be handled before a
 
 | # | Workflow capability | Current implementation | Readiness | Required work |
 |---:|---|---|---:|---|
-| 1 | Full route catalog bootstrap and cache | Runtime KMB/CTB route catalog fetch, in-memory index, atomic SPIFFS cache, seven-day freshness, provider progress logs, and Search loading lock | Complete | Stop details are intentionally lazy and belong to the route-stop workflow; language-specific stop data belongs to points 11/20. NWFB remains skipped unless a live endpoint is confirmed. |
+| 1 | Full route catalog bootstrap and cache | Runtime KMB/CTB route catalog fetch, in-memory index, atomic SPIFFS cache, seven-day freshness, provider progress logs, and Search loading lock | Complete | KMB route variants are persisted with the searchable catalog. Bootstrap waits for synchronized time and Wi-Fi/IP before fetching; NWFB remains skipped unless a live endpoint is confirmed. |
 | 2 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
 | 3 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()`, `rebuildSearchResults()` | Complete | Compact reference-style keypad, reset/backspace, loading lock, catalog-backed ascending route rows, adaptive key dimming, disabled-until-complete Go action, route selection, and page scrolling are implemented. Separate inbound/outbound rows and terminal destinations are intentionally handled by rows 5/9 after route variants are loaded. |
-| 4 | Route prefix validation | `bus_route_is_complete()` | Partial | Replace placeholder index with the catalog; fix `bus_route_next_mask()` prefix matching and operator metadata. |
-| 5 | Route result sorting and both directions | None | Missing | Add route result model and sorted variant list. |
+| 4 | Route prefix validation | `bus_route_is_complete()`, `bus_route_next_mask()`, `bus_route_get_operators()` | Complete | Validation now reads the active runtime catalog (with the compiled fixture as a fallback), matches only the typed prefix, handles invalid/null input safely, and returns operator metadata for complete routes. |
+| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model, sorted deterministically, and displayed as separate inbound/outbound rows with operator and origin/destination metadata. Provider-specific discovery remains covered by rows 6–8. |
 | 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
 | 7 | CTB route variants | None | Missing | Add CTB request and normalization. |
 | 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
-| 9 | Direction chooser | Event only logs | Missing | Build variant page and select one normalized variant. |
+| 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
 | 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |
 | 11 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Missing | Implement detail requests or a bounded cache/bulk loader, with EN/TC fields. |
 | 12 | Stop picker | Event only logs | Missing | Scrollable list, placeholder names, loading/error rows, and back navigation. |
@@ -154,7 +154,7 @@ The official public specification describes KMB's `/stop-eta/{stop_id}` response
 **Goal:** Let a user choose a direction and a stop.
 
 - Implement route discovery for every supported operator and merge variants by normalized route/bound/service type.
-- Build the direction chooser. If only one variant exists, select it automatically; otherwise show each operator and origin/destination.
+- Use the Search result rows as the direction chooser. If only one variant exists, it may be selected automatically; otherwise each row shows the operator, direction, and destination.
 - Implement route-stop requests for the selected variant and return sequence plus source stop IDs.
 - Implement stop-detail resolution with active language. Use a bounded in-memory cache and lazy loading as rows enter the viewport, or a validated route-scoped cache.
 - Build the scrollable stop picker with placeholder rows, loading/error states, and a back button.

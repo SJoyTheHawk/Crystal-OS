@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_http_client.h"
@@ -22,10 +23,11 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
-#define ROUTE_CACHE_VERSION 2u
+#define ROUTE_CACHE_VERSION 3u
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
+#define KMB_VARIANT_CAPACITY 2048
 
 // Request types
 typedef enum {
@@ -56,6 +58,8 @@ static uint32_t s_next_request_id = 1;
 static volatile bool s_cancel_all = false;
 static time_t s_route_cache_fetched_at = 0;
 static uint8_t s_route_cache_provider_mask = 0;
+static bus_route_variant_t *s_kmb_variants = NULL;
+static uint16_t s_kmb_variant_count = 0;
 
 // Forward declarations
 static void bus_worker_task(void *arg);
@@ -76,7 +80,8 @@ void bus_service_init(void)
 
     load_route_catalog_cache();
 
-    s_request_queue = xQueueCreate(4, sizeof(bus_request_t));
+    // Leave room for catalog bootstrap alongside favorite ETA refreshes.
+    s_request_queue = xQueueCreate(16, sizeof(bus_request_t));
     if (s_request_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create request queue");
         return;
@@ -152,6 +157,23 @@ uint32_t bus_service_request_route_catalog(void)
 bool bus_service_route_catalog_ready(void)
 {
     return bus_route_catalog_count() > 0 && s_route_cache_provider_mask == 0x03;
+}
+
+uint8_t bus_service_get_cached_route_variants(const char *route,
+                                               bus_route_variant_t *out,
+                                               uint8_t max_count)
+{
+    if (route == NULL || out == NULL || max_count == 0) {
+        return 0;
+    }
+
+    uint8_t copied = 0;
+    for (uint16_t i = 0; s_kmb_variants != NULL && i < s_kmb_variant_count && copied < max_count; i++) {
+        if (strcmp(s_kmb_variants[i].route, route) == 0) {
+            out[copied++] = s_kmb_variants[i];
+        }
+    }
+    return copied;
 }
 
 uint32_t bus_service_request_stops(const char *route,
@@ -340,6 +362,7 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
 
     // Don't call close() to preserve TLS session
     esp_http_client_cleanup(client);
+    ESP_LOGI(TAG, "Route catalog: API payload downloaded");
 
     // Parse JSON
     cJSON *json = cJSON_Parse(buffer);
@@ -380,6 +403,8 @@ typedef struct {
     uint8_t provider_mask;
     uint8_t reserved[3];
     int64_t fetched_at;
+    uint16_t variant_count;
+    uint16_t reserved2;
 } route_cache_header_t;
 
 static bool load_route_catalog_cache(void)
@@ -403,6 +428,9 @@ static bool load_route_catalog_cache(void)
     }
 
     bus_route_catalog_reset();
+    free(s_kmb_variants);
+    s_kmb_variants = NULL;
+    s_kmb_variant_count = 0;
     bus_route_name_t entry;
     for (uint16_t i = 0; i < header.count; i++) {
         if (fread(&entry, sizeof(entry), 1, file) != 1 ||
@@ -413,6 +441,34 @@ static bool load_route_catalog_cache(void)
             return false;
         }
     }
+    if (header.variant_count > KMB_VARIANT_CAPACITY) {
+        bus_route_catalog_reset();
+        fclose(file);
+        ESP_LOGW(TAG, "Route catalog cache: invalid variant count");
+        return false;
+    }
+    if (header.variant_count > 0) {
+        s_kmb_variants = heap_caps_calloc(header.variant_count, sizeof(*s_kmb_variants),
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (header.variant_count > 0 && s_kmb_variants == NULL) {
+        bus_route_catalog_reset();
+        fclose(file);
+        ESP_LOGW(TAG, "Route catalog cache: no memory for variants");
+        return false;
+    }
+    for (uint16_t i = 0; i < header.variant_count; i++) {
+        if (fread(&s_kmb_variants[i], sizeof(s_kmb_variants[i]), 1, file) != 1) {
+            bus_route_catalog_reset();
+            free(s_kmb_variants);
+            s_kmb_variants = NULL;
+            s_kmb_variant_count = 0;
+            fclose(file);
+            ESP_LOGW(TAG, "Route catalog cache: truncated variant data");
+            return false;
+        }
+    }
+    s_kmb_variant_count = header.variant_count;
     s_route_cache_fetched_at = (time_t)header.fetched_at;
     s_route_cache_provider_mask = header.provider_mask;
     fclose(file);
@@ -432,7 +488,7 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
 {
     FILE *file = fopen(ROUTE_CACHE_TEMP_PATH, "wb");
     if (file == NULL) {
-        ESP_LOGE(TAG, "Route catalog cache: cannot open temporary file");
+        ESP_LOGE(TAG, "Route catalog cache: cannot open temporary file (errno=%d)", errno);
         return false;
     }
 
@@ -442,17 +498,36 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
         .count = bus_route_catalog_count(),
         .provider_mask = provider_mask,
         .fetched_at = (int64_t)time(NULL),
+        .variant_count = s_kmb_variant_count,
     };
     bool ok = header.count > 0 && fwrite(&header, sizeof(header), 1, file) == 1;
+    if (!ok) {
+        ESP_LOGE(TAG, "Route catalog cache: header write failed (errno=%d)", errno);
+    }
     for (uint16_t i = 0; ok && i < header.count; i++) {
         bus_route_name_t entry;
         ok = bus_route_catalog_get(i, &entry) && fwrite(&entry, sizeof(entry), 1, file) == 1;
+        if (!ok) {
+            ESP_LOGE(TAG, "Route catalog cache: route write failed at %u (errno=%d)", i, errno);
+        }
+    }
+    for (uint16_t i = 0; ok && i < header.variant_count; i++) {
+        ok = fwrite(&s_kmb_variants[i], sizeof(*s_kmb_variants), 1, file) == 1;
+        if (!ok) {
+            ESP_LOGE(TAG, "Route catalog cache: variant write failed at %u (errno=%d)", i, errno);
+        }
     }
     if (fclose(file) != 0) {
         ok = false;
+        ESP_LOGE(TAG, "Route catalog cache: close failed (errno=%d)", errno);
     }
     if (ok && rename(ROUTE_CACHE_TEMP_PATH, ROUTE_CACHE_PATH) != 0) {
-        ok = false;
+        const int rename_errno = errno;
+        ESP_LOGW(TAG, "Route catalog cache: rename over existing file failed (errno=%d); replacing", rename_errno);
+        if (remove(ROUTE_CACHE_PATH) != 0 || rename(ROUTE_CACHE_TEMP_PATH, ROUTE_CACHE_PATH) != 0) {
+            ok = false;
+            ESP_LOGE(TAG, "Route catalog cache: rename failed after replacement attempt (errno=%d)", errno);
+        }
     }
     if (!ok) {
         remove(ROUTE_CACHE_TEMP_PATH);
@@ -460,7 +535,8 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
     } else {
         s_route_cache_fetched_at = (time_t)header.fetched_at;
         s_route_cache_provider_mask = provider_mask;
-        ESP_LOGI(TAG, "Route catalog cache: saved %u routes", header.count);
+        ESP_LOGI(TAG, "Route catalog: saved data in filesystem (%u routes, %u KMB variants)",
+                 header.count, header.variant_count);
     }
     return ok;
 }
@@ -469,9 +545,10 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
 {
     cJSON *root = NULL;
     for (uint8_t attempt = 1; attempt <= BUS_ROUTE_FETCH_ATTEMPTS; attempt++) {
-        ESP_LOGI(TAG, "Route catalog: fetching %s from %s (attempt %u/%u)",
+        ESP_LOGI(TAG, "Route catalog: downloading data from %s API %s (attempt %u/%u)",
                  label, url, (unsigned)attempt, (unsigned)BUS_ROUTE_FETCH_ATTEMPTS);
         if (http_get_json(url, &root) == ESP_OK && root != NULL) {
+            ESP_LOGI(TAG, "Route catalog: data downloaded from %s API", label);
             break;
         }
         root = NULL;
@@ -488,6 +565,16 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
 
     cJSON *data = cJSON_GetObjectItem(root, "data");
     uint16_t fetched = 0;
+    ESP_LOGI(TAG, "Route catalog: resolving %s data", label);
+    if (op == BUS_OP_KMB) {
+        free(s_kmb_variants);
+        s_kmb_variants = heap_caps_calloc(KMB_VARIANT_CAPACITY, sizeof(*s_kmb_variants),
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        s_kmb_variant_count = 0;
+        if (s_kmb_variants == NULL) {
+            ESP_LOGE(TAG, "Route catalog: no memory for KMB variants");
+        }
+    }
     if (cJSON_IsArray(data)) {
         const int count = cJSON_GetArraySize(data);
         for (int i = 0; i < count; i++) {
@@ -497,13 +584,31 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
                 bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
                 fetched++;
             }
+            if (op == BUS_OP_KMB && s_kmb_variants != NULL && item != NULL && route != NULL &&
+                cJSON_IsString(route) && s_kmb_variant_count < KMB_VARIANT_CAPACITY) {
+                cJSON *bound = cJSON_GetObjectItem(item, "bound");
+                cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
+                cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
+                cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
+                if (cJSON_IsString(bound) && cJSON_IsString(orig_en) && cJSON_IsString(dest_en) &&
+                    bound->valuestring[0] != '\0') {
+                    bus_route_variant_t *variant = &s_kmb_variants[s_kmb_variant_count++];
+                    strlcpy(variant->route, route->valuestring, sizeof(variant->route));
+                    variant->op = BUS_OP_KMB;
+                    variant->bound = bound->valuestring[0];
+                    variant->service_type = cJSON_IsNumber(service_type) ? service_type->valueint : 1;
+                    strlcpy(variant->orig_en, orig_en->valuestring, sizeof(variant->orig_en));
+                    strlcpy(variant->dest_en, dest_en->valuestring, sizeof(variant->dest_en));
+                }
+            }
         }
     }
     cJSON_Delete(root);
     if (fetched == 0) {
         ESP_LOGE(TAG, "Route catalog: %s returned no routes", label);
     } else {
-        ESP_LOGI(TAG, "Route catalog: fetched %u %s route records", fetched, label);
+        ESP_LOGI(TAG, "Route catalog: resolved %u %s route records (%u KMB variants)",
+                 fetched, label, s_kmb_variant_count);
     }
     return fetched;
 }
@@ -584,9 +689,11 @@ static void process_route_request(const bus_request_t *req)
     // Check which operators have this route
     uint8_t ops = bus_route_get_operators(req->route, strlen(req->route));
 
-    // For now, just query KMB if available
+    // The KMB API exposes route records through the collection endpoint.
+    // Filter the returned records to the selected route locally.
     if (ops & 0x01) {
-        snprintf(url, sizeof(url), "%s/route/%s", KMB_BASE_URL, req->route);
+        snprintf(url, sizeof(url), "%s/route/", KMB_BASE_URL);
+        ESP_LOGI(TAG, "Route variants: fetching KMB collection for %s", req->route);
 
         if (http_get_json(url, &root) == ESP_OK && root != NULL) {
             cJSON *data = cJSON_GetObjectItem(root, "data");
@@ -605,7 +712,10 @@ static void process_route_request(const bus_request_t *req)
                                 cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
                                 cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
 
-                                if (route && bound && orig_en && dest_en) {
+                                if (cJSON_IsString(route) &&
+                                    strcmp(route->valuestring, req->route) == 0 &&
+                                    cJSON_IsString(bound) && cJSON_IsString(orig_en) &&
+                                    cJSON_IsString(dest_en)) {
                                     strlcpy(variants[valid_count].route, route->valuestring, sizeof(variants[valid_count].route));
                                     variants[valid_count].op = BUS_OP_KMB;
                                     variants[valid_count].bound = bound->valuestring[0];
@@ -620,6 +730,8 @@ static void process_route_request(const bus_request_t *req)
                         event.data.route_variants.variants = variants;
                         event.data.route_variants.count = valid_count;
                         event.status = ESP_OK;
+                        ESP_LOGI(TAG, "Route variants: found %d KMB records for %s",
+                                 valid_count, req->route);
                         post_event(&event);
 
                         // Don't free variants here - listener owns them

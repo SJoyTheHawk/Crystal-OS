@@ -1,5 +1,6 @@
 #include "bus_app.hpp"
 #include "bus_routes.h"
+#include "crystal_network.h"
 #include "esp_log.h"
 #include <cstring>
 #include <cstdio>
@@ -126,9 +127,10 @@ bool BusApp::onCreate()
     if (!catalog_ready_) {
         ESP_LOGI(TAG, "Route catalog not ready; Search keypad will remain locked");
     }
-    const uint32_t catalog_request_id = bus_service_request_route_catalog();
-    ESP_LOGI(TAG, "Route catalog bootstrap requested (id=%lu)",
-             static_cast<unsigned long>(catalog_request_id));
+    const esp_err_t network_register_err = esp_event_handler_instance_register(
+        CRYSTAL_NETWORK_EVENT, ESP_EVENT_ANY_ID, onNetworkEvent, this, &network_handler_);
+    ESP_LOGI(TAG, "Network event handler registration: %s",
+             esp_err_to_name(network_register_err));
 
     // Load favorites from NVS
     loadFavoritesFromNVS();
@@ -138,6 +140,9 @@ bool BusApp::onCreate()
     buildTabBar(width);
     buildFavoritesTab(width, height, tab_bar_height);
     buildSearchTab(width, height, tab_bar_height);
+
+    catalog_bootstrap_timer_ = lv_timer_create(onCatalogBootstrapTimer, 500, this);
+    evaluateCatalogBootstrap();
 
     // Start refresh timer (30s)
     eta_refresh_timer_ = lv_timer_create(onRefreshTimer, 30000, this);
@@ -164,6 +169,7 @@ bool BusApp::onPause()
 bool BusApp::onResume()
 {
     ESP_LOGI(TAG, "onResume");
+    evaluateCatalogBootstrap();
 
     if (!eta_refresh_timer_) {
         eta_refresh_timer_ = lv_timer_create(onRefreshTimer, 30000, this);
@@ -181,10 +187,20 @@ bool BusApp::onDestroy()
     // Uninstall listener first
     bus_service_set_listener(nullptr, nullptr);
     bus_service_cancel_all();
+    if (network_handler_ != nullptr) {
+        (void)esp_event_handler_instance_unregister(CRYSTAL_NETWORK_EVENT,
+                                                     ESP_EVENT_ANY_ID,
+                                                     network_handler_);
+        network_handler_ = nullptr;
+    }
 
     if (eta_refresh_timer_) {
         lv_timer_del(eta_refresh_timer_);
         eta_refresh_timer_ = nullptr;
+    }
+    if (catalog_bootstrap_timer_) {
+        lv_timer_del(catalog_bootstrap_timer_);
+        catalog_bootstrap_timer_ = nullptr;
     }
 
     // NULL all pointers
@@ -446,7 +462,9 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     lv_label_set_text(catalog_status_, "Fetching route data...\nPlease wait");
     lv_obj_set_style_text_align(catalog_status_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(catalog_status_);
-    setCatalogState(catalog_ready_, catalog_ready_ ? "" : "Fetching route data...\nPlease wait");
+    setCatalogState(catalog_ready_, catalog_ready_ ? "" :
+                    (crystal_network_has_ip() ? "Fetching route data...\nPlease wait"
+                                               : "Waiting for Wi-Fi connection..."));
 }
 
 void BusApp::setCatalogState(bool ready, const char *message)
@@ -692,6 +710,8 @@ void BusApp::rebuildSearchResults()
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
+        lv_obj_set_user_data(row, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
+        lv_obj_add_event_cb(row, onRouteVariantClicked, LV_EVENT_CLICKED, this);
         lv_obj_add_event_cb(row, onRouteResultClicked, LV_EVENT_CLICKED, this);
 
         lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
@@ -707,6 +727,79 @@ void BusApp::rebuildSearchResults()
         lv_obj_t *op_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
         lv_label_set_text(op_label, operators);
         lv_obj_align(op_label, LV_ALIGN_RIGHT_MID, -10, 0);
+    }
+}
+
+void BusApp::rebuildRouteVariantResults()
+{
+    if (search_results_ == nullptr) {
+        return;
+    }
+
+    lv_obj_clean(search_results_);
+    if (route_variant_count_ == 0) {
+        lv_obj_set_height(search_results_, 96);
+        lv_obj_t *hint = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
+        lv_label_set_text(hint, "Choose a route direction");
+        lv_obj_center(hint);
+        return;
+    }
+
+    // Keep every direction as its own row and make the provider response
+    // order irrelevant. Inbound rows precede outbound rows; ties are stable
+    // by operator, service type, and terminal names.
+    for (uint8_t i = 1; i < route_variant_count_; i++) {
+        bus_route_variant_t value = route_variants_[i];
+        uint8_t j = i;
+        while (j > 0) {
+            const bus_route_variant_t &previous = route_variants_[j - 1];
+            bool after = false;
+            if (previous.bound != value.bound) {
+                after = previous.bound == BUS_DIR_OUTBOUND;
+            } else if (previous.op != value.op) {
+                after = previous.op > value.op;
+            } else if (previous.service_type != value.service_type) {
+                after = previous.service_type > value.service_type;
+            } else {
+                after = strcmp(previous.dest_en, value.dest_en) > 0;
+            }
+            if (!after) {
+                break;
+            }
+            route_variants_[j] = route_variants_[j - 1];
+            j--;
+        }
+        route_variants_[j] = value;
+    }
+
+    const lv_coord_t row_height = 58;
+    const lv_coord_t row_gap = 4;
+    lv_obj_set_height(search_results_, 28 + route_variant_count_ * (row_height + row_gap));
+    for (uint8_t i = 0; i < route_variant_count_; i++) {
+        const bus_route_variant_t &variant = route_variants_[i];
+        lv_obj_t *row = lv_btn_create(search_results_);
+        lv_obj_set_size(row, LV_PCT(100), row_height);
+        lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
+        lv_obj_set_style_radius(row, 6, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
+
+        lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
+        lv_label_set_text(route_label, variant.route);
+        lv_obj_align(route_label, LV_ALIGN_TOP_LEFT, 10, 5);
+
+        const char *direction = variant.bound == BUS_DIR_INBOUND ? "Inbound" : "Outbound";
+        const char *operator_name = variant.op == BUS_OP_KMB ? "KMB" :
+                                    variant.op == BUS_OP_CTB ? "CTB" : "NWFB";
+        char detail[96];
+        snprintf(detail, sizeof(detail), "%s  •  %s  •  To %s",
+                 direction, operator_name, variant.dest_en);
+        lv_obj_t *detail_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
+        lv_label_set_text(detail_label, detail);
+        lv_label_set_long_mode(detail_label, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(detail_label, LV_PCT(100));
+        lv_obj_align(detail_label, LV_ALIGN_BOTTOM_LEFT, 10, -5);
     }
 }
 
@@ -823,9 +916,23 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
 
         case BUS_EVT_ROUTE_VARIANTS:
             if (event->status == ESP_OK && event->data.route_variants.count > 0) {
-                ESP_LOGI(TAG, "Found %d variants", event->data.route_variants.count);
-                // TODO: Show direction chooser or go to stops
+                if (event->request_id != app->current_request_id_) {
+                    free(event->data.route_variants.variants);
+                    break;
+                }
+                app->route_variant_count_ = event->data.route_variants.count;
+                if (app->route_variant_count_ > 32) {
+                    app->route_variant_count_ = 32;
+                }
+                memcpy(app->route_variants_, event->data.route_variants.variants,
+                       app->route_variant_count_ * sizeof(bus_route_variant_t));
+                ESP_LOGI(TAG, "Found %d variants for %s", app->route_variant_count_,
+                         app->search_buffer_);
                 free(event->data.route_variants.variants);
+                app->rebuildRouteVariantResults();
+            } else if (event->request_id == app->current_request_id_) {
+                app->route_variant_count_ = 0;
+                app->rebuildRouteVariantResults();
             }
             break;
 
@@ -838,6 +945,8 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
             break;
 
         case BUS_EVT_ROUTE_CATALOG:
+            app->catalog_request_started_ = false;
+            app->catalog_bootstrap_checked_ = true;
             if (event->status == ESP_OK) {
                 app->setCatalogState(true, "");
                 ESP_LOGI(TAG, "Route catalog ready: %u routes, %u providers succeeded, %u failed",
@@ -863,6 +972,74 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
 
         default:
             break;
+    }
+}
+
+void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)base;
+    (void)data;
+    BusApp *app = static_cast<BusApp *>(arg);
+    if (app == nullptr) {
+        return;
+    }
+    ESP_LOGI(TAG, "Network event received: id=%ld", static_cast<long>(id));
+    if (id == CRYSTAL_NETWORK_DISCONNECTED) {
+        app->catalog_request_started_ = false;
+        app->catalog_bootstrap_checked_ = false;
+        ESP_LOGI(TAG, "Wi-Fi disconnected; catalog bootstrap is waiting");
+        return;
+    }
+    if (id != CRYSTAL_NETWORK_CONNECTED) {
+        return;
+    }
+    ESP_LOGI(TAG, "Wi-Fi connected; catalog bootstrap will be evaluated on the LVGL task");
+}
+
+void BusApp::onCatalogBootstrapTimer(lv_timer_t *timer)
+{
+    BusApp *app = static_cast<BusApp *>(timer != nullptr ? timer->user_data : nullptr);
+    if (app != nullptr && app->root_ != nullptr) {
+        app->evaluateCatalogBootstrap();
+    }
+}
+
+void BusApp::evaluateCatalogBootstrap()
+{
+    if (catalog_bootstrap_checked_) {
+        return;
+    }
+
+    const bool cached_catalog_available = bus_service_route_catalog_ready();
+    const time_t now = time(nullptr);
+    const bool time_synced = now >= 1577836800 && crystal_time_last_sync() > 0;
+    if (!time_synced) {
+        setCatalogState(cached_catalog_available, cached_catalog_available ? "" :
+                        "Waiting for time synchronization...");
+        return;
+    }
+    if (!crystal_network_has_ip()) {
+        setCatalogState(cached_catalog_available, cached_catalog_available ? "" :
+                        "Waiting for Wi-Fi connection...");
+        return;
+    }
+    if (catalog_request_started_) {
+        return;
+    }
+
+    catalog_request_started_ = true;
+    const uint32_t request_id = bus_service_request_route_catalog();
+    ESP_LOGI(TAG, "Prerequisites ready; route catalog bootstrap requested (id=%lu)",
+             static_cast<unsigned long>(request_id));
+    if (request_id == 0) {
+        if (cached_catalog_available) {
+            catalog_bootstrap_checked_ = true;
+            catalog_ready_ = true;
+            setCatalogState(true, "");
+        } else {
+            catalog_request_started_ = false;
+            ESP_LOGW(TAG, "Route catalog request was not queued; bootstrap will retry");
+        }
     }
 }
 
@@ -948,8 +1125,12 @@ void BusApp::onEnter(lv_event_t *e)
     if (app == nullptr || !app->catalog_ready_) return;
 
     if (bus_route_is_complete(app->search_buffer_, strlen(app->search_buffer_))) {
-        ESP_LOGI(TAG, "Searching for route: %s", app->search_buffer_);
-        app->current_request_id_ = bus_service_request_route(app->search_buffer_);
+        app->route_variant_count_ = bus_service_get_cached_route_variants(
+            app->search_buffer_, app->route_variants_,
+            static_cast<uint8_t>(sizeof(app->route_variants_) / sizeof(app->route_variants_[0])));
+        ESP_LOGI(TAG, "Searching cached route variants: %s (%u variants)",
+                 app->search_buffer_, app->route_variant_count_);
+        app->rebuildRouteVariantResults();
     }
 }
 
@@ -970,9 +1151,39 @@ void BusApp::onRouteResultClicked(lv_event_t *e)
     }
     strlcpy(app->search_buffer_, route, sizeof(app->search_buffer_));
     lv_label_set_text(app->search_input_, app->search_buffer_);
-    app->current_request_id_ = bus_service_request_route(app->search_buffer_);
-    ESP_LOGI(TAG, "Route result selected: %s (request=%lu)", route,
-             static_cast<unsigned long>(app->current_request_id_));
+    app->route_variant_count_ = 0;
+    app->route_variant_count_ = bus_service_get_cached_route_variants(
+        app->search_buffer_, app->route_variants_,
+        static_cast<uint8_t>(sizeof(app->route_variants_) / sizeof(app->route_variants_[0])));
+    app->rebuildRouteVariantResults();
+    ESP_LOGI(TAG, "Route result selected from cache: %s (%u variants)", route,
+             app->route_variant_count_);
+}
+
+void BusApp::onRouteVariantClicked(lv_event_t *e)
+{
+    BusApp *app = static_cast<BusApp *>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) {
+        return;
+    }
+
+    lv_obj_t *row = lv_event_get_target(e);
+    const uintptr_t index = reinterpret_cast<uintptr_t>(lv_obj_get_user_data(row));
+    if (index >= app->route_variant_count_) {
+        return;
+    }
+
+    app->current_route_ = app->route_variants_[index];
+    const uint32_t request_id = bus_service_request_stops(
+        app->current_route_.route,
+        app->current_route_.op,
+        app->current_route_.bound,
+        app->current_route_.service_type);
+    ESP_LOGI(TAG, "Route variant selected: %s %c %s -> stops request=%lu",
+             app->current_route_.route,
+             app->current_route_.bound,
+             app->current_route_.dest_en,
+             static_cast<unsigned long>(request_id));
 }
 
 void BusApp::onRefreshTimer(lv_timer_t *timer)
