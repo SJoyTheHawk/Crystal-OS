@@ -136,7 +136,7 @@ uint8_t bus_route_get_operators(const char *name, size_t len)
     const bus_route_name_t *index = active_index(&count);
     for (uint16_t i = 0; i < count; i++) {
         if (memcmp(index[i].name, test, 4) == 0) {
-            return bus_route_index[i].ops;
+            return index[i].ops;
         }
     }
 

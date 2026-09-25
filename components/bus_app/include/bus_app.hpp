@@ -4,6 +4,7 @@
 #include "crystal_core.hpp"
 #include "lvgl.h"
 #include "bus_service.h"
+#include "bus_routes.h"
 
 extern "C" void bus_icon_prepare(void);
 LV_IMG_DECLARE(bus_icon);
@@ -42,10 +43,12 @@ private:
     lv_obj_t *favorite_list_ = nullptr;
     lv_obj_t *favorites_status_ = nullptr;
     lv_obj_t *search_input_ = nullptr;
+    lv_obj_t *search_enter_button_ = nullptr;
     lv_obj_t *keypad_container_ = nullptr;
     lv_obj_t *search_results_ = nullptr;
     lv_obj_t *catalog_overlay_ = nullptr;
     lv_obj_t *catalog_status_ = nullptr;
+    lv_obj_t *keypad_buttons_[BUS_ROUTE_CHARSET_LEN] = {};
 
     // State
     Favorite favorites_[MAX_FAVORITES];
@@ -80,10 +83,12 @@ private:
     static void onBackspace(lv_event_t *e);
     static void onReset(lv_event_t *e);
     static void onEnter(lv_event_t *e);
+    static void onRouteResultClicked(lv_event_t *e);
     static void onRefreshTimer(lv_timer_t *timer);
 
     // Helpers
     void updateKeypadState();
+    void rebuildSearchResults();
     void loadFavoritesFromNVS();
     void saveFavoritesToNVS();
     void refreshFavoriteETAs();

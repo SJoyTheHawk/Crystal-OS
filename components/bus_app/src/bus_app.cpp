@@ -134,7 +134,7 @@ bool BusApp::onCreate()
     loadFavoritesFromNVS();
 
     // Build UI
-    const lv_coord_t tab_bar_height = 56;
+    const lv_coord_t tab_bar_height = 48;
     buildTabBar(width);
     buildFavoritesTab(width, height, tab_bar_height);
     buildSearchTab(width, height, tab_bar_height);
@@ -198,10 +198,12 @@ bool BusApp::onDestroy()
     favorite_list_ = nullptr;
     favorites_status_ = nullptr;
     search_input_ = nullptr;
+    search_enter_button_ = nullptr;
     keypad_container_ = nullptr;
     search_results_ = nullptr;
     catalog_overlay_ = nullptr;
     catalog_status_ = nullptr;
+    memset(keypad_buttons_, 0, sizeof(keypad_buttons_));
 
     return true;
 }
@@ -227,7 +229,7 @@ void BusApp::buildTabBar(lv_coord_t width)
     // Tab bar at top
     tab_bar_ = lv_obj_create(root_);
     lv_obj_remove_style_all(tab_bar_);
-    lv_obj_set_size(tab_bar_, width, 56);
+    lv_obj_set_size(tab_bar_, width, 48);
     lv_obj_align(tab_bar_, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(tab_bar_, lv_color_hex(kCardBg), 0);
     lv_obj_set_style_bg_opa(tab_bar_, LV_OPA_COVER, 0);
@@ -242,7 +244,7 @@ void BusApp::buildTabBar(lv_coord_t width)
     // bottom rule instead of a raised button surface.
     lv_obj_t *fav_btn = lv_btn_create(tab_bar_);
     favorites_tab_button_ = fav_btn;
-    lv_obj_set_size(fav_btn, width / 2, 56);
+    lv_obj_set_size(fav_btn, width / 2, 48);
     lv_obj_set_style_radius(fav_btn, 0, 0);
     lv_obj_set_style_bg_opa(fav_btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(fav_btn, 0, 0);
@@ -256,7 +258,7 @@ void BusApp::buildTabBar(lv_coord_t width)
 
     lv_obj_t *search_btn = lv_btn_create(tab_bar_);
     search_tab_button_ = search_btn;
-    lv_obj_set_size(search_btn, width - width / 2, 56);
+    lv_obj_set_size(search_btn, width - width / 2, 48);
     lv_obj_set_style_radius(search_btn, 0, 0);
     lv_obj_set_style_bg_opa(search_btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(search_btn, 0, 0);
@@ -395,7 +397,17 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     // Input display
     search_input_ = makeLabel(search_tab_, &lv_font_montserrat_48, kTextPrimary);
     lv_label_set_text(search_input_, "");
-    lv_obj_align(search_input_, LV_ALIGN_TOP_MID, 0, kPad);
+    lv_obj_align(search_input_, LV_ALIGN_TOP_MID, 0, 4);
+
+    search_enter_button_ = lv_btn_create(search_tab_);
+    lv_obj_set_size(search_enter_button_, 60, 34);
+    lv_obj_align(search_enter_button_, LV_ALIGN_TOP_RIGHT, -kPad, 8);
+    lv_obj_set_style_radius(search_enter_button_, 8, 0);
+    lv_obj_set_style_bg_color(search_enter_button_, lv_color_hex(0x334155), 0);
+    lv_obj_t *enter_label = makeLabel(search_enter_button_, &lv_font_montserrat_16, kTextSecondary);
+    lv_label_set_text(enter_label, "Go");
+    lv_obj_center(enter_label);
+    lv_obj_add_event_cb(search_enter_button_, onEnter, LV_EVENT_CLICKED, this);
 
     // The results belong below the keypad. The Search page itself scrolls so
     // this area can grow when Step 3 adds catalog-backed route rows.
@@ -404,7 +416,7 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     search_results_ = lv_obj_create(search_tab_);
     lv_obj_remove_style_all(search_results_);
     lv_obj_set_size(search_results_, width - 2 * kPad, 96);
-    lv_obj_align(search_results_, LV_ALIGN_TOP_MID, 0, 272);
+    lv_obj_align(search_results_, LV_ALIGN_TOP_MID, 0, 244);
     lv_obj_set_style_bg_color(search_results_, lv_color_hex(kCardBg), 0);
     lv_obj_set_style_bg_opa(search_results_, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(search_results_, 10, 0);
@@ -440,6 +452,9 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
 void BusApp::setCatalogState(bool ready, const char *message)
 {
     catalog_ready_ = ready;
+    if (ready) {
+        updateKeypadState();
+    }
     if (catalog_status_ != nullptr) {
         lv_label_set_text(catalog_status_, message != nullptr ? message : "");
     }
@@ -458,12 +473,12 @@ void BusApp::buildKeypad(lv_coord_t width)
     keypad_container_ = lv_obj_create(search_tab_);
     lv_obj_remove_style_all(keypad_container_);
     const lv_coord_t keypad_width = width * 3 / 4;
-    constexpr lv_coord_t keypad_height = 192;
+    constexpr lv_coord_t keypad_height = 180;
     lv_obj_set_size(keypad_container_, keypad_width, keypad_height);
     // Input occupies the top band. Results are placed immediately after this
     // keypad and the Search page scrolls when the result list grows.
     // Leave a visible margin below the route number before the first row.
-    lv_obj_align(keypad_container_, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_align(keypad_container_, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_bg_color(keypad_container_, lv_color_hex(kBgColor), 0);
     lv_obj_set_style_bg_opa(keypad_container_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(keypad_container_, 0, 0);
@@ -489,6 +504,10 @@ void BusApp::buildKeypad(lv_coord_t width)
         lv_label_set_text(label, numbers[i]);
         lv_obj_center(label);
         lv_obj_add_event_cb(btn, onKeyPressed, LV_EVENT_CLICKED, this);
+        const char *key = strchr(BUS_ROUTE_CHARSET, numbers[i][0]);
+        if (key != nullptr) {
+            keypad_buttons_[key - BUS_ROUTE_CHARSET] = btn;
+        }
     }
 
     const lv_coord_t command_y = 3 * (number_height + gap);
@@ -511,6 +530,7 @@ void BusApp::buildKeypad(lv_coord_t width)
     lv_label_set_text(zero_label, "0");
     lv_obj_center(zero_label);
     lv_obj_add_event_cb(zero, onKeyPressed, LV_EVENT_CLICKED, this);
+    keypad_buttons_[9] = zero;
 
     lv_obj_t *backspace = lv_btn_create(keypad_container_);
     lv_obj_set_size(backspace, number_width, number_height);
@@ -555,18 +575,139 @@ void BusApp::buildKeypad(lv_coord_t width)
         lv_obj_center(label);
 
         lv_obj_add_event_cb(btn, onKeyPressed, LV_EVENT_CLICKED, this);
+        const char *key = strchr(BUS_ROUTE_CHARSET, *p);
+        if (key != nullptr) {
+            keypad_buttons_[key - BUS_ROUTE_CHARSET] = btn;
+        }
     }
 }
 
 void BusApp::updateKeypadState()
 {
-    // TODO: Implement adaptive key greying based on route index
     size_t len = strlen(search_buffer_);
     uint32_t mask = bus_route_next_mask(search_buffer_, len);
+    for (size_t i = 0; i < BUS_ROUTE_CHARSET_LEN; i++) {
+        lv_obj_t *button = keypad_buttons_[i];
+        if (button == nullptr) {
+            continue;
+        }
+        const bool enabled = (mask & (1u << i)) != 0;
+        lv_obj_t *label = lv_obj_get_child(button, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(enabled ? kCardBg : 0x111827), 0);
+        if (label != nullptr) {
+            lv_obj_set_style_text_color(label, lv_color_hex(enabled ? kTextPrimary : 0x475569), 0);
+        }
+    }
+    const bool complete = bus_route_is_complete(search_buffer_, len);
+    if (search_enter_button_ != nullptr) {
+        lv_obj_t *label = lv_obj_get_child(search_enter_button_, 0);
+        lv_obj_set_style_bg_color(search_enter_button_, lv_color_hex(complete ? kAccent : 0x334155), 0);
+        if (label != nullptr) {
+            lv_obj_set_style_text_color(label, lv_color_hex(complete ? kBgColor : kTextSecondary), 0);
+        }
+    }
+    rebuildSearchResults();
+}
 
-    // For now, just update enter button state
-    uint8_t is_complete = bus_route_is_complete(search_buffer_, len);
-    (void)is_complete;  // TODO: enable/disable enter button
+void BusApp::rebuildSearchResults()
+{
+    if (search_results_ == nullptr) {
+        return;
+    }
+
+    lv_obj_clean(search_results_);
+    const size_t prefix_len = strlen(search_buffer_);
+    if (prefix_len == 0) {
+        lv_obj_set_height(search_results_, 96);
+        lv_obj_t *hint = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
+        lv_label_set_text(hint, "Matching routes will appear here");
+        lv_obj_center(hint);
+        return;
+    }
+
+    uint16_t matches[2048];
+    uint16_t match_count = 0;
+    const uint16_t catalog_count = bus_route_catalog_count();
+    for (uint16_t i = 0; i < catalog_count && match_count < 2048; i++) {
+        bus_route_name_t entry;
+        if (!bus_route_catalog_get(i, &entry)) {
+            continue;
+        }
+        bool matches_prefix = true;
+        for (size_t c = 0; c < prefix_len; c++) {
+            if (entry.name[c] != search_buffer_[c]) {
+                matches_prefix = false;
+                break;
+            }
+        }
+        if (matches_prefix) {
+            matches[match_count++] = i;
+        }
+    }
+
+    // The provider order is not a display contract. Sort matching route names
+    // so the keypad results remain stable and easy to scan.
+    for (uint16_t i = 1; i < match_count; i++) {
+        uint16_t value = matches[i];
+        bus_route_name_t value_entry;
+        bus_route_catalog_get(value, &value_entry);
+        uint16_t j = i;
+        while (j > 0) {
+            bus_route_name_t previous;
+            bus_route_catalog_get(matches[j - 1], &previous);
+            if (memcmp(previous.name, value_entry.name, sizeof(previous.name)) <= 0) {
+                break;
+            }
+            matches[j] = matches[j - 1];
+            j--;
+        }
+        matches[j] = value;
+    }
+
+    const lv_coord_t row_height = 44;
+    const lv_coord_t row_gap = 4;
+    // Include the container's vertical padding as well as the row spacing;
+    // otherwise the last result is clipped at the bottom of the card.
+    lv_obj_set_height(search_results_, 28 + match_count * (row_height + row_gap));
+    if (match_count == 0) {
+        lv_obj_t *empty = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
+        lv_label_set_text(empty, "No matching routes");
+        lv_obj_center(empty);
+        return;
+    }
+
+    for (uint16_t i = 0; i < match_count; i++) {
+        bus_route_name_t entry;
+        bus_route_catalog_get(matches[i], &entry);
+        char route[5] = {0};
+        memcpy(route, entry.name, sizeof(entry.name));
+        for (int c = 3; c >= 0 && route[c] == ' '; c--) {
+            route[c] = '\0';
+        }
+
+        lv_obj_t *row = lv_btn_create(search_results_);
+        lv_obj_set_size(row, LV_PCT(100), row_height);
+        lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
+        lv_obj_set_style_radius(row, 6, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
+        lv_obj_add_event_cb(row, onRouteResultClicked, LV_EVENT_CLICKED, this);
+
+        lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
+        lv_label_set_text(route_label, route);
+        lv_obj_align(route_label, LV_ALIGN_LEFT_MID, 10, 0);
+
+        char operators[40] = "";
+        if (entry.ops & (1u << BUS_OP_KMB)) strlcat(operators, "KMB", sizeof(operators));
+        if ((entry.ops & (1u << BUS_OP_KMB)) && (entry.ops & (1u << BUS_OP_CTB))) {
+            strlcat(operators, " / ", sizeof(operators));
+        }
+        if (entry.ops & (1u << BUS_OP_CTB)) strlcat(operators, "CTB", sizeof(operators));
+        lv_obj_t *op_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
+        lv_label_set_text(op_label, operators);
+        lv_obj_align(op_label, LV_ALIGN_RIGHT_MID, -10, 0);
+    }
 }
 
 void BusApp::loadFavoritesFromNVS()
@@ -766,6 +907,11 @@ void BusApp::onKeyPressed(lv_event_t *e)
 
     char ch = text[0];
     size_t len = strlen(app->search_buffer_);
+    const char *key = strchr(BUS_ROUTE_CHARSET, ch);
+    if (key == nullptr || (bus_route_next_mask(app->search_buffer_, len) &
+                           (1u << (key - BUS_ROUTE_CHARSET))) == 0) {
+        return;
+    }
     if (len < 4) {
         app->search_buffer_[len] = ch;
         app->search_buffer_[len + 1] = '\0';
@@ -805,6 +951,28 @@ void BusApp::onEnter(lv_event_t *e)
         ESP_LOGI(TAG, "Searching for route: %s", app->search_buffer_);
         app->current_request_id_ = bus_service_request_route(app->search_buffer_);
     }
+}
+
+void BusApp::onRouteResultClicked(lv_event_t *e)
+{
+    BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) {
+        return;
+    }
+    lv_obj_t *row = lv_event_get_target(e);
+    lv_obj_t *route_label = lv_obj_get_child(row, 0);
+    if (route_label == nullptr) {
+        return;
+    }
+    const char *route = lv_label_get_text(route_label);
+    if (route == nullptr || route[0] == '\0') {
+        return;
+    }
+    strlcpy(app->search_buffer_, route, sizeof(app->search_buffer_));
+    lv_label_set_text(app->search_input_, app->search_buffer_);
+    app->current_request_id_ = bus_service_request_route(app->search_buffer_);
+    ESP_LOGI(TAG, "Route result selected: %s (request=%lu)", route,
+             static_cast<unsigned long>(app->current_request_id_));
 }
 
 void BusApp::onRefreshTimer(lv_timer_t *timer)
