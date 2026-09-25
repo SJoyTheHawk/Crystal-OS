@@ -32,6 +32,13 @@ uint8_t bus_route_is_complete(const char *name, size_t len);
 // Get available operators for a route (bit 0 = KMB, bit 1 = CTB)
 uint8_t bus_route_get_operators(const char *name, size_t len);
 
+// Runtime route catalog populated from the provider cache. The compiled
+// fixture remains available until a catalog is loaded.
+void bus_route_catalog_reset(void);
+bool bus_route_catalog_add(const char *name, size_t len, uint8_t ops);
+uint16_t bus_route_catalog_count(void);
+bool bus_route_catalog_get(uint16_t index, bus_route_name_t *out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,6 +3,7 @@
  */
 
 #include "crystal_hal.hpp"
+#include "crystal_network.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -950,6 +951,11 @@ CrystalHal s_hal = {&s_brightness, &s_rtc, &s_wifi, &s_storage, &s_touch, &s_pow
 CrystalHal &hal()
 {
     return s_hal;
+}
+
+extern "C" bool crystal_network_has_ip(void)
+{
+    return s_wifi.has_ip();
 }
 
 bool crystal_hal_set_volume(int volume)

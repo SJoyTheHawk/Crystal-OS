@@ -60,6 +60,7 @@ typedef enum {
     BUS_EVT_STOPS_LIST,
     BUS_EVT_STOP_DETAIL,
     BUS_EVT_ETA,
+    BUS_EVT_ROUTE_CATALOG,
     BUS_EVT_ERROR
 } bus_event_type_t;
 
@@ -86,6 +87,11 @@ typedef struct {
             bus_eta_result_t result;
         } eta;
         struct {
+            uint16_t route_count;
+            uint8_t providers_succeeded;
+            uint8_t providers_failed;
+        } route_catalog;
+        struct {
             char message[64];
         } error;
     } data;
@@ -102,6 +108,13 @@ void bus_service_set_listener(bus_listener_t cb, void *user_data);
 
 // Request route variants
 uint32_t bus_service_request_route(const char *route_name);
+
+// Fetch and persist the complete searchable route catalog from active
+// providers. A cache is loaded during service initialization when available.
+uint32_t bus_service_request_route_catalog(void);
+
+// True only when a complete KMB + CTB catalog is loaded in memory.
+bool bus_service_route_catalog_ready(void);
 
 // Request stops for a route
 uint32_t bus_service_request_stops(const char *route,

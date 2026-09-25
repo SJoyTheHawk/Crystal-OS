@@ -43,6 +43,9 @@ private:
     lv_obj_t *favorites_status_ = nullptr;
     lv_obj_t *search_input_ = nullptr;
     lv_obj_t *keypad_container_ = nullptr;
+    lv_obj_t *search_results_ = nullptr;
+    lv_obj_t *catalog_overlay_ = nullptr;
+    lv_obj_t *catalog_status_ = nullptr;
 
     // State
     Favorite favorites_[MAX_FAVORITES];
@@ -51,6 +54,7 @@ private:
     uint8_t favorite_requests_pending_ = 0;
     uint8_t favorite_refresh_failures_ = 0;
     bool favorite_refresh_active_ = false;
+    bool catalog_ready_ = false;
     uint32_t current_request_id_ = 0;
     bus_route_variant_t current_route_;
     char search_buffer_[5] = {0};
@@ -64,6 +68,7 @@ private:
     void buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height);
     void buildKeypad(lv_coord_t width);
     void updateTabAppearance(int active_tab);
+    void setCatalogState(bool ready, const char *message);
     void rebuildFavoritesView();
     void setFavoritesStatus(const char *message, uint32_t color);
 
@@ -73,6 +78,7 @@ private:
     static void onFavoriteClicked(lv_event_t *e);
     static void onKeyPressed(lv_event_t *e);
     static void onBackspace(lv_event_t *e);
+    static void onReset(lv_event_t *e);
     static void onEnter(lv_event_t *e);
     static void onRefreshTimer(lv_timer_t *timer);
 

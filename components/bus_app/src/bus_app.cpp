@@ -122,6 +122,13 @@ bool BusApp::onCreate()
     // Initialize service
     bus_service_init();
     bus_service_set_listener(onBusEvent, this);
+    catalog_ready_ = bus_service_route_catalog_ready();
+    if (!catalog_ready_) {
+        ESP_LOGI(TAG, "Route catalog not ready; Search keypad will remain locked");
+    }
+    const uint32_t catalog_request_id = bus_service_request_route_catalog();
+    ESP_LOGI(TAG, "Route catalog bootstrap requested (id=%lu)",
+             static_cast<unsigned long>(catalog_request_id));
 
     // Load favorites from NVS
     loadFavoritesFromNVS();
@@ -192,6 +199,9 @@ bool BusApp::onDestroy()
     favorites_status_ = nullptr;
     search_input_ = nullptr;
     keypad_container_ = nullptr;
+    search_results_ = nullptr;
+    catalog_overlay_ = nullptr;
+    catalog_status_ = nullptr;
 
     return true;
 }
@@ -377,6 +387,9 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     lv_obj_set_style_border_width(search_tab_, 0, 0);
     lv_obj_set_style_radius(search_tab_, 0, 0);
     lv_obj_set_style_pad_all(search_tab_, kPad, 0);
+    lv_obj_add_flag(search_tab_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(search_tab_, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(search_tab_, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_add_flag(search_tab_, LV_OBJ_FLAG_HIDDEN);  // Start hidden
 
     // Input display
@@ -384,66 +397,157 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     lv_label_set_text(search_input_, "");
     lv_obj_align(search_input_, LV_ALIGN_TOP_MID, 0, kPad);
 
-    // Build keypad
+    // The results belong below the keypad. The Search page itself scrolls so
+    // this area can grow when Step 3 adds catalog-backed route rows.
     buildKeypad(width);
+
+    search_results_ = lv_obj_create(search_tab_);
+    lv_obj_remove_style_all(search_results_);
+    lv_obj_set_size(search_results_, width - 2 * kPad, 96);
+    lv_obj_align(search_results_, LV_ALIGN_TOP_MID, 0, 272);
+    lv_obj_set_style_bg_color(search_results_, lv_color_hex(kCardBg), 0);
+    lv_obj_set_style_bg_opa(search_results_, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(search_results_, 10, 0);
+    lv_obj_set_style_pad_all(search_results_, 10, 0);
+    lv_obj_set_style_border_width(search_results_, 1, 0);
+    lv_obj_set_style_border_color(search_results_, lv_color_hex(kBorder), 0);
+    // The page owns vertical scrolling. This container grows with its route
+    // rows instead of becoming a nested scroll view.
+    lv_obj_clear_flag(search_results_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(search_results_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_t *results_hint = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
+    lv_label_set_text(results_hint, "Matching routes will appear here");
+    lv_obj_center(results_hint);
+
+    // Keep the keypad physically covered until both provider catalogs are
+    // loaded. Event handlers also check catalog_ready_ as a second guard.
+    catalog_overlay_ = lv_obj_create(search_tab_);
+    lv_obj_remove_style_all(catalog_overlay_);
+    lv_obj_set_size(catalog_overlay_, LV_PCT(100), LV_PCT(100));
+    lv_obj_align(catalog_overlay_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(catalog_overlay_, lv_color_hex(kBgColor), 0);
+    lv_obj_set_style_bg_opa(catalog_overlay_, LV_OPA_90, 0);
+    lv_obj_set_style_pad_all(catalog_overlay_, kPad, 0);
+    lv_obj_add_flag(catalog_overlay_, LV_OBJ_FLAG_CLICKABLE);
+
+    catalog_status_ = makeLabel(catalog_overlay_, &lv_font_montserrat_20, kTextPrimary);
+    lv_label_set_text(catalog_status_, "Fetching route data...\nPlease wait");
+    lv_obj_set_style_text_align(catalog_status_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(catalog_status_);
+    setCatalogState(catalog_ready_, catalog_ready_ ? "" : "Fetching route data...\nPlease wait");
+}
+
+void BusApp::setCatalogState(bool ready, const char *message)
+{
+    catalog_ready_ = ready;
+    if (catalog_status_ != nullptr) {
+        lv_label_set_text(catalog_status_, message != nullptr ? message : "");
+    }
+    if (catalog_overlay_ != nullptr) {
+        if (ready) {
+            lv_obj_add_flag(catalog_overlay_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(catalog_overlay_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(catalog_overlay_);
+        }
+    }
 }
 
 void BusApp::buildKeypad(lv_coord_t width)
 {
     keypad_container_ = lv_obj_create(search_tab_);
     lv_obj_remove_style_all(keypad_container_);
-    lv_obj_set_size(keypad_container_, width * 9 / 10, 320);
-    lv_obj_align(keypad_container_, LV_ALIGN_CENTER, 0, 20);
+    const lv_coord_t keypad_width = width * 3 / 4;
+    constexpr lv_coord_t keypad_height = 192;
+    lv_obj_set_size(keypad_container_, keypad_width, keypad_height);
+    // Input occupies the top band. Results are placed immediately after this
+    // keypad and the Search page scrolls when the result list grows.
+    // Leave a visible margin below the route number before the first row.
+    lv_obj_align(keypad_container_, LV_ALIGN_TOP_MID, 0, 80);
     lv_obj_set_style_bg_color(keypad_container_, lv_color_hex(kBgColor), 0);
     lv_obj_set_style_bg_opa(keypad_container_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(keypad_container_, 0, 0);
     lv_obj_set_style_pad_all(keypad_container_, 0, 0);
     lv_obj_clear_flag(keypad_container_, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Number grid (4x3)
-    const char *numbers[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"};
-    lv_coord_t btn_size = 60;
-    lv_coord_t spacing = 8;
-
-    for (int i = 0; i < 10; i++) {
-        int row = i / 3;
-        int col = i % 3;
-        if (i == 9) { row = 3; col = 1; }  // 0 in bottom center
-
+    // Numeric keypad: three columns and four rows, matching the compact
+    // hardware-keypad proportions used by the reference apps.
+    constexpr lv_coord_t gap = 5;
+    const lv_coord_t numeric_width = keypad_width * 2 / 3;
+    const lv_coord_t number_width = (numeric_width - 2 * gap) / 3;
+    constexpr lv_coord_t number_height = 40;
+    const char *numbers[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
+    for (int i = 0; i < 9; i++) {
+        const int row = i / 3;
+        const int col = i % 3;
         lv_obj_t *btn = lv_btn_create(keypad_container_);
-        lv_obj_set_size(btn, btn_size, btn_size);
-        lv_obj_set_pos(btn, col * (btn_size + spacing) + 40, row * (btn_size + spacing));
+        lv_obj_set_size(btn, number_width, number_height);
+        lv_obj_set_pos(btn, col * (number_width + gap), row * (number_height + gap));
+        lv_obj_set_style_radius(btn, 8, 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(kCardBg), 0);
-
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, numbers[i]);
         lv_obj_center(label);
-
         lv_obj_add_event_cb(btn, onKeyPressed, LV_EVENT_CLICKED, this);
     }
 
-    // Alphabet strip: four tiles are visible at once beside the keypad. The
-    // remaining route letters can be reached with a vertical swipe.
+    const lv_coord_t command_y = 3 * (number_height + gap);
+    lv_obj_t *reset = lv_btn_create(keypad_container_);
+    lv_obj_set_size(reset, number_width, number_height);
+    lv_obj_set_pos(reset, 0, command_y);
+    lv_obj_set_style_radius(reset, 8, 0);
+    lv_obj_set_style_bg_color(reset, lv_color_hex(kCardBg), 0);
+    lv_obj_t *reset_label = lv_label_create(reset);
+    lv_label_set_text(reset_label, LV_SYMBOL_CLOSE);
+    lv_obj_center(reset_label);
+    lv_obj_add_event_cb(reset, onReset, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *zero = lv_btn_create(keypad_container_);
+    lv_obj_set_size(zero, number_width, number_height);
+    lv_obj_set_pos(zero, number_width + gap, command_y);
+    lv_obj_set_style_radius(zero, 8, 0);
+    lv_obj_set_style_bg_color(zero, lv_color_hex(kCardBg), 0);
+    lv_obj_t *zero_label = lv_label_create(zero);
+    lv_label_set_text(zero_label, "0");
+    lv_obj_center(zero_label);
+    lv_obj_add_event_cb(zero, onKeyPressed, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *backspace = lv_btn_create(keypad_container_);
+    lv_obj_set_size(backspace, number_width, number_height);
+    lv_obj_set_pos(backspace, 2 * (number_width + gap), command_y);
+    lv_obj_set_style_radius(backspace, 8, 0);
+    lv_obj_set_style_bg_color(backspace, lv_color_hex(kCardBg), 0);
+    lv_obj_t *bs_label = lv_label_create(backspace);
+    lv_label_set_text(bs_label, LV_SYMBOL_BACKSPACE);
+    lv_obj_center(bs_label);
+    lv_obj_add_event_cb(backspace, onBackspace, LV_EVENT_CLICKED, this);
+
+    // Alphabet bank: two columns, vertically scrollable. Keeping the bank
+    // separate leaves the numeric keys large enough for reliable touch input.
     lv_obj_t *letter_strip = lv_obj_create(keypad_container_);
-    constexpr lv_coord_t letter_tile = 60;
-    constexpr lv_coord_t letter_gap = 8;
-    constexpr lv_coord_t letter_visible_height = letter_tile * 4 + letter_gap * 3;
-    lv_obj_set_size(letter_strip, letter_tile, letter_visible_height);
-    lv_obj_set_pos(letter_strip, width * 9 / 10 - letter_tile, 0);
+    const lv_coord_t letter_x = numeric_width + gap;
+    const lv_coord_t letter_width = keypad_width - letter_x;
+    const lv_coord_t letter_gap = 6;
+    const lv_coord_t letter_tile_width = (letter_width - letter_gap) / 2;
+    lv_obj_set_size(letter_strip, letter_width, keypad_height);
+    lv_obj_set_pos(letter_strip, letter_x, 0);
     lv_obj_set_style_bg_color(letter_strip, lv_color_hex(kBgColor), 0);
     lv_obj_set_style_border_width(letter_strip, 0, 0);
     lv_obj_set_style_pad_all(letter_strip, 0, 0);
     lv_obj_set_style_pad_row(letter_strip, letter_gap, 0);
+    lv_obj_set_style_pad_column(letter_strip, letter_gap, 0);
     lv_obj_set_flex_flow(letter_strip, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(letter_strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(letter_strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(letter_strip, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(letter_strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(letter_strip, LV_FLEX_FLOW_ROW_WRAP);
 
     // Add letter buttons
     const char *letters = BUS_ROUTE_CHARSET + 10;  // Skip digits
     for (const char *p = letters; *p; p++) {
         lv_obj_t *btn = lv_btn_create(letter_strip);
-        lv_obj_set_size(btn, letter_tile, letter_tile);
+        lv_obj_set_size(btn, letter_tile_width, number_height);
+        lv_obj_set_style_radius(btn, 8, 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(kCardBg), 0);
 
         lv_obj_t *label = lv_label_create(btn);
@@ -452,26 +556,6 @@ void BusApp::buildKeypad(lv_coord_t width)
 
         lv_obj_add_event_cb(btn, onKeyPressed, LV_EVENT_CLICKED, this);
     }
-
-    // Backspace button
-    lv_obj_t *backspace = lv_btn_create(keypad_container_);
-    lv_obj_set_size(backspace, btn_size, btn_size);
-    lv_obj_set_pos(backspace, 3 * (btn_size + spacing) + 40, 0);
-    lv_obj_set_style_bg_color(backspace, lv_color_hex(0x991B1B), 0);  // Red
-    lv_obj_t *bs_label = lv_label_create(backspace);
-    lv_label_set_text(bs_label, LV_SYMBOL_BACKSPACE);
-    lv_obj_center(bs_label);
-    lv_obj_add_event_cb(backspace, onBackspace, LV_EVENT_CLICKED, this);
-
-    // Enter button
-    lv_obj_t *enter = lv_btn_create(keypad_container_);
-    lv_obj_set_size(enter, btn_size, btn_size);
-    lv_obj_set_pos(enter, 3 * (btn_size + spacing) + 40, (btn_size + spacing));
-    lv_obj_set_style_bg_color(enter, lv_color_hex(0x15803D), 0);  // Green
-    lv_obj_t *enter_label = lv_label_create(enter);
-    lv_label_set_text(enter_label, LV_SYMBOL_OK);
-    lv_obj_center(enter_label);
-    lv_obj_add_event_cb(enter, onEnter, LV_EVENT_CLICKED, this);
 }
 
 void BusApp::updateKeypadState()
@@ -612,6 +696,26 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
             }
             break;
 
+        case BUS_EVT_ROUTE_CATALOG:
+            if (event->status == ESP_OK) {
+                app->setCatalogState(true, "");
+                ESP_LOGI(TAG, "Route catalog ready: %u routes, %u providers succeeded, %u failed",
+                         event->data.route_catalog.route_count,
+                         event->data.route_catalog.providers_succeeded,
+                         event->data.route_catalog.providers_failed);
+            } else if (event->status == ESP_ERR_NOT_FINISHED) {
+                app->setCatalogState(false, "Route data incomplete\nRetrying provider fetch...");
+                ESP_LOGW(TAG, "Route catalog partial: %u routes, %u providers succeeded, %u failed; refresh will retry",
+                         event->data.route_catalog.route_count,
+                         event->data.route_catalog.providers_succeeded,
+                         event->data.route_catalog.providers_failed);
+            } else {
+                app->setCatalogState(false, "Route data unavailable\nConnect to Wi-Fi and retry");
+                ESP_LOGE(TAG, "Route catalog bootstrap failed; cached routes remain active (%u routes)",
+                         event->data.route_catalog.route_count);
+            }
+            break;
+
         case BUS_EVT_ERROR:
             app->showError(event->data.error.message);
             break;
@@ -654,6 +758,7 @@ void BusApp::onFavoriteClicked(lv_event_t *e)
 void BusApp::onKeyPressed(lv_event_t *e)
 {
     BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) return;
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_t *label = lv_obj_get_child(btn, 0);
     const char *text = lv_label_get_text(label);
@@ -672,6 +777,7 @@ void BusApp::onKeyPressed(lv_event_t *e)
 void BusApp::onBackspace(lv_event_t *e)
 {
     BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) return;
 
     size_t len = strlen(app->search_buffer_);
     if (len > 0) {
@@ -681,9 +787,19 @@ void BusApp::onBackspace(lv_event_t *e)
     }
 }
 
+void BusApp::onReset(lv_event_t *e)
+{
+    BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) return;
+    app->search_buffer_[0] = '\0';
+    lv_label_set_text(app->search_input_, "");
+    app->updateKeypadState();
+}
+
 void BusApp::onEnter(lv_event_t *e)
 {
     BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
+    if (app == nullptr || !app->catalog_ready_) return;
 
     if (bus_route_is_complete(app->search_buffer_, strlen(app->search_buffer_))) {
         ESP_LOGI(TAG, "Searching for route: %s", app->search_buffer_);

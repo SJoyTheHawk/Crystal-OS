@@ -34,26 +34,26 @@ The existing code also contains correctness issues that must be handled before a
 
 | # | Workflow capability | Current implementation | Readiness | Required work |
 |---:|---|---|---:|---|
-| 1 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
-| 2 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()` | Partial | Add reset key, correct layout, route loading state, result list, and adaptive key styling. |
-| 3 | Route prefix validation | `bus_route_is_complete()` | Partial | Replace placeholder index; fix `bus_route_next_mask()` prefix matching and operator metadata. |
-| 4 | Route result sorting and both directions | None | Missing | Add route result model and sorted variant list. |
-| 5 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
-| 6 | CTB route variants | None | Missing | Add CTB request and normalization. |
-| 7 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
-| 8 | Direction chooser | Event only logs | Missing | Build variant page and select one normalized variant. |
-| 9 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |
-| 10 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Missing | Implement detail requests or a bounded cache/bulk loader, with EN/TC fields. |
-| 11 | Stop picker | Event only logs | Missing | Scrollable list, placeholder names, loading/error rows, and back navigation. |
-| 12 | ETA for one operator | `process_eta_request()` | Partial | Correct API parsing, direction filtering, clock-invalid behavior, and error/empty result semantics. |
-| 13 | ETA for co-operated route | None | Missing | Issue both requests, merge and sort predictions, deduplicate, and retain per-operator error state. |
-| 14 | ETA refresh cadence | 30-second app timer | Partial | Make visible-page scoped, prevent duplicate queueing, and preserve last good data on errors. |
-| 15 | ETA detail page | None | Missing | Add detail page, freshness, manual refresh, no-info text, and save toggle. |
-| 16 | Favorite add/remove | NVS load/save only | Missing | Define identity, duplicate detection, max-eight feedback, toggle action, and atomic persistence. |
-| 17 | Favorite edit/delete | None | Missing | Edit mode and trash action; rebuild list after deletion. |
-| 18 | Favorite card update | Stub | Missing | Keep card pointers or rebuild safely; show three merged ETAs and age. |
-| 19 | Language selection | No language state or TC fields | Missing | Add active language, endpoint/query selection, cache generation, and UI strings. |
-| 20 | Route/stop data cache | No cache manager | Missing | Add filesystem cache, metadata, expiry, interrupted-update recovery, and progress events. |
+| 1 | Full route catalog bootstrap and cache | Runtime KMB/CTB route catalog fetch, in-memory index, atomic SPIFFS cache, seven-day freshness, provider progress logs, and Search loading lock | Complete | Stop details are intentionally lazy and belong to the route-stop workflow; language-specific stop data belongs to points 11/20. NWFB remains skipped unless a live endpoint is confirmed. |
+| 2 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
+| 3 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()` | Partial | Compact reference-style keypad, reset key, loading lock, and scrollable result area are in place; add catalog-backed result rows, adaptive key styling, and route selection. |
+| 4 | Route prefix validation | `bus_route_is_complete()` | Partial | Replace placeholder index with the catalog; fix `bus_route_next_mask()` prefix matching and operator metadata. |
+| 5 | Route result sorting and both directions | None | Missing | Add route result model and sorted variant list. |
+| 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
+| 7 | CTB route variants | None | Missing | Add CTB request and normalization. |
+| 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
+| 9 | Direction chooser | Event only logs | Missing | Build variant page and select one normalized variant. |
+| 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |
+| 11 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Missing | Implement detail requests or a bounded cache/bulk loader, with EN/TC fields. |
+| 12 | Stop picker | Event only logs | Missing | Scrollable list, placeholder names, loading/error rows, and back navigation. |
+| 13 | ETA for one operator | `process_eta_request()` | Partial | Correct API parsing, direction filtering, clock-invalid behavior, and error/empty result semantics. |
+| 14 | ETA for co-operated route | None | Missing | Issue both requests, merge and sort predictions, deduplicate, and retain per-operator error state. |
+| 15 | ETA refresh cadence | 30-second app timer | Partial | Make visible-page scoped, prevent duplicate queueing, and preserve last good data on errors. |
+| 16 | ETA detail page | None | Missing | Add detail page, freshness, manual refresh, no-info text, and save toggle. |
+| 17 | Favorite add/remove | NVS load/save only | Missing | Define identity, duplicate detection, max-eight feedback, toggle action, and atomic persistence. |
+| 18 | Favorite edit/delete | None | Missing | Edit mode and trash action; rebuild list after deletion. |
+| 19 | Favorite card update | Stub | Missing | Keep card pointers or rebuild safely; show three merged ETAs and age. |
+| 20 | Language selection | No language state or TC fields | Missing | Add active language, endpoint/query selection, cache generation, and UI strings. |
 | 21 | Seven-day refresh | No timestamp check | Missing | Implement valid-clock checks and daily/app-open expiry checks. |
 | 22 | Offline behavior | None | Missing | Use cached names/routes/favorites and show stale/no-network status. |
 | 23 | Nearby tab | Deliberately absent | Deferred | Add only after location input and coordinate cache decisions are implemented. |

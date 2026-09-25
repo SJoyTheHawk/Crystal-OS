@@ -1,8 +1,11 @@
 #include "bus_service.h"
 #include "bus_routes.h"
+#include "crystal_network.h"
 
 #include <string.h>
 #include <time.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -16,6 +19,13 @@ static const char *TAG = "bus_service";
 
 #define KMB_BASE_URL "https://data.etabus.gov.hk/v1/transport/kmb"
 #define CTB_BASE_URL "https://rt.data.gov.hk/v2/transport/citybus"
+#define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
+#define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
+#define ROUTE_CACHE_MAGIC 0x42524331u
+#define ROUTE_CACHE_VERSION 2u
+#define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
+#define BUS_HTTP_TIMEOUT_MS 15000
+#define BUS_ROUTE_FETCH_ATTEMPTS 10
 
 // Request types
 typedef enum {
@@ -23,6 +33,7 @@ typedef enum {
     REQ_TYPE_STOPS,
     REQ_TYPE_STOP_DETAIL,
     REQ_TYPE_ETA,
+    REQ_TYPE_ROUTE_CATALOG,
 } req_type_t;
 
 // Request structure
@@ -43,20 +54,27 @@ static bus_listener_t s_listener = NULL;
 static void *s_listener_user_data = NULL;
 static uint32_t s_next_request_id = 1;
 static volatile bool s_cancel_all = false;
+static time_t s_route_cache_fetched_at = 0;
+static uint8_t s_route_cache_provider_mask = 0;
 
 // Forward declarations
 static void bus_worker_task(void *arg);
 static void process_route_request(const bus_request_t *req);
 static void process_stops_request(const bus_request_t *req);
 static void process_eta_request(const bus_request_t *req);
+static void process_route_catalog_request(const bus_request_t *req);
 static void post_event(const bus_event_t *event);
 static char *normalize_stop_id(char *stop_id);
+static bool load_route_catalog_cache(void);
+static bool wait_for_network(void);
 
 void bus_service_init(void)
 {
     if (s_worker_task != NULL) {
         return;  // Already initialized
     }
+
+    load_route_catalog_cache();
 
     s_request_queue = xQueueCreate(4, sizeof(bus_request_t));
     if (s_request_queue == NULL) {
@@ -104,6 +122,36 @@ uint32_t bus_service_request_route(const char *route_name)
     }
 
     return req.id;
+}
+
+uint32_t bus_service_request_route_catalog(void)
+{
+    if (s_request_queue == NULL) {
+        bus_service_init();
+    }
+
+    const time_t now = time(NULL);
+    if (bus_route_catalog_count() > 0 && s_route_cache_fetched_at > 0 &&
+        now >= s_route_cache_fetched_at &&
+        s_route_cache_provider_mask == 0x03 &&
+        (uint32_t)(now - s_route_cache_fetched_at) < ROUTE_CACHE_MAX_AGE_SECONDS) {
+        ESP_LOGI(TAG, "Route catalog cache: fresh, skipping provider fetch");
+        return 0;
+    }
+
+    bus_request_t req = {0};
+    req.type = REQ_TYPE_ROUTE_CATALOG;
+    req.id = s_next_request_id++;
+    if (xQueueSend(s_request_queue, &req, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Route catalog request queue full");
+        return 0;
+    }
+    return req.id;
+}
+
+bool bus_service_route_catalog_ready(void)
+{
+    return bus_route_catalog_count() > 0 && s_route_cache_provider_mask == 0x03;
 }
 
 uint32_t bus_service_request_stops(const char *route,
@@ -214,6 +262,9 @@ static void bus_worker_task(void *arg)
                 case REQ_TYPE_ETA:
                     process_eta_request(&req);
                     break;
+                case REQ_TYPE_ROUTE_CATALOG:
+                    process_route_catalog_request(&req);
+                    break;
             }
         }
     }
@@ -222,10 +273,17 @@ static void bus_worker_task(void *arg)
 // HTTP helper
 static esp_err_t http_get_json(const char *url, cJSON **out_json)
 {
+    if (!crystal_network_has_ip()) {
+        ESP_LOGW(TAG, "HTTP request deferred: network has no IP address");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = 10000,
+        // CTB's route catalog can take roughly 14 seconds before sending
+        // headers. Fifteen seconds leaves a small margin for that response.
+        .timeout_ms = BUS_HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .keep_alive_enable = true,
         .buffer_size = 4096,
@@ -244,6 +302,12 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
 
     int content_length = esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
+
+    if (content_length < 0) {
+        ESP_LOGW(TAG, "HTTP headers unavailable (status=%d)", status);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
 
     if (status != 200) {
         ESP_LOGW(TAG, "HTTP %d", status);
@@ -268,6 +332,10 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
         total_read += read_len;
     }
 
+    if (total_read != content_length) {
+        ESP_LOGW(TAG, "HTTP body incomplete: read %d of %d bytes", total_read, content_length);
+    }
+
     buffer[total_read] = '\0';
 
     // Don't call close() to preserve TLS session
@@ -284,6 +352,215 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
 
     *out_json = json;
     return ESP_OK;
+}
+
+static bool wait_for_network(void)
+{
+    for (uint8_t attempt = 0; attempt < 30; attempt++) {
+        if (s_cancel_all) {
+            return false;
+        }
+        if (crystal_network_has_ip()) {
+            ESP_LOGI(TAG, "Network ready; starting route catalog fetch");
+            return true;
+        }
+        if (attempt == 0) {
+            ESP_LOGI(TAG, "Route catalog waiting for network IP");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    ESP_LOGE(TAG, "Route catalog failed: network IP was not acquired");
+    return false;
+}
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t count;
+    uint8_t provider_mask;
+    uint8_t reserved[3];
+    int64_t fetched_at;
+} route_cache_header_t;
+
+static bool load_route_catalog_cache(void)
+{
+    FILE *file = fopen(ROUTE_CACHE_PATH, "rb");
+    if (file == NULL) {
+        ESP_LOGI(TAG, "Route catalog cache: no cache found");
+        return false;
+    }
+
+    route_cache_header_t header = {0};
+    const bool header_ok = fread(&header, sizeof(header), 1, file) == 1 &&
+                           header.magic == ROUTE_CACHE_MAGIC &&
+                           header.version == ROUTE_CACHE_VERSION &&
+                           header.count > 0 && header.count <= 2048 &&
+                           header.provider_mask != 0;
+    if (!header_ok) {
+        fclose(file);
+        ESP_LOGW(TAG, "Route catalog cache: invalid header");
+        return false;
+    }
+
+    bus_route_catalog_reset();
+    bus_route_name_t entry;
+    for (uint16_t i = 0; i < header.count; i++) {
+        if (fread(&entry, sizeof(entry), 1, file) != 1 ||
+            !bus_route_catalog_add(entry.name, sizeof(entry.name), entry.ops)) {
+            bus_route_catalog_reset();
+            fclose(file);
+            ESP_LOGW(TAG, "Route catalog cache: truncated or invalid");
+            return false;
+        }
+    }
+    s_route_cache_fetched_at = (time_t)header.fetched_at;
+    s_route_cache_provider_mask = header.provider_mask;
+    fclose(file);
+    const time_t now = time(NULL);
+    if (s_route_cache_fetched_at > 0 && now > s_route_cache_fetched_at) {
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes (%ld days old)",
+                 bus_route_catalog_count(),
+                 (long)((now - s_route_cache_fetched_at) / 86400));
+    } else {
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes (clock unavailable)",
+                 bus_route_catalog_count());
+    }
+    return true;
+}
+
+static bool save_route_catalog_cache(uint8_t provider_mask)
+{
+    FILE *file = fopen(ROUTE_CACHE_TEMP_PATH, "wb");
+    if (file == NULL) {
+        ESP_LOGE(TAG, "Route catalog cache: cannot open temporary file");
+        return false;
+    }
+
+    route_cache_header_t header = {
+        .magic = ROUTE_CACHE_MAGIC,
+        .version = ROUTE_CACHE_VERSION,
+        .count = bus_route_catalog_count(),
+        .provider_mask = provider_mask,
+        .fetched_at = (int64_t)time(NULL),
+    };
+    bool ok = header.count > 0 && fwrite(&header, sizeof(header), 1, file) == 1;
+    for (uint16_t i = 0; ok && i < header.count; i++) {
+        bus_route_name_t entry;
+        ok = bus_route_catalog_get(i, &entry) && fwrite(&entry, sizeof(entry), 1, file) == 1;
+    }
+    if (fclose(file) != 0) {
+        ok = false;
+    }
+    if (ok && rename(ROUTE_CACHE_TEMP_PATH, ROUTE_CACHE_PATH) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        remove(ROUTE_CACHE_TEMP_PATH);
+        ESP_LOGE(TAG, "Route catalog cache: write failed");
+    } else {
+        s_route_cache_fetched_at = (time_t)header.fetched_at;
+        s_route_cache_provider_mask = provider_mask;
+        ESP_LOGI(TAG, "Route catalog cache: saved %u routes", header.count);
+    }
+    return ok;
+}
+
+static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t op)
+{
+    cJSON *root = NULL;
+    for (uint8_t attempt = 1; attempt <= BUS_ROUTE_FETCH_ATTEMPTS; attempt++) {
+        ESP_LOGI(TAG, "Route catalog: fetching %s from %s (attempt %u/%u)",
+                 label, url, (unsigned)attempt, (unsigned)BUS_ROUTE_FETCH_ATTEMPTS);
+        if (http_get_json(url, &root) == ESP_OK && root != NULL) {
+            break;
+        }
+        root = NULL;
+        if (attempt < BUS_ROUTE_FETCH_ATTEMPTS) {
+            ESP_LOGW(TAG, "Route catalog: %s request failed; retrying", label);
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Route catalog: %s fetch failed after %u attempts",
+                 label, BUS_ROUTE_FETCH_ATTEMPTS);
+        return 0;
+    }
+
+    cJSON *data = cJSON_GetObjectItem(root, "data");
+    uint16_t fetched = 0;
+    if (cJSON_IsArray(data)) {
+        const int count = cJSON_GetArraySize(data);
+        for (int i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(data, i);
+            cJSON *route = item != NULL ? cJSON_GetObjectItem(item, "route") : NULL;
+            if (route != NULL && cJSON_IsString(route) &&
+                bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
+                fetched++;
+            }
+        }
+    }
+    cJSON_Delete(root);
+    if (fetched == 0) {
+        ESP_LOGE(TAG, "Route catalog: %s returned no routes", label);
+    } else {
+        ESP_LOGI(TAG, "Route catalog: fetched %u %s route records", fetched, label);
+    }
+    return fetched;
+}
+
+static void process_route_catalog_request(const bus_request_t *req)
+{
+    (void)req;
+    if (!wait_for_network()) {
+        bus_event_t event = {0};
+        event.type = BUS_EVT_ROUTE_CATALOG;
+        event.request_id = req->id;
+        event.status = ESP_ERR_INVALID_STATE;
+        event.data.route_catalog.route_count = bus_route_catalog_count();
+        post_event(&event);
+        return;
+    }
+    const bool had_cache = bus_route_catalog_count() > 0;
+    const bool had_complete_cache = had_cache && s_route_cache_provider_mask == 0x03;
+    bus_route_catalog_reset();
+
+    const uint16_t kmb_count = fetch_route_provider(
+        "KMB", KMB_BASE_URL "/route/", 1u);
+    const uint16_t ctb_count = fetch_route_provider(
+        "CTB", CTB_BASE_URL "/route/ctb", 2u);
+    const uint8_t succeeded = (kmb_count > 0 ? 1 : 0) + (ctb_count > 0 ? 1 : 0);
+    const uint8_t failed = 2 - succeeded;
+
+    bus_event_t event = {0};
+    event.type = BUS_EVT_ROUTE_CATALOG;
+    event.request_id = req->id;
+    event.data.route_catalog.providers_succeeded = succeeded;
+    event.data.route_catalog.providers_failed = failed;
+
+    if (succeeded == 2 && bus_route_catalog_count() > 0 && save_route_catalog_cache(0x03)) {
+        event.status = ESP_OK;
+        event.data.route_catalog.route_count = bus_route_catalog_count();
+        ESP_LOGI(TAG, "Route catalog: complete with %u routes (%u/%u providers)",
+                 bus_route_catalog_count(), succeeded, succeeded + failed);
+    } else if (succeeded > 0 && bus_route_catalog_count() > 0 && !had_complete_cache &&
+               save_route_catalog_cache((kmb_count > 0 ? 0x01 : 0) |
+                                        (ctb_count > 0 ? 0x02 : 0))) {
+        event.status = ESP_ERR_NOT_FINISHED;
+        event.data.route_catalog.route_count = bus_route_catalog_count();
+        ESP_LOGW(TAG, "Route catalog: partial cache saved with %u/%u providers",
+                 succeeded, succeeded + failed);
+    } else {
+        if (had_complete_cache || had_cache) {
+            load_route_catalog_cache();
+        } else {
+            bus_route_catalog_reset();
+        }
+        event.status = ESP_FAIL;
+        event.data.route_catalog.route_count = bus_route_catalog_count();
+        ESP_LOGE(TAG, "Route catalog: update failed; cached catalog %savailable",
+                 had_cache ? "" : "un");
+    }
+    post_event(&event);
 }
 
 // Normalize stop ID to uppercase
