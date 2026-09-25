@@ -34,16 +34,23 @@ private:
     // Pages
     lv_obj_t *root_ = nullptr;
     lv_obj_t *tab_bar_ = nullptr;
+    lv_obj_t *favorites_tab_button_ = nullptr;
+    lv_obj_t *search_tab_button_ = nullptr;
     lv_obj_t *tab_view_ = nullptr;
     lv_obj_t *favorites_tab_ = nullptr;
     lv_obj_t *search_tab_ = nullptr;
     lv_obj_t *favorite_list_ = nullptr;
+    lv_obj_t *favorites_status_ = nullptr;
     lv_obj_t *search_input_ = nullptr;
     lv_obj_t *keypad_container_ = nullptr;
 
     // State
     Favorite favorites_[MAX_FAVORITES];
+    uint32_t favorite_request_ids_[MAX_FAVORITES] = {};
     uint8_t favorites_count_ = 0;
+    uint8_t favorite_requests_pending_ = 0;
+    uint8_t favorite_refresh_failures_ = 0;
+    bool favorite_refresh_active_ = false;
     uint32_t current_request_id_ = 0;
     bus_route_variant_t current_route_;
     char search_buffer_[5] = {0};
@@ -56,6 +63,9 @@ private:
     void buildFavoritesTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height);
     void buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height);
     void buildKeypad(lv_coord_t width);
+    void updateTabAppearance(int active_tab);
+    void rebuildFavoritesView();
+    void setFavoritesStatus(const char *message, uint32_t color);
 
     // Event handlers
     static void onBusEvent(const bus_event_t *event, void *user_data);

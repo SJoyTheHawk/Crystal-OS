@@ -17,6 +17,8 @@ constexpr uint32_t kBgColor = 0x0F172A;
 constexpr uint32_t kCardBg = 0x1E293B;
 constexpr uint32_t kTextPrimary = 0xF8FAFC;
 constexpr uint32_t kTextSecondary = 0x94A3B8;
+constexpr uint32_t kTextWarning = 0xFBBF24;
+constexpr uint32_t kTextError = 0xF87171;
 constexpr uint32_t kBorder = 0x334155;
 constexpr uint32_t kAccent = 0x38BDF8;
 
@@ -68,6 +70,26 @@ void formatETA(int32_t minutes, char *buf, size_t size)
     }
 }
 
+void formatAge(uint32_t fetched_at, char *buf, size_t size)
+{
+    if (fetched_at == 0) {
+        strlcpy(buf, "Saved data", size);
+        return;
+    }
+
+    const time_t now = time(nullptr);
+    const uint32_t age = now > static_cast<time_t>(fetched_at)
+                             ? static_cast<uint32_t>(now - fetched_at)
+                             : 0;
+    if (age < 60) {
+        strlcpy(buf, "Updated just now", size);
+    } else if (age < 3600) {
+        snprintf(buf, size, "Updated %lu min ago", static_cast<unsigned long>(age / 60));
+    } else {
+        snprintf(buf, size, "Updated %lu h ago", static_cast<unsigned long>(age / 3600));
+    }
+}
+
 }  // namespace
 
 BusApp::BusApp() : CrystalApp("Bus", &bus_icon)
@@ -105,13 +127,14 @@ bool BusApp::onCreate()
     loadFavoritesFromNVS();
 
     // Build UI
-    const lv_coord_t tab_bar_height = 50;
+    const lv_coord_t tab_bar_height = 56;
     buildTabBar(width);
     buildFavoritesTab(width, height, tab_bar_height);
     buildSearchTab(width, height, tab_bar_height);
 
     // Start refresh timer (30s)
     eta_refresh_timer_ = lv_timer_create(onRefreshTimer, 30000, this);
+    refreshFavoriteETAs();
 
     return true;
 }
@@ -160,10 +183,13 @@ bool BusApp::onDestroy()
     // NULL all pointers
     root_ = nullptr;
     tab_bar_ = nullptr;
+    favorites_tab_button_ = nullptr;
+    search_tab_button_ = nullptr;
     tab_view_ = nullptr;
     favorites_tab_ = nullptr;
     search_tab_ = nullptr;
     favorite_list_ = nullptr;
+    favorites_status_ = nullptr;
     search_input_ = nullptr;
     keypad_container_ = nullptr;
 
@@ -191,7 +217,7 @@ void BusApp::buildTabBar(lv_coord_t width)
     // Tab bar at top
     tab_bar_ = lv_obj_create(root_);
     lv_obj_remove_style_all(tab_bar_);
-    lv_obj_set_size(tab_bar_, width, 50);
+    lv_obj_set_size(tab_bar_, width, 56);
     lv_obj_align(tab_bar_, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(tab_bar_, lv_color_hex(kCardBg), 0);
     lv_obj_set_style_bg_opa(tab_bar_, LV_OPA_COVER, 0);
@@ -202,23 +228,53 @@ void BusApp::buildTabBar(lv_coord_t width)
     lv_obj_set_flex_align(tab_bar_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(tab_bar_, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Favorites tab button
+    // Flat tab slots. The active slot is identified by its accent text and
+    // bottom rule instead of a raised button surface.
     lv_obj_t *fav_btn = lv_btn_create(tab_bar_);
-    lv_obj_set_size(fav_btn, 120, 40);
+    favorites_tab_button_ = fav_btn;
+    lv_obj_set_size(fav_btn, width / 2, 56);
+    lv_obj_set_style_radius(fav_btn, 0, 0);
+    lv_obj_set_style_bg_opa(fav_btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(fav_btn, 0, 0);
+    lv_obj_set_style_border_width(fav_btn, 0, 0);
+    lv_obj_set_style_pad_all(fav_btn, 0, 0);
     lv_obj_t *fav_label = lv_label_create(fav_btn);
     lv_label_set_text(fav_label, LV_SYMBOL_HOME " Favorites");
     lv_obj_center(fav_label);
     lv_obj_add_event_cb(fav_btn, onTabChanged, LV_EVENT_CLICKED, this);
     lv_obj_set_user_data(fav_btn, reinterpret_cast<void *>(0));
 
-    // Search tab button
     lv_obj_t *search_btn = lv_btn_create(tab_bar_);
-    lv_obj_set_size(search_btn, 120, 40);
+    search_tab_button_ = search_btn;
+    lv_obj_set_size(search_btn, width - width / 2, 56);
+    lv_obj_set_style_radius(search_btn, 0, 0);
+    lv_obj_set_style_bg_opa(search_btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(search_btn, 0, 0);
+    lv_obj_set_style_border_width(search_btn, 0, 0);
+    lv_obj_set_style_pad_all(search_btn, 0, 0);
     lv_obj_t *search_label = lv_label_create(search_btn);
     lv_label_set_text(search_label, LV_SYMBOL_KEYBOARD " Search");
     lv_obj_center(search_label);
     lv_obj_add_event_cb(search_btn, onTabChanged, LV_EVENT_CLICKED, this);
     lv_obj_set_user_data(search_btn, reinterpret_cast<void *>(1));
+
+    updateTabAppearance(0);
+}
+
+void BusApp::updateTabAppearance(int active_tab)
+{
+    lv_obj_t *buttons[] = {favorites_tab_button_, search_tab_button_};
+    for (int i = 0; i < 2; i++) {
+        if (buttons[i] == nullptr) {
+            continue;
+        }
+        lv_obj_t *label = lv_obj_get_child(buttons[i], 0);
+        const bool active = i == active_tab;
+        lv_obj_set_style_text_color(label, lv_color_hex(active ? kAccent : kTextSecondary), 0);
+        lv_obj_set_style_border_width(buttons[i], active ? 3 : 0, 0);
+        lv_obj_set_style_border_side(buttons[i], LV_BORDER_SIDE_BOTTOM, 0);
+        lv_obj_set_style_border_color(buttons[i], lv_color_hex(kAccent), 0);
+    }
 }
 
 void BusApp::buildFavoritesTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height)
@@ -233,57 +289,80 @@ void BusApp::buildFavoritesTab(lv_coord_t width, lv_coord_t height, lv_coord_t t
     lv_obj_set_style_radius(favorites_tab_, 0, 0);
     lv_obj_set_style_pad_all(favorites_tab_, kPad, 0);
 
+    favorites_status_ = makeLabel(favorites_tab_, &lv_font_montserrat_16, kTextSecondary);
+    lv_obj_align(favorites_status_, LV_ALIGN_TOP_MID, 0, 4);
+
+    favorite_list_ = lv_obj_create(favorites_tab_);
+    lv_obj_remove_style_all(favorite_list_);
+    lv_obj_set_size(favorite_list_, LV_PCT(100), LV_PCT(100));
+    lv_obj_align(favorite_list_, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_bg_color(favorite_list_, lv_color_hex(kBgColor), 0);
+    lv_obj_set_style_bg_opa(favorite_list_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(favorite_list_, 0, 0);
+    lv_obj_set_style_pad_all(favorite_list_, 0, 0);
+    lv_obj_set_flex_flow(favorite_list_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(favorite_list_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(favorite_list_, kGap, 0);
+
+    rebuildFavoritesView();
+}
+
+void BusApp::setFavoritesStatus(const char *message, uint32_t color)
+{
+    if (favorites_status_ != nullptr) {
+        lv_obj_set_style_text_color(favorites_status_, lv_color_hex(color), 0);
+        lv_label_set_text(favorites_status_, message != nullptr ? message : "");
+    }
+}
+
+void BusApp::rebuildFavoritesView()
+{
+    if (favorite_list_ == nullptr) {
+        return;
+    }
+
+    lv_obj_clean(favorite_list_);
     if (favorites_count_ == 0) {
-        // Empty state
-        lv_obj_t *empty_label = makeLabel(favorites_tab_, &lv_font_montserrat_20, kTextSecondary);
-        lv_label_set_text(empty_label, "No saved stops yet\n\nTap Search to find a route");
-        lv_obj_center(empty_label);
-    } else {
-        // Create list
-        favorite_list_ = lv_obj_create(favorites_tab_);
-        lv_obj_remove_style_all(favorite_list_);
-        lv_obj_set_size(favorite_list_, LV_PCT(100), LV_PCT(100));
-        lv_obj_set_style_bg_color(favorite_list_, lv_color_hex(kBgColor), 0);
-        lv_obj_set_style_bg_opa(favorite_list_, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(favorite_list_, 0, 0);
-        lv_obj_set_style_pad_all(favorite_list_, 0, 0);
-        lv_obj_set_flex_flow(favorite_list_, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(favorite_list_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-        lv_obj_set_style_pad_row(favorite_list_, kGap, 0);
+        setFavoritesStatus("No saved stops yet  •  Tap Search to find a route", kTextSecondary);
+        return;
+    }
 
-        // Add favorite cards
-        for (uint8_t i = 0; i < favorites_count_; i++) {
-            lv_obj_t *card = makeCard(favorite_list_);
-            lv_obj_set_size(card, LV_PCT(100), 80);
-            lv_obj_add_event_cb(card, onFavoriteClicked, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    for (uint8_t i = 0; i < favorites_count_; i++) {
+        lv_obj_t *card = makeCard(favorite_list_);
+        lv_obj_set_size(card, LV_PCT(100), 96);
+        lv_obj_set_user_data(card, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
+        lv_obj_add_event_cb(card, onFavoriteClicked, LV_EVENT_CLICKED, this);
 
-            // Route number
-            lv_obj_t *route_label = makeLabel(card, &lv_font_montserrat_28, kTextPrimary);
-            lv_label_set_text(route_label, favorites_[i].route);
-            lv_obj_align(route_label, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_t *route_label = makeLabel(card, &lv_font_montserrat_28, kTextPrimary);
+        lv_label_set_text(route_label, favorites_[i].route);
+        lv_obj_align(route_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
-            // Stop name
-            lv_obj_t *stop_label = makeLabel(card, &lv_font_montserrat_16, kTextSecondary);
-            lv_label_set_text(stop_label, favorites_[i].stop_name);
-            lv_obj_align(stop_label, LV_ALIGN_TOP_LEFT, 0, 28);
+        char age_text[32];
+        formatAge(favorites_[i].last_eta.fetched_at, age_text, sizeof(age_text));
+        lv_obj_t *age_label = makeLabel(card, &lv_font_montserrat_16, kTextSecondary);
+        lv_label_set_text(age_label, age_text);
+        lv_obj_align(age_label, LV_ALIGN_TOP_RIGHT, 0, 4);
 
-            // ETA (if available)
-            if (favorites_[i].last_eta.count > 0) {
-                char eta_buf[64];
-                char eta_text[128] = "";
-                for (uint8_t j = 0; j < favorites_[i].last_eta.count && j < 3; j++) {
-                    formatETA(favorites_[i].last_eta.entries[j].minutes_left, eta_buf, sizeof(eta_buf));
-                    if (j > 0) strlcat(eta_text, " · ", sizeof(eta_text));
-                    strlcat(eta_text, eta_buf, sizeof(eta_text));
-                }
-                lv_obj_t *eta_label = makeLabel(card, &lv_font_montserrat_16, kAccent);
-                lv_label_set_text(eta_label, eta_text);
-                lv_obj_align(eta_label, LV_ALIGN_TOP_LEFT, 0, 52);
+        lv_obj_t *stop_label = makeLabel(card, &lv_font_montserrat_16, kTextSecondary);
+        lv_label_set_text(stop_label, favorites_[i].stop_name[0] != '\0' ? favorites_[i].stop_name : "Loading stop name...");
+        lv_obj_align(stop_label, LV_ALIGN_TOP_LEFT, 0, 30);
+
+        char eta_text[128] = "";
+        if (favorites_[i].last_eta.count > 0) {
+            char eta_buf[32];
+            const uint8_t count = favorites_[i].last_eta.count > 3 ? 3 : favorites_[i].last_eta.count;
+            for (uint8_t j = 0; j < count; j++) {
+                formatETA(favorites_[i].last_eta.entries[j].minutes_left, eta_buf, sizeof(eta_buf));
+                if (j > 0) strlcat(eta_text, " · ", sizeof(eta_text));
+                strlcat(eta_text, eta_buf, sizeof(eta_text));
             }
+        } else {
+            strlcpy(eta_text, "No ETA information", sizeof(eta_text));
         }
-
-        // Request fresh ETAs
-        refreshFavoriteETAs();
+        lv_obj_t *eta_label = makeLabel(card, &lv_font_montserrat_16,
+                                        favorites_[i].last_eta.count > 0 ? kAccent : kTextSecondary);
+        lv_label_set_text(eta_label, eta_text);
+        lv_obj_align(eta_label, LV_ALIGN_TOP_LEFT, 0, 58);
     }
 }
 
@@ -408,49 +487,74 @@ void BusApp::updateKeypadState()
 
 void BusApp::loadFavoritesFromNVS()
 {
+    memset(favorites_, 0, sizeof(favorites_));
     size_t size = sizeof(favorites_);
     favorites_count_ = 0;
 
     if (state().get(KEY_FAV_DATA, favorites_, &size)) {
         size_t count = size / sizeof(Favorite);
-        if (count <= MAX_FAVORITES) {
-            favorites_count_ = count;
-            ESP_LOGI(TAG, "Loaded %d favorites", favorites_count_);
-        }
+        if (count > MAX_FAVORITES) count = MAX_FAVORITES;
+        favorites_count_ = static_cast<uint8_t>(count);
+        ESP_LOGI(TAG, "Loaded %d favorites", favorites_count_);
     }
 }
 
 void BusApp::saveFavoritesToNVS()
 {
     if (favorites_count_ > 0) {
-        state().set(KEY_FAV_DATA, favorites_, favorites_count_ * sizeof(Favorite));
+        if (!state().set(KEY_FAV_DATA, favorites_, favorites_count_ * sizeof(Favorite))) {
+            ESP_LOGE(TAG, "Failed to save favorites");
+        }
         ESP_LOGI(TAG, "Saved %d favorites", favorites_count_);
+    } else {
+        state().erase(KEY_FAV_DATA);
     }
 }
 
 void BusApp::refreshFavoriteETAs()
 {
+    if (favorites_count_ == 0 || favorite_refresh_active_) {
+        return;
+    }
+
+    memset(favorite_request_ids_, 0, sizeof(favorite_request_ids_));
+    favorite_requests_pending_ = 0;
+    favorite_refresh_failures_ = 0;
+    favorite_refresh_active_ = true;
+    setFavoritesStatus("Refreshing ETAs...", kTextWarning);
+
     for (uint8_t i = 0; i < favorites_count_; i++) {
-        uint32_t req_id = bus_service_request_eta(
+        favorite_request_ids_[i] = bus_service_request_eta(
             favorites_[i].stop_id,
             favorites_[i].route,
             favorites_[i].op,
             favorites_[i].service_type
         );
-        (void)req_id;
+        if (favorite_request_ids_[i] != 0) {
+            favorite_requests_pending_++;
+        } else {
+            favorite_refresh_failures_++;
+        }
+    }
+
+    if (favorite_requests_pending_ == 0) {
+        favorite_refresh_active_ = false;
+        setFavoritesStatus("Unable to refresh ETAs", kTextError);
     }
 }
 
 void BusApp::updateFavoriteCard(int index)
 {
-    // TODO: Update specific favorite card with new ETA
-    (void)index;
+    if (index < 0 || index >= favorites_count_) {
+        return;
+    }
+    rebuildFavoritesView();
 }
 
 void BusApp::showError(const char *message)
 {
     ESP_LOGE(TAG, "Error: %s", message);
-    // TODO: Show error toast/dialog
+    setFavoritesStatus(message != nullptr ? message : "Network error", kTextError);
 }
 
 // Static event handlers
@@ -463,14 +567,31 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
 
     switch (event->type) {
         case BUS_EVT_ETA:
-            if (event->status == ESP_OK) {
-                // Find matching favorite
-                for (uint8_t i = 0; i < app->favorites_count_; i++) {
-                    if (strcmp(app->favorites_[i].stop_id, event->data.eta.stop_id) == 0) {
-                        app->favorites_[i].last_eta = event->data.eta.result;
-                        app->updateFavoriteCard(i);
-                        break;
-                    }
+            for (uint8_t i = 0; i < app->favorites_count_; i++) {
+                if (app->favorite_request_ids_[i] != event->request_id) {
+                    continue;
+                }
+
+                app->favorite_request_ids_[i] = 0;
+                if (app->favorite_requests_pending_ > 0) {
+                    app->favorite_requests_pending_--;
+                }
+                if (event->status == ESP_OK) {
+                    app->favorites_[i].last_eta = event->data.eta.result;
+                    app->updateFavoriteCard(i);
+                } else {
+                    app->favorite_refresh_failures_++;
+                }
+                break;
+            }
+            if (app->favorite_refresh_active_ && app->favorite_requests_pending_ == 0) {
+                app->favorite_refresh_active_ = false;
+                if (app->favorite_refresh_failures_ == app->favorites_count_) {
+                    app->setFavoritesStatus("Unable to refresh ETAs; showing saved data", kTextError);
+                } else if (app->favorite_refresh_failures_ > 0) {
+                    app->setFavoritesStatus("Some ETAs unavailable; showing saved data", kTextWarning);
+                } else {
+                    app->setFavoritesStatus("Updated just now", kTextSecondary);
                 }
             }
             break;
@@ -510,17 +631,20 @@ void BusApp::onTabChanged(lv_event_t *e)
         // Show favorites
         lv_obj_clear_flag(app->favorites_tab_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
+        app->updateTabAppearance(0);
     } else {
         // Show search
         lv_obj_add_flag(app->favorites_tab_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
+        app->updateTabAppearance(1);
     }
 }
 
 void BusApp::onFavoriteClicked(lv_event_t *e)
 {
     BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
-    int index = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t *card = lv_event_get_target(e);
+    int index = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(card)));
 
     ESP_LOGI(TAG, "Favorite %d clicked", index);
     // TODO: Show ETA board
