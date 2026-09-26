@@ -169,6 +169,14 @@ bool BusApp::onPause()
 bool BusApp::onResume()
 {
     ESP_LOGI(TAG, "onResume");
+
+    // The app screen can be restored from a snapshot while the search state
+    // remains in the BusApp instance. Re-apply the buffer to the visible
+    // controls so returning to Search does not show a blank route number.
+    if (search_input_ != nullptr) {
+        lv_label_set_text(search_input_, search_buffer_);
+        updateKeypadState();
+    }
     evaluateCatalogBootstrap();
 
     if (!eta_refresh_timer_) {
@@ -966,6 +974,15 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
             }
             break;
 
+        case BUS_EVT_ROUTE_CATALOG_PROGRESS:
+            // Progress events are delivered on the LVGL task by bus_service,
+            // so the overlay can be updated safely while the worker fetches.
+            if (event->request_id == 0 || event->request_id == app->current_request_id_ ||
+                app->catalog_request_started_) {
+                app->setCatalogState(false, event->data.route_catalog_progress.message);
+            }
+            break;
+
         case BUS_EVT_ERROR:
             app->showError(event->data.error.message);
             break;
@@ -1058,6 +1075,13 @@ void BusApp::onTabChanged(lv_event_t *e)
         // Show search
         lv_obj_add_flag(app->favorites_tab_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
+        // Re-apply the retained query when Search becomes visible. The app
+        // can return from another app with its route results intact while the
+        // label surface has not been redrawn yet.
+        if (app->search_input_ != nullptr) {
+            lv_label_set_text(app->search_input_, app->search_buffer_);
+            app->updateKeypadState();
+        }
         app->updateTabAppearance(1);
     }
 }

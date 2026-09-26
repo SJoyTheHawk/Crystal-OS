@@ -60,6 +60,7 @@ typedef enum {
     BUS_EVT_STOPS_LIST,
     BUS_EVT_STOP_DETAIL,
     BUS_EVT_ETA,
+    BUS_EVT_ROUTE_CATALOG_PROGRESS,
     BUS_EVT_ROUTE_CATALOG,
     BUS_EVT_ERROR
 } bus_event_type_t;
@@ -91,6 +92,9 @@ typedef struct {
             uint8_t providers_succeeded;
             uint8_t providers_failed;
         } route_catalog;
+        struct {
+            char message[64];
+        } route_catalog_progress;
         struct {
             char message[64];
         } error;

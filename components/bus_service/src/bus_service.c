@@ -1,6 +1,8 @@
 #include "bus_service.h"
 #include "bus_routes.h"
 #include "crystal_network.h"
+#include "lvgl.h"
+#include "esp_lvgl_port.h"
 
 #include <string.h>
 #include <time.h>
@@ -23,7 +25,7 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
-#define ROUTE_CACHE_VERSION 3u
+#define ROUTE_CACHE_VERSION 4u
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
@@ -68,6 +70,8 @@ static void process_stops_request(const bus_request_t *req);
 static void process_eta_request(const bus_request_t *req);
 static void process_route_catalog_request(const bus_request_t *req);
 static void post_event(const bus_event_t *event);
+static void deliver_event_async(void *user_data);
+static void free_event_payload(bus_event_t *event);
 static char *normalize_stop_id(char *stop_id);
 static bool load_route_catalog_cache(void);
 static bool wait_for_network(void);
@@ -541,14 +545,28 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
     return ok;
 }
 
-static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t op)
+static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t op, uint32_t request_id)
 {
     cJSON *root = NULL;
     for (uint8_t attempt = 1; attempt <= BUS_ROUTE_FETCH_ATTEMPTS; attempt++) {
+        bus_event_t progress = {0};
+        progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+        progress.request_id = request_id;
+        snprintf(progress.data.route_catalog_progress.message,
+                 sizeof(progress.data.route_catalog_progress.message),
+                 "Downloading %s route data...\nPlease wait", label);
+        post_event(&progress);
         ESP_LOGI(TAG, "Route catalog: downloading data from %s API %s (attempt %u/%u)",
                  label, url, (unsigned)attempt, (unsigned)BUS_ROUTE_FETCH_ATTEMPTS);
         if (http_get_json(url, &root) == ESP_OK && root != NULL) {
             ESP_LOGI(TAG, "Route catalog: data downloaded from %s API", label);
+            bus_event_t downloaded = {0};
+            downloaded.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+            downloaded.request_id = request_id;
+            snprintf(downloaded.data.route_catalog_progress.message,
+                     sizeof(downloaded.data.route_catalog_progress.message),
+                     "%s data downloaded\nResolving route data...", label);
+            post_event(&downloaded);
             break;
         }
         root = NULL;
@@ -565,8 +583,17 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
 
     cJSON *data = cJSON_GetObjectItem(root, "data");
     uint16_t fetched = 0;
+    bus_event_t progress = {0};
+    progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+    progress.request_id = request_id;
+    snprintf(progress.data.route_catalog_progress.message,
+             sizeof(progress.data.route_catalog_progress.message),
+             "Resolving %s route data...\nPlease wait", label);
+    post_event(&progress);
     ESP_LOGI(TAG, "Route catalog: resolving %s data", label);
-    if (op == BUS_OP_KMB) {
+    // `op` is the route catalog operator bitmask here (KMB = 1), while
+    // bus_route_variant_t::op stores the enum value (KMB = 0).
+    if (op == (1u << BUS_OP_KMB)) {
         free(s_kmb_variants);
         s_kmb_variants = heap_caps_calloc(KMB_VARIANT_CAPACITY, sizeof(*s_kmb_variants),
                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -584,7 +611,7 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
                 bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
                 fetched++;
             }
-            if (op == BUS_OP_KMB && s_kmb_variants != NULL && item != NULL && route != NULL &&
+            if (op == (1u << BUS_OP_KMB) && s_kmb_variants != NULL && item != NULL && route != NULL &&
                 cJSON_IsString(route) && s_kmb_variant_count < KMB_VARIANT_CAPACITY) {
                 cJSON *bound = cJSON_GetObjectItem(item, "bound");
                 cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
@@ -625,14 +652,21 @@ static void process_route_catalog_request(const bus_request_t *req)
         post_event(&event);
         return;
     }
+    bus_event_t progress = {0};
+    progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+    progress.request_id = req->id;
+    strlcpy(progress.data.route_catalog_progress.message,
+            "Preparing route data fetch...\nPlease wait",
+            sizeof(progress.data.route_catalog_progress.message));
+    post_event(&progress);
     const bool had_cache = bus_route_catalog_count() > 0;
     const bool had_complete_cache = had_cache && s_route_cache_provider_mask == 0x03;
     bus_route_catalog_reset();
 
     const uint16_t kmb_count = fetch_route_provider(
-        "KMB", KMB_BASE_URL "/route/", 1u);
+        "KMB", KMB_BASE_URL "/route/", 1u, req->id);
     const uint16_t ctb_count = fetch_route_provider(
-        "CTB", CTB_BASE_URL "/route/ctb", 2u);
+        "CTB", CTB_BASE_URL "/route/ctb", 2u, req->id);
     const uint8_t succeeded = (kmb_count > 0 ? 1 : 0) + (ctb_count > 0 ? 1 : 0);
     const uint8_t failed = 2 - succeeded;
 
@@ -642,19 +676,40 @@ static void process_route_catalog_request(const bus_request_t *req)
     event.data.route_catalog.providers_succeeded = succeeded;
     event.data.route_catalog.providers_failed = failed;
 
-    if (succeeded == 2 && bus_route_catalog_count() > 0 && save_route_catalog_cache(0x03)) {
-        event.status = ESP_OK;
-        event.data.route_catalog.route_count = bus_route_catalog_count();
-        ESP_LOGI(TAG, "Route catalog: complete with %u routes (%u/%u providers)",
-                 bus_route_catalog_count(), succeeded, succeeded + failed);
-    } else if (succeeded > 0 && bus_route_catalog_count() > 0 && !had_complete_cache &&
-               save_route_catalog_cache((kmb_count > 0 ? 0x01 : 0) |
-                                        (ctb_count > 0 ? 0x02 : 0))) {
-        event.status = ESP_ERR_NOT_FINISHED;
-        event.data.route_catalog.route_count = bus_route_catalog_count();
-        ESP_LOGW(TAG, "Route catalog: partial cache saved with %u/%u providers",
-                 succeeded, succeeded + failed);
-    } else {
+    bool cache_saved = false;
+    if (succeeded == 2 && bus_route_catalog_count() > 0) {
+        progress = (bus_event_t){0};
+        progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+        progress.request_id = req->id;
+        strlcpy(progress.data.route_catalog_progress.message,
+                "Saving route data...\nPlease wait",
+                sizeof(progress.data.route_catalog_progress.message));
+        post_event(&progress);
+        cache_saved = save_route_catalog_cache(0x03);
+        if (cache_saved) {
+            event.status = ESP_OK;
+            event.data.route_catalog.route_count = bus_route_catalog_count();
+            ESP_LOGI(TAG, "Route catalog: complete with %u routes (%u/%u providers)",
+                     bus_route_catalog_count(), succeeded, succeeded + failed);
+        }
+    } else if (succeeded > 0 && bus_route_catalog_count() > 0 && !had_complete_cache) {
+        progress = (bus_event_t){0};
+        progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+        progress.request_id = req->id;
+        strlcpy(progress.data.route_catalog_progress.message,
+                "Saving route data...\nPlease wait",
+                sizeof(progress.data.route_catalog_progress.message));
+        post_event(&progress);
+        cache_saved = save_route_catalog_cache((kmb_count > 0 ? 0x01 : 0) |
+                                               (ctb_count > 0 ? 0x02 : 0));
+        if (cache_saved) {
+            event.status = ESP_ERR_NOT_FINISHED;
+            event.data.route_catalog.route_count = bus_route_catalog_count();
+            ESP_LOGW(TAG, "Route catalog: partial cache saved with %u/%u providers",
+                     succeeded, succeeded + failed);
+        }
+    }
+    if (!cache_saved) {
         if (had_complete_cache || had_cache) {
             load_route_catalog_cache();
         } else {
@@ -879,11 +934,59 @@ static void process_eta_request(const bus_request_t *req)
     post_event(&event);
 }
 
-// Post event to listener
+static void free_event_payload(bus_event_t *event)
+{
+    if (event == NULL) {
+        return;
+    }
+    if (event->type == BUS_EVT_ROUTE_VARIANTS) {
+        free(event->data.route_variants.variants);
+        event->data.route_variants.variants = NULL;
+    } else if (event->type == BUS_EVT_STOPS_LIST) {
+        free(event->data.stops_list.stops);
+        event->data.stops_list.stops = NULL;
+    }
+}
+
+// Bus requests run on a worker task, while LVGL objects may only be accessed
+// by the UI task. Copy the event and deliver it from LVGL's async queue.
+static void deliver_event_async(void *user_data)
+{
+    bus_event_t *event = (bus_event_t *)user_data;
+    if (event == NULL) {
+        return;
+    }
+    if (s_listener != NULL) {
+        s_listener(event, s_listener_user_data);
+    } else {
+        free_event_payload(event);
+    }
+    free(event);
+}
+
+// Post event to listener on the LVGL task.
 static void post_event(const bus_event_t *event)
 {
-    if (s_listener != NULL) {
-        // Call listener directly (already on worker task, will be refactored to post to LVGL task)
-        s_listener(event, s_listener_user_data);
+    if (event == NULL) {
+        return;
+    }
+    bus_event_t *copy = malloc(sizeof(*copy));
+    if (copy == NULL) {
+        ESP_LOGE(TAG, "Unable to queue bus event: out of memory");
+        return;
+    }
+    memcpy(copy, event, sizeof(*copy));
+    if (!lvgl_port_lock(1000)) {
+        ESP_LOGE(TAG, "Unable to lock LVGL while queueing bus event");
+        free_event_payload(copy);
+        free(copy);
+        return;
+    }
+    const lv_res_t result = lv_async_call(deliver_event_async, copy);
+    lvgl_port_unlock();
+    if (result != LV_RES_OK) {
+        ESP_LOGE(TAG, "Unable to queue bus event on LVGL task");
+        free_event_payload(copy);
+        free(copy);
     }
 }
