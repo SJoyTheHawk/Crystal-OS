@@ -651,7 +651,10 @@ void BusApp::rebuildSearchResults()
         return;
     }
 
-    uint16_t matches[2048];
+    // These buffers are reused for each rebuild. Keep them out of the LVGL
+    // task stack because the catalog and variant records are comparatively
+    // large on the ESP32.
+    static uint16_t matches[2048];
     uint16_t match_count = 0;
     const uint16_t catalog_count = bus_route_catalog_count();
     for (uint16_t i = 0; i < catalog_count && match_count < 2048; i++) {
@@ -692,9 +695,58 @@ void BusApp::rebuildSearchResults()
 
     const lv_coord_t row_height = 44;
     const lv_coord_t row_gap = 4;
+    // Keep the LVGL object count bounded while the result rows are still
+    // placeholders. A broad prefix such as "1" can match most of the
+    // catalog, and creating every duplicated row would exhaust internal heap.
+    constexpr uint16_t kMaxDisplayedRows = 20;
+    struct SearchDisplayRow {
+        uint16_t match_index;
+        char bound;
+    };
+
+    static SearchDisplayRow display_rows[kMaxDisplayedRows];
+    uint16_t display_count = 0;
+    for (uint16_t match_index = 0;
+         match_index < match_count && display_count < kMaxDisplayedRows;
+         match_index++) {
+        bus_route_name_t entry;
+        bus_route_catalog_get(matches[match_index], &entry);
+        char route[5] = {0};
+        memcpy(route, entry.name, sizeof(entry.name));
+        for (int c = 3; c >= 0 && route[c] == ' '; c--) {
+            route[c] = '\0';
+        }
+
+        static bus_route_variant_t variants[8];
+        const uint8_t variant_count = bus_service_get_cached_route_variants(
+            route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
+        bool has_inbound = false;
+        bool has_outbound = false;
+        for (uint8_t variant_index = 0; variant_index < variant_count; variant_index++) {
+            has_inbound |= variants[variant_index].bound == BUS_DIR_INBOUND;
+            has_outbound |= variants[variant_index].bound == BUS_DIR_OUTBOUND;
+        }
+
+        // Circular routes expose only one direction in the KMB cache. Keep
+        // that route to one row instead of inventing a missing direction.
+        if (variant_count == 0 || (!has_inbound && !has_outbound)) {
+            display_rows[display_count++] = {matches[match_index], BUS_DIR_INBOUND};
+            if (display_count < kMaxDisplayedRows) {
+                display_rows[display_count++] = {matches[match_index], BUS_DIR_OUTBOUND};
+            }
+        } else {
+            if (has_inbound) {
+                display_rows[display_count++] = {matches[match_index], BUS_DIR_INBOUND};
+            }
+            if (has_outbound && display_count < kMaxDisplayedRows) {
+                display_rows[display_count++] = {matches[match_index], BUS_DIR_OUTBOUND};
+            }
+        }
+    }
+
     // Include the container's vertical padding as well as the row spacing;
     // otherwise the last result is clipped at the bottom of the card.
-    lv_obj_set_height(search_results_, 28 + match_count * (row_height + row_gap));
+    lv_obj_set_height(search_results_, 28 + display_count * (row_height + row_gap));
     if (match_count == 0) {
         lv_obj_t *empty = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
         lv_label_set_text(empty, "No matching routes");
@@ -702,9 +754,9 @@ void BusApp::rebuildSearchResults()
         return;
     }
 
-    for (uint16_t i = 0; i < match_count; i++) {
+    for (uint16_t i = 0; i < display_count; i++) {
         bus_route_name_t entry;
-        bus_route_catalog_get(matches[i], &entry);
+        bus_route_catalog_get(display_rows[i].match_index, &entry);
         char route[5] = {0};
         memcpy(route, entry.name, sizeof(entry.name));
         for (int c = 3; c >= 0 && route[c] == ' '; c--) {
@@ -718,9 +770,6 @@ void BusApp::rebuildSearchResults()
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
-        lv_obj_set_user_data(row, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
-        lv_obj_add_event_cb(row, onRouteVariantClicked, LV_EVENT_CLICKED, this);
-        lv_obj_add_event_cb(row, onRouteResultClicked, LV_EVENT_CLICKED, this);
 
         lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
         lv_label_set_text(route_label, route);
@@ -732,9 +781,34 @@ void BusApp::rebuildSearchResults()
             strlcat(operators, " / ", sizeof(operators));
         }
         if (entry.ops & (1u << BUS_OP_CTB)) strlcat(operators, "CTB", sizeof(operators));
-        lv_obj_t *op_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
-        lv_label_set_text(op_label, operators);
-        lv_obj_align(op_label, LV_ALIGN_RIGHT_MID, -10, 0);
+
+        // The two placeholder rows represent the cached KMB inbound and
+        // outbound variants. Use the corresponding cached destination for
+        // the right-aligned detail text; CTB remains represented by the
+        // operator label until its variants are normalized into the cache.
+        static bus_route_variant_t variants[8];
+        const uint8_t variant_count = bus_service_get_cached_route_variants(
+            route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
+        const char wanted_bound = display_rows[i].bound;
+        const char *destination = "";
+        for (uint8_t variant_index = 0; variant_index < variant_count; variant_index++) {
+            if (variants[variant_index].bound == wanted_bound) {
+                destination = variants[variant_index].dest_en;
+                break;
+            }
+        }
+
+        char details[96];
+        if (destination[0] != '\0') {
+            snprintf(details, sizeof(details), "%s  To %s", operators, destination);
+        } else {
+            snprintf(details, sizeof(details), "%s", operators);
+        }
+        lv_obj_t *detail_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
+        lv_label_set_text(detail_label, details);
+        lv_label_set_long_mode(detail_label, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(detail_label, LV_PCT(72));
+        lv_obj_align(detail_label, LV_ALIGN_RIGHT_MID, -10, 0);
     }
 }
 
