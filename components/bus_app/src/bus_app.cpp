@@ -222,7 +222,6 @@ bool BusApp::onDestroy()
     favorite_list_ = nullptr;
     favorites_status_ = nullptr;
     search_input_ = nullptr;
-    search_enter_button_ = nullptr;
     keypad_container_ = nullptr;
     search_results_ = nullptr;
     catalog_overlay_ = nullptr;
@@ -423,16 +422,6 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     lv_label_set_text(search_input_, "");
     lv_obj_align(search_input_, LV_ALIGN_TOP_MID, 0, 4);
 
-    search_enter_button_ = lv_btn_create(search_tab_);
-    lv_obj_set_size(search_enter_button_, 60, 34);
-    lv_obj_align(search_enter_button_, LV_ALIGN_TOP_RIGHT, -kPad, 8);
-    lv_obj_set_style_radius(search_enter_button_, 8, 0);
-    lv_obj_set_style_bg_color(search_enter_button_, lv_color_hex(0x334155), 0);
-    lv_obj_t *enter_label = makeLabel(search_enter_button_, &lv_font_montserrat_16, kTextSecondary);
-    lv_label_set_text(enter_label, "Go");
-    lv_obj_center(enter_label);
-    lv_obj_add_event_cb(search_enter_button_, onEnter, LV_EVENT_CLICKED, this);
-
     // The results belong below the keypad. The Search page itself scrolls so
     // this area can grow when Step 3 adds catalog-backed route rows.
     buildKeypad(width);
@@ -622,14 +611,6 @@ void BusApp::updateKeypadState()
         lv_obj_set_style_bg_color(button, lv_color_hex(enabled ? kCardBg : 0x111827), 0);
         if (label != nullptr) {
             lv_obj_set_style_text_color(label, lv_color_hex(enabled ? kTextPrimary : 0x475569), 0);
-        }
-    }
-    const bool complete = bus_route_is_complete(search_buffer_, len);
-    if (search_enter_button_ != nullptr) {
-        lv_obj_t *label = lv_obj_get_child(search_enter_button_, 0);
-        lv_obj_set_style_bg_color(search_enter_button_, lv_color_hex(complete ? kAccent : 0x334155), 0);
-        if (label != nullptr) {
-            lv_obj_set_style_text_color(label, lv_color_hex(complete ? kBgColor : kTextSecondary), 0);
         }
     }
     rebuildSearchResults();
@@ -1215,21 +1196,6 @@ void BusApp::onReset(lv_event_t *e)
     app->search_buffer_[0] = '\0';
     lv_label_set_text(app->search_input_, "");
     app->updateKeypadState();
-}
-
-void BusApp::onEnter(lv_event_t *e)
-{
-    BusApp *app = static_cast<BusApp*>(lv_event_get_user_data(e));
-    if (app == nullptr || !app->catalog_ready_) return;
-
-    if (bus_route_is_complete(app->search_buffer_, strlen(app->search_buffer_))) {
-        app->route_variant_count_ = bus_service_get_cached_route_variants(
-            app->search_buffer_, app->route_variants_,
-            static_cast<uint8_t>(sizeof(app->route_variants_) / sizeof(app->route_variants_[0])));
-        ESP_LOGI(TAG, "Searching cached route variants: %s (%u variants)",
-                 app->search_buffer_, app->route_variant_count_);
-        app->rebuildRouteVariantResults();
-    }
 }
 
 void BusApp::onRouteResultClicked(lv_event_t *e)

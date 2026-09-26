@@ -1,10 +1,11 @@
 #include "bus_routes.h"
+#include "esp_heap_caps.h"
 #include <string.h>
 #include <ctype.h>
 
 #define BUS_ROUTE_CATALOG_CAPACITY 2048
 
-static bus_route_name_t s_catalog[BUS_ROUTE_CATALOG_CAPACITY];
+static bus_route_name_t *s_catalog = NULL;
 static uint16_t s_catalog_count = 0;
 
 static const bus_route_name_t *active_index(uint16_t *count)
@@ -47,6 +48,15 @@ bool bus_route_catalog_add(const char *name, size_t len, uint8_t ops)
     char normalized[4] = {' ', ' ', ' ', ' '};
     for (size_t i = 0; i < len; i++) {
         normalized[i] = (char)toupper((unsigned char)name[i]);
+    }
+
+    if (s_catalog == NULL) {
+        s_catalog = heap_caps_calloc(BUS_ROUTE_CATALOG_CAPACITY,
+                                     sizeof(*s_catalog),
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_catalog == NULL) {
+            return false;
+        }
     }
 
     for (uint16_t i = 0; i < s_catalog_count; i++) {

@@ -43,7 +43,6 @@ private:
     lv_obj_t *favorite_list_ = nullptr;
     lv_obj_t *favorites_status_ = nullptr;
     lv_obj_t *search_input_ = nullptr;
-    lv_obj_t *search_enter_button_ = nullptr;
     lv_obj_t *keypad_container_ = nullptr;
     lv_obj_t *search_results_ = nullptr;
     lv_obj_t *catalog_overlay_ = nullptr;
@@ -90,7 +89,6 @@ private:
     static void onKeyPressed(lv_event_t *e);
     static void onBackspace(lv_event_t *e);
     static void onReset(lv_event_t *e);
-    static void onEnter(lv_event_t *e);
     static void onRouteResultClicked(lv_event_t *e);
     static void onRouteVariantClicked(lv_event_t *e);
     static void onRefreshTimer(lv_timer_t *timer);
