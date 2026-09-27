@@ -1121,6 +1121,16 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (s_queue != nullptr) return true;
     if (display == nullptr || clock_update == nullptr || connectivity_update == nullptr ||
             battery_update == nullptr || status_context == nullptr) return false;
+
+    // Apps register handlers during installation, before the service task has
+    // a chance to create the default loop.
+    const esp_err_t event_loop_err = esp_event_loop_create_default();
+    if (event_loop_err != ESP_OK && event_loop_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "failed to create default event loop: %s",
+                 esp_err_to_name(event_loop_err));
+        return false;
+    }
+
     s_clock_update = clock_update;
     s_connectivity_update = connectivity_update;
     s_battery_update = battery_update;

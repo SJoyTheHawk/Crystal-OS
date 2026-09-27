@@ -1,16 +1,16 @@
-# Wi-Fi and NVS Recovery Handoff
+# Wi-Fi and NVS Recovery Notes
 
-Copy this document outside the repository before reverting the worktree. It records the changes made during the Bus app startup investigation so they can be reviewed and reapplied independently.
+This records the findings from the Bus app startup investigation and the changes that should remain in the stable tree.
 
 ## Observed failures
 
 - Bus app network event registration returned `ESP_ERR_INVALID_STATE` during `onCreate()`. The default ESP event loop was created later by the core service task.
-- Wi-Fi initialization reported `wifi osi_nvs_open fail ret=4367` and failed to deinitialize cleanly.
+- Wi-Fi initialization reported `wifi osi_nvs_open fail ret=4367` and failed to deinitialize cleanly. In the ESP-IDF version used here, `4367` is `ESP_ERR_NVS_PART_NOT_FOUND`; it is not the `ESP_ERR_NVS_NOT_INITIALIZED` code.
 - A later log identified the NVS cause: `Invalid HMAC key ID received!` followed by failure to read or generate encrypted NVS keys (`ESP_ERR_INVALID_ARG`).
 
 These symptoms occurred around Bus app integration, but the event-loop ordering and encrypted NVS metadata are platform concerns. The logs do not establish that rendering inbound/outbound rows caused either failure.
 
-## Source changes to review after the revert
+## Source change to keep
 
 ### 1. Create the default event loop before apps run
 
@@ -25,47 +25,13 @@ if (event_loop_err != ESP_OK && event_loop_err != ESP_ERR_INVALID_STATE) {
 }
 ```
 
-The later event-loop creation in `service_task()` can remain because it tolerates an already created loop. After this change, Bus app registration logged `Network event handler registration: ESP_OK`.
+The later event-loop creation in `service_task()` remains because it tolerates an already created loop. After this change, Bus app registration logged `Network event handler registration: ESP_OK`.
 
-### 2. Handle unavailable NVS in storage access
+## NVS decision
 
-File: `components/crystal_hal/src/crystal_hal.cpp`.
+Do not add a second NVS initialization path in `components/crystal_hal/src/crystal_hal.cpp`. `app_main()` already initializes NVS before HAL storage access and Wi-Fi startup. A retry for `ESP_ERR_NVS_NOT_INITIALIZED` would not repair an invalid encrypted-NVS key ID, and it would not explain error `4367`.
 
-Add `#include "nvs_flash.h"`. The current working tree has these helpers:
-
-```cpp
-static bool recover_nvs()
-{
-    const esp_err_t err = nvs_flash_init();
-    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
-        return true;
-    }
-    ESP_LOGE(TAG, "NVS initialization failed during recovery: %s", esp_err_to_name(err));
-    return false;
-}
-
-static esp_err_t open_storage(nvs_open_mode_t mode, nvs_handle_t *handle)
-{
-    esp_err_t err = nvs_open(kStorageNamespace, mode, handle);
-    if (err == ESP_ERR_NVS_NOT_INITIALIZED && recover_nvs()) {
-        err = nvs_open(kStorageNamespace, mode, handle);
-    }
-    return err;
-}
-```
-
-Replace direct `nvs_open(kStorageNamespace, ...)` calls with `open_storage(...)` in `DeviceStorage::get`, `DeviceStorage::set`, `DeviceStorage::erase`, `DeviceWifi::read_enabled`, and `DeviceWifi::write_enabled`.
-
-At the start of `DeviceWifi::start()`, after its `started_` guard, the current change checks NVS before continuing:
-
-```cpp
-if (!recover_nvs()) {
-    ESP_LOGE(TAG, "Wi-Fi start aborted because NVS is unavailable");
-    return;
-}
-```
-
-Review whether `nvs_flash_init()` should be centralized instead of called again from Wi-Fi startup. This guard detects failure; it cannot repair an invalid HMAC key ID by itself.
+The one-time erase of the `nvs` and `nvs_keys` partitions was the appropriate recovery for the invalid encrypted metadata. Future key-ID failures should be handled as an explicit device recovery/configuration problem, not by silently erasing data during Wi-Fi startup.
 
 ## One-time device recovery already performed
 
