@@ -47,6 +47,9 @@ private:
     lv_obj_t *search_results_ = nullptr;
     lv_obj_t *catalog_overlay_ = nullptr;
     lv_obj_t *catalog_status_ = nullptr;
+    lv_obj_t *stop_page_ = nullptr;
+    lv_obj_t *stop_title_ = nullptr;
+    lv_obj_t *stop_list_ = nullptr;
     lv_obj_t *keypad_buttons_[BUS_ROUTE_CHARSET_LEN] = {};
 
     // State
@@ -62,6 +65,7 @@ private:
     esp_event_handler_instance_t network_handler_ = nullptr;
     lv_timer_t *catalog_bootstrap_timer_ = nullptr;
     uint32_t current_request_id_ = 0;
+    uint32_t stop_request_id_ = 0;
     bus_route_variant_t current_route_;
     bus_route_variant_t route_variants_[32] = {};
     uint8_t route_variant_count_ = 0;
@@ -74,6 +78,7 @@ private:
     void buildTabBar(lv_coord_t width);
     void buildFavoritesTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height);
     void buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height);
+    void buildStopPage(lv_coord_t width, lv_coord_t height);
     void buildKeypad(lv_coord_t width);
     void updateTabAppearance(int active_tab);
     void setCatalogState(bool ready, const char *message);
@@ -97,6 +102,8 @@ private:
     void updateKeypadState();
     void rebuildSearchResults();
     void rebuildRouteVariantResults();
+    void showStopPage(const bus_route_variant_t &variant);
+    void showStopList(const bus_stop_t *stops, uint16_t count);
     void loadFavoritesFromNVS();
     void saveFavoritesToNVS();
     void refreshFavoriteETAs();

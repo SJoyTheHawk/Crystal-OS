@@ -29,6 +29,7 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
+#define BUS_STOP_FETCH_ATTEMPTS BUS_ROUTE_FETCH_ATTEMPTS
 #define KMB_VARIANT_CAPACITY 2048
 
 // Request types
@@ -814,14 +815,34 @@ static void process_stops_request(const bus_request_t *req)
     event.request_id = req->id;
 
     if (req->op == BUS_OP_KMB) {
-        snprintf(url, sizeof(url), "%s/route-stop/%s/%c/%d",
-                 KMB_BASE_URL, req->route, req->bound, req->service_type);
+        // KMB route data uses I/O bound codes, but the live route-stop
+        // endpoint requires the path words "inbound" and "outbound".
+        const char *direction = req->bound == BUS_DIR_OUTBOUND ? "outbound" : "inbound";
+        snprintf(url, sizeof(url), "%s/route-stop/%s/%s/%d",
+                 KMB_BASE_URL, req->route, direction, req->service_type);
     } else {
         snprintf(url, sizeof(url), "%s/route-stop/CTB/%s/%s",
                  CTB_BASE_URL, req->route, req->bound == 'O' ? "outbound" : "inbound");
     }
+    ESP_LOGI(TAG, "Route stops: fetching %s", url);
 
-    if (http_get_json(url, &root) == ESP_OK && root != NULL) {
+    esp_err_t request_err = ESP_FAIL;
+    for (uint8_t attempt = 1; attempt <= BUS_STOP_FETCH_ATTEMPTS; attempt++) {
+        root = NULL;
+        ESP_LOGI(TAG, "Route stops: request attempt %u/%u", (unsigned)attempt,
+                 (unsigned)BUS_STOP_FETCH_ATTEMPTS);
+        request_err = http_get_json(url, &root);
+        if (request_err == ESP_OK && root != NULL) {
+            break;
+        }
+        if (attempt < BUS_STOP_FETCH_ATTEMPTS) {
+            ESP_LOGW(TAG, "Route stops request failed; retrying (%u/%u)",
+                     (unsigned)attempt, (unsigned)BUS_STOP_FETCH_ATTEMPTS);
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+
+    if (request_err == ESP_OK && root != NULL) {
         cJSON *data = cJSON_GetObjectItem(root, "data");
         if (cJSON_IsArray(data)) {
             int count = cJSON_GetArraySize(data);
@@ -860,6 +881,7 @@ static void process_stops_request(const bus_request_t *req)
     }
 
     // Error case
+    event.type = BUS_EVT_ERROR;
     event.status = ESP_FAIL;
     strlcpy(event.data.error.message, "Failed to fetch stops", sizeof(event.data.error.message));
     post_event(&event);
