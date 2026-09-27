@@ -50,6 +50,37 @@ static uint32_t s_next_request_id = 1;
 static bool s_ready;
 static crystal_http_stats_t s_stats;
 
+typedef struct {
+    bool sampled;
+    uint32_t internal_before;
+    uint32_t largest_before;
+    uint32_t psram_before;
+    uint32_t tls_internal_min;
+    uint32_t tls_largest_min;
+    uint32_t tls_psram_min;
+} memory_trace_t;
+
+static void sample_memory(memory_trace_t *trace, bool tls_stage)
+{
+    const uint32_t internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!trace->sampled) {
+        trace->sampled = true;
+        trace->internal_before = internal;
+        trace->largest_before = largest;
+        trace->psram_before = psram;
+        trace->tls_internal_min = internal;
+        trace->tls_largest_min = largest;
+        trace->tls_psram_min = psram;
+    }
+    if (tls_stage) {
+        if (internal < trace->tls_internal_min) trace->tls_internal_min = internal;
+        if (largest < trace->tls_largest_min) trace->tls_largest_min = largest;
+        if (psram < trace->tls_psram_min) trace->tls_psram_min = psram;
+    }
+}
+
 static void log_heap(const char *stage, uint32_t request_id)
 {
     ESP_LOGI(TAG, "heap %s id=%lu internal=%u largest_internal=%u psram=%u",
@@ -72,6 +103,8 @@ static void perform_request_once(request_slot_t *slot,
     response->request_id = slot->request_id;
     response->status_code = 0;
     response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
+    memory_trace_t memory = {0};
+    sample_memory(&memory, false);
 
     if (!slot->cancelled && strncmp(slot->url, "crystal://", 10) == 0) {
         response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
@@ -86,10 +119,12 @@ static void perform_request_once(request_slot_t *slot,
             .buffer_size_tx = 2048,
         };
         esp_http_client_handle_t client = esp_http_client_init(&config);
+        sample_memory(&memory, true);
         if (client == NULL) {
             response->transport_error = ESP_ERR_NO_MEM;
         } else {
             const esp_err_t open_err = esp_http_client_open(client, 0);
+            sample_memory(&memory, true);
             if (open_err != ESP_OK) {
                 response->transport_error = open_err;
                 ESP_LOGW(TAG, "request id=%lu transport failure=%s",
@@ -97,6 +132,7 @@ static void perform_request_once(request_slot_t *slot,
             } else {
                 ESP_LOGI(TAG, "TLS connected id=%lu", (unsigned long)slot->request_id);
                 const int64_t declared = esp_http_client_fetch_headers(client);
+                sample_memory(&memory, true);
                 response->status_code = esp_http_client_get_status_code(client);
                 const size_t limit = slot->max_body_bytes != 0 ? slot->max_body_bytes : 8192;
                 if (declared > (int64_t)limit) {
@@ -112,6 +148,7 @@ static void perform_request_once(request_slot_t *slot,
                     if (capacity > limit + 1) capacity = limit + 1;
                     response->body = heap_caps_malloc(capacity,
                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    sample_memory(&memory, false);
                     if (response->body == NULL) {
                         response->transport_error = ESP_ERR_NO_MEM;
                     } else {
@@ -171,6 +208,17 @@ static void perform_request_once(request_slot_t *slot,
             log_heap("after", slot->request_id);
         }
     }
+    response->internal_free_before = memory.internal_before;
+    response->largest_internal_before = memory.largest_before;
+    response->psram_free_before = memory.psram_before;
+    response->tls_internal_free_min = memory.tls_internal_min;
+    response->tls_largest_internal_min = memory.tls_largest_min;
+    response->tls_psram_free_min = memory.tls_psram_min;
+    ESP_LOGI(TAG, "heap tls-peak id=%lu internal=%u largest_internal=%u psram=%u",
+             (unsigned long)slot->request_id,
+             (unsigned)response->tls_internal_free_min,
+             (unsigned)response->tls_largest_internal_min,
+             (unsigned)response->tls_psram_free_min);
     response->elapsed_ms = (uint32_t)((esp_timer_get_time() - started + 999) / 1000);
 }
 
@@ -247,6 +295,12 @@ static void deliver_request(request_slot_t *slot)
         s_stats.transport_failures++;
     }
     if (response.body_len > s_stats.peak_body_bytes) s_stats.peak_body_bytes = response.body_len;
+    if (response.tls_internal_free_min < s_stats.min_tls_internal_free)
+        s_stats.min_tls_internal_free = response.tls_internal_free_min;
+    if (response.tls_largest_internal_min < s_stats.min_tls_largest_internal)
+        s_stats.min_tls_largest_internal = response.tls_largest_internal_min;
+    if (response.tls_psram_free_min < s_stats.min_tls_psram_free)
+        s_stats.min_tls_psram_free = response.tls_psram_free_min;
     s_stats.completed++;
 
     if (slot->callback != NULL) {
@@ -260,6 +314,10 @@ static void deliver_request(request_slot_t *slot)
                  (unsigned long)s_stats.retry_attempts,
                  (unsigned long)(s_stats.transport_failures + s_stats.http_failures),
                  (unsigned long)s_stats.cancellations, (unsigned long)s_stats.peak_body_bytes);
+        ESP_LOGI(TAG, "stats tls-min internal=%lu largest_internal=%lu psram=%lu",
+                 (unsigned long)s_stats.min_tls_internal_free,
+                 (unsigned long)s_stats.min_tls_largest_internal,
+                 (unsigned long)s_stats.min_tls_psram_free);
         slot->callback(&response, slot->context);
     }
 }
@@ -310,6 +368,9 @@ bool crystal_http_init(void)
 
     s_ready = true;
     memset(&s_stats, 0, sizeof(s_stats));
+    s_stats.min_tls_internal_free = UINT32_MAX;
+    s_stats.min_tls_largest_internal = UINT32_MAX;
+    s_stats.min_tls_psram_free = UINT32_MAX;
     ESP_LOGI(TAG, "component initialized");
     ESP_LOGI(TAG, "queue depth=%d", CRYSTAL_HTTP_QUEUE_DEPTH);
     return true;
@@ -434,4 +495,9 @@ void crystal_http_response_release(const crystal_http_response_t *response)
     if (response == NULL) return;
     free(response->body);
     ESP_LOGI(TAG, "response released id=%lu", (unsigned long)response->request_id);
+    ESP_LOGI(TAG, "heap released id=%lu internal=%u largest_internal=%u psram=%u",
+             (unsigned long)response->request_id,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 }

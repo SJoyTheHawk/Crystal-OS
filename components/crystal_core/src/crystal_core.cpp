@@ -44,6 +44,14 @@ void crystal_http_phase1_callback(const crystal_http_response_t *response, void 
              (unsigned long)response->request_id, response->status_code,
              (unsigned)response->body_len, (unsigned)response->elapsed_ms,
              esp_err_to_name(response->transport_error));
+    ESP_LOGI(TAG, "HTTPS smoke heap id=%lu before_internal=%lu before_largest=%lu before_psram=%lu tls_internal=%lu tls_largest=%lu tls_psram=%lu",
+             (unsigned long)response->request_id,
+             (unsigned long)response->internal_free_before,
+             (unsigned long)response->largest_internal_before,
+             (unsigned long)response->psram_free_before,
+             (unsigned long)response->tls_internal_free_min,
+             (unsigned long)response->tls_largest_internal_min,
+             (unsigned long)response->tls_psram_free_min);
     if (response->transport_error == ESP_OK && response->status_code >= 200 &&
             response->status_code < 300 && response->body_len > 0) ESP_LOGI(TAG, "HTTPS smoke test passed");
     else ESP_LOGW(TAG, "HTTPS smoke test failed");

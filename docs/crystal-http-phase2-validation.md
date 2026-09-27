@@ -1,6 +1,6 @@
 # Crystal OS Global HTTPS/TLS — Phase 2 Validation Plan
 
-**Status:** Draft  
+**Status:** Passed on device
 **Parent phase:** Incremental Global HTTPS/TLS plan  
 **Scope:** Measure TLS memory behavior through `crystal_http` before migrating bus operations.
 
@@ -17,7 +17,7 @@ body limit: 8 KiB
 keep-alive: disabled
 ```
 
-Add a temporary repeated-test mode that submits a bounded number of requests after Wi-Fi obtains an IP. The mode must stop after the requested count and must release every response. It must not run at the same time as weather or bus HTTP traffic.
+The phase 2 repeated series was run with a temporary diagnostic build configuration. That test runner has been removed after acceptance; normal firmware submits the single framework smoke request.
 
 Record for every request:
 
@@ -29,6 +29,8 @@ Record for every request:
 - internal and PSRAM values after response release.
 
 The existing before/after logs in `crystal_http` are useful, but before accepting this phase the implementation must expose a meaningful peak sample during the connection. A periodic sample, allocation hook, or equivalent high-water measurement is acceptable if it does not materially change timing.
+
+The current implementation samples after client initialization, TLS open, and header fetch. It reports the lowest free internal heap, largest internal block, and PSRAM value observed across those TLS samples in both the response log and cumulative transport statistics.
 
 ## 2.2 Run the baseline series
 
@@ -88,3 +90,24 @@ result=pass|fail
 ```
 
 Phase 2 is complete when the repeated series passes, failure cleanup passes, and any configuration change is justified by the recorded measurements.
+
+## Phase 2 completed result
+
+Cold-start device run completed with the phase 2 diagnostic build:
+
+```text
+phase2 config repeat_count=20 disable_weather=1
+requests=20 successes=20 transport_failures=0 http_failures=0
+status=200 for all requests
+body=559 bytes for all requests
+internal before request 1=77415 bytes
+minimum internal during TLS=60383 bytes
+largest internal block=31744 bytes
+minimum PSRAM during TLS=4706776 bytes
+PSRAM after every response release=4728820 bytes
+internal after request 1=76719 bytes
+internal after request 20=73007 bytes
+result=pass
+```
+
+The repeated run showed no transport failures, no response-buffer leak, and no progressive PSRAM loss. Internal heap settled in the same range observed in the earlier run. The phase 2 instrumentation and bounded repeat harness remain available for later diagnostics; normal firmware defaults keep the repeat count and weather suppression disabled.

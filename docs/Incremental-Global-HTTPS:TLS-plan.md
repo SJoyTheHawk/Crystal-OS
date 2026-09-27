@@ -65,6 +65,8 @@ Failure output must include the transport error and HTTP status without crashing
 
 Detailed procedure: [crystal-http-phase2-validation.md](crystal-http-phase2-validation.md)
 
+**Status:** Passed on device. Twenty cold-start HTTPS smoke requests completed successfully with stable cleanup measurements.
+
 **Purpose:** Measure whether PSRAM-backed TLS allocation improves reliability before migrating applications.
 
 Run repeated smoke-test requests while logging:

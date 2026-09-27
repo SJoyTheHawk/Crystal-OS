@@ -30,6 +30,12 @@ typedef struct {
     size_t body_len;
     uint8_t attempts;
     uint32_t elapsed_ms;
+    uint32_t internal_free_before;
+    uint32_t largest_internal_before;
+    uint32_t psram_free_before;
+    uint32_t tls_internal_free_min;
+    uint32_t tls_largest_internal_min;
+    uint32_t tls_psram_free_min;
 } crystal_http_response_t;
 
 typedef void (*crystal_http_callback_t)(const crystal_http_response_t *response,
@@ -45,6 +51,9 @@ typedef struct {
     uint32_t cancellations;
     uint32_t current_queue_depth;
     uint32_t peak_body_bytes;
+    uint32_t min_tls_internal_free;
+    uint32_t min_tls_largest_internal;
+    uint32_t min_tls_psram_free;
 } crystal_http_stats_t;
 
 bool crystal_http_init(void);
