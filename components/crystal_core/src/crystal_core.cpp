@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include "crystal_hal.hpp"
+#include "crystal_http.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -33,6 +34,37 @@ constexpr size_t kEventDataMax = 64;
 constexpr uint8_t kFullBrightness = 95;
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
+constexpr uint32_t kHttpFrameworkOwner = 0x4652414D; // "FRAM"
+std::atomic_bool s_http_smoke_requested{false};
+
+void crystal_http_phase1_callback(const crystal_http_response_t *response, void *)
+{
+    if (response == nullptr) return;
+    ESP_LOGI(TAG, "HTTPS smoke result id=%lu status=%d body=%u bytes elapsed=%u ms error=%s",
+             (unsigned long)response->request_id, response->status_code,
+             (unsigned)response->body_len, (unsigned)response->elapsed_ms,
+             esp_err_to_name(response->transport_error));
+    if (response->transport_error == ESP_OK && response->status_code >= 200 &&
+            response->status_code < 300 && response->body_len > 0) ESP_LOGI(TAG, "HTTPS smoke test passed");
+    else ESP_LOGW(TAG, "HTTPS smoke test failed");
+    crystal_http_response_release(response);
+}
+
+void crystal_http_smoke_network_handler(void *, esp_event_base_t, int32_t id, void *)
+{
+    if (id != CRYSTAL_NETWORK_CONNECTED || s_http_smoke_requested.exchange(true)) return;
+    crystal_http_options_t options = {};
+    options.url = "https://example.com/";
+    options.timeout_ms = 15000;
+    options.max_attempts = 1;
+    options.max_body_bytes = 8192;
+    options.owner_id = kHttpFrameworkOwner;
+    ESP_LOGI(TAG, "starting HTTPS smoke test");
+    if (crystal_http_get(&options, crystal_http_phase1_callback, nullptr) == 0) {
+        s_http_smoke_requested.store(false);
+        ESP_LOGW(TAG, "failed to queue HTTPS smoke test");
+    }
+}
 
 enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3, ApplySaving = 4 };
 
@@ -648,6 +680,10 @@ void service_task(void *)
         (void)esp_event_loop_create_default();
         (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
                                                   network_signal_handler, nullptr, &s_network_handler);
+        esp_event_handler_instance_t smoke_handler = nullptr;
+        (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
+                                                  crystal_http_smoke_network_handler, nullptr,
+                                                  &smoke_handler);
         hal().wifi->start();
     }
     power_saving_apply(energy_saving_enabled());
@@ -1122,6 +1158,11 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (display == nullptr || clock_update == nullptr || connectivity_update == nullptr ||
             battery_update == nullptr || status_context == nullptr) return false;
 
+    if (!crystal_http_init()) {
+        ESP_LOGE(TAG, "failed to initialize crystal_http");
+        return false;
+    }
+
     // Apps register handlers during installation, before the service task has
     // a chance to create the default loop.
     const esp_err_t event_loop_err = esp_event_loop_create_default();
@@ -1148,5 +1189,10 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (lv_timer_create(check_power_state, 250, nullptr) == nullptr) return false;
     update_clock(nullptr);
     update_connectivity(nullptr);
-    return xTaskCreatePinnedToCore(service_task, "crystal_service", 8192, nullptr, 2, &s_service_task, 0) == pdPASS;
+    if (xTaskCreatePinnedToCore(service_task, "crystal_service", 8192, nullptr, 2,
+                                &s_service_task, 0) != pdPASS) {
+        return false;
+    }
+
+    return true;
 }
