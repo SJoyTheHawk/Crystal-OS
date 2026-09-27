@@ -74,7 +74,16 @@ static void perform_request_once(request_slot_t *slot,
     response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
 
     if (!slot->cancelled && strncmp(slot->url, "crystal://", 10) == 0) {
-        response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
+        if (strcmp(slot->url, "crystal://phase1-cancel") == 0) {
+            ESP_LOGI(TAG, "synthetic cancellation request started id=%lu",
+                     (unsigned long)slot->request_id);
+            for (int i = 0; i < 60 && !slot->cancelled; ++i) {
+                vTaskDelay(pdMS_TO_TICKS(25));
+            }
+            response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
+        } else {
+            response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
+        }
     } else if (!slot->cancelled) {
         log_heap("before", slot->request_id);
         esp_http_client_config_t config = {
@@ -383,8 +392,10 @@ bool crystal_http_cancel(uint32_t request_id)
     bool found = false;
     for (size_t i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
         if (s_slots[i].used && s_slots[i].request_id == request_id) {
-            s_slots[i].cancelled = true;
-            s_stats.cancellations++;
+            if (!s_slots[i].cancelled) {
+                s_slots[i].cancelled = true;
+                s_stats.cancellations++;
+            }
             ESP_LOGI(TAG, "request cancellation requested id=%lu",
                      (unsigned long)request_id);
             found = true;
@@ -401,8 +412,10 @@ size_t crystal_http_cancel_owner(uint32_t owner_id)
     size_t count = 0;
     for (size_t i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
         if (s_slots[i].used && s_slots[i].owner_id == owner_id) {
-            s_slots[i].cancelled = true;
-            ++count;
+            if (!s_slots[i].cancelled) {
+                s_slots[i].cancelled = true;
+                ++count;
+            }
         }
     }
     xSemaphoreGive(s_lock);
