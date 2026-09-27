@@ -1,6 +1,6 @@
 # Crystal OS Global HTTPS/TLS — Phase 1 Implementation Guide
 
-**Status:** Phases 1.1–1.5 implemented in the working tree; device/build acceptance remains  
+**Status:** Phases 1.1–1.7 implemented in the working tree; device/build acceptance remains
 **Parent phase:** Incremental Global HTTPS/TLS plan  
 **Scope:** Build and validate the shared `crystal_http` transport foundation. Bus and weather migration are deferred to later phases.
 
@@ -219,6 +219,12 @@ Implement request-specific retry settings. Do not introduce a global fixed retry
 
 Retry transport failures, TLS handshake failures, DNS failures, connection timeouts, socket read failures, HTTP 408, 425, 429, and 5xx responses. Do not retry ordinary 4xx responses.
 
+The current implementation clamps attempts to ten, uses a default backoff of 500 ms,
+caps the delay at 8 seconds, and logs each attempt, retry delay, completion, and
+cancellation request. Cancellation is checked before an attempt, while reading a
+body, and during backoff; a cancelled request is delivered once with
+`ESP_ERR_INVALID_STATE` and is never retried.
+
 Use bounded backoff:
 
 ```text
@@ -278,6 +284,12 @@ Acceptance:
 - Repeated smoke requests show no progressive heap loss.
 - The body allocation is visible in PSRAM.
 - TLS failures identify whether the failure occurred during DNS, connect, handshake, headers, or body read.
+
+The current implementation logs internal heap, largest internal block, and PSRAM
+before and after each real request. It also records queue submissions, completions,
+successes, transport and HTTP failures, retry attempts, cancellations, current queue
+depth, and peak response body size. The completion log prints a compact cumulative
+counter line so the result is visible without a separate diagnostic caller.
 
 ## Phase 1.8 — Finish the checkpoint and commit
 
