@@ -35,124 +35,7 @@ constexpr uint8_t kFullBrightness = 95;
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
 constexpr uint32_t kHttpFrameworkOwner = 0x4652414D; // "FRAM"
-constexpr uint32_t kHttpAcceptanceOwner = 0x41434354; // "ACCT"
 std::atomic_bool s_http_smoke_requested{false};
-std::atomic_bool s_http_acceptance_started{false};
-std::atomic<uint8_t> s_http_acceptance_repeats{0};
-std::atomic<uint8_t> s_http_acceptance_owner_results{0};
-std::atomic_bool s_http_acceptance_owner_started{false};
-
-struct HttpAcceptanceCancel {
-    uint32_t request_id;
-    uint32_t owner_id;
-};
-
-void http_acceptance_cancel_task(void *arg)
-{
-    auto *command = static_cast<HttpAcceptanceCancel *>(arg);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    if (command->owner_id != 0) {
-        ESP_LOGI(TAG, "acceptance: cancelling owner=%lu",
-                 (unsigned long)command->owner_id);
-        crystal_http_cancel_owner(command->owner_id);
-    } else {
-        ESP_LOGI(TAG, "acceptance: cancelling request id=%lu",
-                 (unsigned long)command->request_id);
-        crystal_http_cancel(command->request_id);
-    }
-    free(command);
-    vTaskDelete(nullptr);
-}
-
-void start_http_acceptance_case(uint8_t case_number);
-
-void crystal_http_acceptance_callback(const crystal_http_response_t *response, void *context)
-{
-    const uint8_t case_number = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(context));
-    if (response == nullptr) return;
-    ESP_LOGI(TAG, "acceptance case=%u result status=%d error=%s body=%u attempts=%u",
-             (unsigned)case_number, response->status_code,
-             esp_err_to_name(response->transport_error), (unsigned)response->body_len,
-             (unsigned)response->attempts);
-    crystal_http_response_release(response);
-
-    if (case_number == 1) {
-        ESP_LOGI(TAG, "acceptance case=1 oversized response check complete");
-        start_http_acceptance_case(2);
-    } else if (case_number == 2) {
-        ESP_LOGI(TAG, "acceptance case=2 HTTP status check complete");
-        start_http_acceptance_case(3);
-    } else if (case_number == 3) {
-        ESP_LOGI(TAG, "acceptance case=3 request cancellation check complete");
-        start_http_acceptance_case(4);
-    } else if (case_number == 4) {
-        const uint8_t completed = s_http_acceptance_owner_results.fetch_add(1) + 1;
-        if (completed == 2) {
-            ESP_LOGI(TAG, "acceptance case=4 owner cancellation check complete");
-            start_http_acceptance_case(5);
-        }
-    } else if (case_number == 5) {
-        const uint8_t completed = s_http_acceptance_repeats.fetch_add(1) + 1;
-        if (completed < 3) {
-            start_http_acceptance_case(5);
-        } else {
-            crystal_http_stats_t stats = {};
-            crystal_http_get_stats(&stats);
-            ESP_LOGI(TAG, "acceptance complete repeated=3 requests=%lu successes=%lu retries=%lu failures=%lu cancelled=%lu peak_body=%lu",
-                     (unsigned long)stats.queued, (unsigned long)stats.successful,
-                     (unsigned long)stats.retry_attempts, (unsigned long)(stats.transport_failures + stats.http_failures),
-                     (unsigned long)stats.cancellations, (unsigned long)stats.peak_body_bytes);
-        }
-    }
-}
-
-void start_http_acceptance_case(uint8_t case_number)
-{
-    crystal_http_options_t options = {};
-    options.timeout_ms = 15000;
-    options.max_attempts = 1;
-    options.max_body_bytes = 8192;
-    options.owner_id = kHttpAcceptanceOwner;
-    const char *url = "https://example.com/";
-    if (case_number == 1) {
-        url = "https://example.com/";
-        options.max_body_bytes = 64;
-        ESP_LOGI(TAG, "acceptance case=1 oversized response start");
-    } else if (case_number == 2) {
-        url = "https://example.com/phase1-not-found";
-        ESP_LOGI(TAG, "acceptance case=2 HTTP 404 response start");
-    } else if (case_number == 3) {
-        url = "crystal://phase1-cancel";
-        ESP_LOGI(TAG, "acceptance case=3 request cancellation start");
-    } else if (case_number == 4) {
-        url = "crystal://phase1-cancel";
-        ESP_LOGI(TAG, "acceptance case=4 owner cancellation request start");
-    } else {
-        ESP_LOGI(TAG, "acceptance case=5 repeated HTTPS request %u/3",
-                 (unsigned)(s_http_acceptance_repeats.load() + 1));
-    }
-    options.url = url;
-    const uint32_t request_id = crystal_http_get(&options, crystal_http_acceptance_callback,
-                                                  reinterpret_cast<void *>(static_cast<uintptr_t>(case_number)));
-    if (request_id == 0) {
-        ESP_LOGW(TAG, "acceptance case=%u could not queue", (unsigned)case_number);
-        return;
-    }
-    if (case_number == 3) {
-        auto *command = static_cast<HttpAcceptanceCancel *>(calloc(1, sizeof(HttpAcceptanceCancel)));
-        if (command != nullptr) {
-            command->request_id = request_id;
-            xTaskCreate(http_acceptance_cancel_task, "http_cancel", 3072, command, 2, nullptr);
-        }
-    } else if (case_number == 4 && !s_http_acceptance_owner_started.exchange(true)) {
-        start_http_acceptance_case(4);
-        auto *command = static_cast<HttpAcceptanceCancel *>(calloc(1, sizeof(HttpAcceptanceCancel)));
-        if (command != nullptr) {
-            command->owner_id = kHttpAcceptanceOwner;
-            xTaskCreate(http_acceptance_cancel_task, "http_cancel_owner", 3072, command, 2, nullptr);
-        }
-    }
-}
 
 void crystal_http_phase1_callback(const crystal_http_response_t *response, void *)
 {
@@ -164,7 +47,6 @@ void crystal_http_phase1_callback(const crystal_http_response_t *response, void 
     if (response->transport_error == ESP_OK && response->status_code >= 200 &&
             response->status_code < 300 && response->body_len > 0) ESP_LOGI(TAG, "HTTPS smoke test passed");
     else ESP_LOGW(TAG, "HTTPS smoke test failed");
-    if (!s_http_acceptance_started.exchange(true)) start_http_acceptance_case(1);
     crystal_http_response_release(response);
 }
 
@@ -174,9 +56,7 @@ void crystal_http_smoke_network_handler(void *, esp_event_base_t, int32_t id, vo
     crystal_http_options_t options = {};
     options.url = "https://example.com/";
     options.timeout_ms = 15000;
-    options.max_attempts = 3;
-    options.retry_backoff_ms = 500;
-    options.retry_backoff_max_ms = 4000;
+    options.max_attempts = 1;
     options.max_body_bytes = 8192;
     options.owner_id = kHttpFrameworkOwner;
     ESP_LOGI(TAG, "starting HTTPS smoke test");

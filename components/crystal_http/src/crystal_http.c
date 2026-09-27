@@ -74,16 +74,7 @@ static void perform_request_once(request_slot_t *slot,
     response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
 
     if (!slot->cancelled && strncmp(slot->url, "crystal://", 10) == 0) {
-        if (strcmp(slot->url, "crystal://phase1-cancel") == 0) {
-            ESP_LOGI(TAG, "synthetic cancellation request started id=%lu",
-                     (unsigned long)slot->request_id);
-            for (int i = 0; i < 60 && !slot->cancelled; ++i) {
-                vTaskDelay(pdMS_TO_TICKS(25));
-            }
-            response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
-        } else {
-            response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
-        }
+        response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
     } else if (!slot->cancelled) {
         log_heap("before", slot->request_id);
         esp_http_client_config_t config = {

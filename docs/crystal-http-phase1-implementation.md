@@ -1,6 +1,6 @@
 # Crystal OS Global HTTPS/TLS — Phase 1 Implementation Guide
 
-**Status:** Phases 1.1–1.7 implemented in the working tree; device/build acceptance remains
+**Status:** Phase 1 complete; acceptance passed on device
 **Parent phase:** Incremental Global HTTPS/TLS plan  
 **Scope:** Build and validate the shared `crystal_http` transport foundation. Bus and weather migration are deferred to later phases.
 

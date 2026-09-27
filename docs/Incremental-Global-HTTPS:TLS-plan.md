@@ -63,6 +63,8 @@ Failure output must include the transport error and HTTP status without crashing
 
 ## Phase 2 — Validate TLS memory behavior
 
+Detailed procedure: [crystal-http-phase2-validation.md](crystal-http-phase2-validation.md)
+
 **Purpose:** Measure whether PSRAM-backed TLS allocation improves reliability before migrating applications.
 
 Run repeated smoke-test requests while logging:
@@ -95,6 +97,8 @@ crystal_http: success attempts=... elapsed=...
 Acceptance requires repeated requests without memory leaks or progressive heap loss.
 
 ## Phase 3 — Migrate the KMB route catalog
+
+Detailed implementation plan: [crystal-http-phase3-kmb-catalog.md](crystal-http-phase3-kmb-catalog.md)
 
 **Purpose:** Move the first real bus operation to the framework.
 
