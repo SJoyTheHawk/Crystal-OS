@@ -102,6 +102,8 @@ Acceptance requires repeated requests without memory leaks or progressive heap l
 
 Detailed implementation plan: [crystal-http-phase3-kmb-catalog.md](crystal-http-phase3-kmb-catalog.md)
 
+Execute the detailed plan as ten gated steps, Step 0 through Step 9. Each step is a separate reviewable change: freeze the baseline, add the handoff context, submit through `crystal_http`, establish bounded response ownership, reconnect the existing parser and catalog sequence, remove nested retries, remove only the KMB direct-client call, run the failure/lifetime matrix, and record repeatability results. Do not advance when a step's device or build gate fails.
+
 **Purpose:** Move the first real bus operation to the framework.
 
 Change only the KMB route catalog request in `bus_service`.

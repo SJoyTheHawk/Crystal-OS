@@ -1,42 +1,48 @@
-# Crystal OS Global HTTPS/TLS — Phase 3 Implementation Plan
+# Crystal OS Global HTTPS/TLS — Phase 3 KMB Catalog Plan
 
 **Status:** Draft  
-**Parent phase:** Incremental Global HTTPS/TLS plan  
+**Parent phase:** [Incremental Global HTTPS/TLS plan](Incremental-Global-HTTPS:TLS-plan.md)
 **Scope:** Migrate only the KMB route catalog request in `bus_service` to `crystal_http`.
 
 CTB catalog requests, KMB route variants, stops, ETA requests, weather requests, and the existing direct HTTP helper remain unchanged until their own phases. The current KMB URL is `https://data.etabus.gov.hk/v1/transport/kmb/route/`.
 
-## 3.1 Preserve the current bus behavior
+## How to execute this plan
 
-The migration must retain:
+Treat each numbered step as a separate reviewable change. There are ten gates, Step 0 through Step 9. Do not combine steps to make a failing check harder to localize. A step may be committed only after its gate passes. If a gate fails, stop at that step, record the failure, and restore the last passing commit before changing the next concern.
+
+Every device check records the firmware commit, request ids, result, and memory readings. “Framework request id” and “bus request id” are different identifiers; log both whenever a request is submitted or completed.
+
+The migration must preserve:
 
 - `BUS_EVT_ROUTE_CATALOG_PROGRESS` messages and their ordering;
 - KMB JSON parsing and KMB variant extraction;
 - route-catalog reset, partial-result handling, and filesystem caching;
 - the final `BUS_EVT_ROUTE_CATALOG` status and provider counts;
-- the existing request id used by bus events;
-- PSRAM ownership for the parsed KMB variant data.
+- the existing bus request id;
+- PSRAM ownership for parsed KMB variant data.
 
-The framework request id and bus request id are different identifiers. Log both when the KMB request is submitted and when its callback completes.
+## Step 0 — Freeze the KMB catalog baseline
 
-## 3.2 Choose the handoff model
+Execution record: [Step 0 baseline](crystal-http-phase3-step0-baseline.md).
+Build verified; device runs and catalog memory measurements pending.
 
-Use a small request context owned by the bus catalog operation. It should contain the bus request id, the KMB URL, the framework request id, and the state needed to deliver the response back to the bus worker.
+**Change:** Documentation and a test record only. Do not change runtime code.
 
-The preferred first implementation is a bounded handoff:
+Capture one successful fresh KMB+CTB catalog fetch, one KMB failure, and one KMB-success/CTB-failure run. Record progress-event order, provider counts, cache result, request id, route and variant counts, and internal heap/PSRAM before and after the operation.
 
-1. `process_route_catalog_request()` posts the existing “Preparing route data fetch” event.
-2. It submits the KMB request with `crystal_http_get()`.
-3. The callback records the framework response and signals the bus worker.
-4. The bus worker waits with a finite timeout, releases the response after parsing, and continues to the existing CTB fetch.
+**Gate:** The three runs are reproducible and the expected event sequence is written down. If the baseline is not understood, do not start the migration.
 
-The callback must not use LVGL or mutate UI state. It may copy the response metadata and transfer ownership of the response body to the waiting bus operation. If the wait times out or the bus operation is cancelled, the callback must still release the response safely and ignore stale context.
+## Step 1 — Add a KMB-only handoff context
 
-An asynchronous bus state machine is acceptable instead, but it must preserve the same event ordering and ownership rules. Do not block the `crystal_http` worker waiting for the bus worker.
+**Change:** Add a small context owned by the catalog operation. It contains the bus request id, KMB URL, framework request id, completion state, response pointer, and cancellation/timeout state. Add the context and helper declarations without changing the request path.
 
-## 3.3 Request policy and error mapping
+**Gate:** The project builds, no device behavior changes, and the context has one clear owner and one cleanup function. Document which task allocates and releases it.
 
-Start with the values measured in phase 2. The initial KMB catalog policy should be explicit:
+## Step 2 — Submit the KMB request through `crystal_http`
+
+**Change:** Replace only the KMB catalog submission with `crystal_http_get()`. Keep the callback diagnostic-only: record framework status, body length, and both request ids, then release the response. Do not feed the body to the catalog parser yet.
+
+Use the explicit initial policy:
 
 ```text
 timeout: 15 seconds
@@ -47,59 +53,55 @@ body limit: measured KMB catalog size plus a bounded safety margin
 owner: dedicated bus catalog owner id
 ```
 
-Let `crystal_http` perform transport and retry decisions. Remove the KMB-specific retry loop from the catalog branch so it does not create nested retries. Preserve the CTB retry loop until CTB is migrated.
+**Gate:** On the device, a successful request logs submission, each attempt, status, body length, and exactly one response release. A forced transport failure reaches its final callback without a crash or leaked response. The existing parser remains untouched, and the CTB path still runs as before.
 
-Map the final framework response as follows:
+## Step 3 — Make callback-to-bus handoff bounded and safe
 
-- successful 2xx response with a valid JSON body: continue with “KMB data downloaded” and parsing;
-- transport failure, cancellation, body-limit failure, or invalid JSON: report KMB failure and continue the existing partial-catalog logic;
-- non-success HTTP status: preserve the status in logs and report the existing bus failure event.
+**Change:** Transfer response ownership from the callback to the waiting bus operation and signal the bus worker. The worker waits with a finite timeout, then owns parsing and release. The callback must not use LVGL, mutate UI state, or block on the bus worker. A timeout, cancellation, queue-submission failure, or stale context must cause a safe release or ignore path exactly once.
 
-Always call `crystal_http_response_release()` exactly once after the body is no longer needed. Parse the body before releasing it. Do not store pointers into the response body in route or variant structures.
+**Gate:** Exercise success, callback error, timeout, cancellation, and queue-submission failure. Each case ends with one context cleanup and one response release at most; the `crystal_http` worker never waits for the bus worker. Record the result before proceeding.
 
-## 3.4 Refactor boundaries
+## Step 4 — Reuse the existing KMB parser
 
-The current generic `http_get_json()` helper is used by both KMB and CTB paths. Split the KMB catalog fetch from that helper rather than changing the helper’s behavior globally.
+**Change:** Pass the owned response body to the existing KMB `data` array parser and variant extraction code. Parse before `crystal_http_response_release()`. Do not retain pointers into the response body; preserve PSRAM allocation and the existing “KMB data downloaded” and “KMB data resolved” progress messages.
 
-Keep these operations in the existing path:
+**Gate:** A captured valid KMB body produces the same route and variant counts as the baseline. Invalid JSON and a missing `data` array produce a controlled KMB failure, no crash, and no response-body leak.
 
-- CTB catalog fetch;
-- KMB route-variant fetch;
-- KMB and CTB stop requests;
-- ETA requests.
+## Step 5 — Restore complete catalog sequencing
 
-After the change, `bus_service` may still include direct HTTP dependencies because CTB and later operations still use them. Phase 3 is not complete until the KMB catalog branch itself no longer calls `esp_http_client` directly.
+**Change:** Reconnect the migrated KMB result to the existing catalog operation: reset state at the same point, publish the same progress events in the same order, continue to the unchanged CTB fetch, and retain complete-cache and partial-cache behavior.
 
-## 3.5 Implementation checkpoints
+**Gate:** Run fresh KMB+CTB success and KMB success followed by CTB failure. Compare event order, provider counts, route/variant counts, and cache result with Step 0. No CTB source or behavior changes are allowed in this step.
 
-### Checkpoint A — Request handoff
+## Step 6 — Remove nested KMB retry behavior
 
-Submit a KMB request through `crystal_http` and log both ids. Use a temporary callback path that validates status, body length, and release behavior before changing catalog parsing.
+**Change:** Delete the KMB branch’s local retry loop only after framework retries are observed. Let `crystal_http` own transport retries, backoff, timeout, and body-limit decisions. Keep the CTB retry loop unchanged.
 
-### Checkpoint B — KMB parsing
+**Gate:** A forced KMB failure shows the configured framework attempt count and backoff, one final bus failure result, and no multiplied or nested attempts. A successful request still produces one catalog result.
 
-Feed the received body through the existing KMB `data` array parsing and variant extraction. Preserve PSRAM allocation and the current progress messages.
+## Step 7 — Remove the KMB direct-client call
 
-### Checkpoint C — Catalog sequencing
+**Change:** Remove only the KMB catalog `esp_http_client` call and its now-unused local state/includes. Retain direct-client code needed by CTB and all later operations. Do not change the generic helper globally.
 
-Run KMB through the framework, then CTB through the old helper. Verify complete-cache and partial-cache behavior, including a KMB success followed by CTB failure.
+**Gate:** Repository search identifies no direct `esp_http_client` call in the KMB catalog branch, while CTB and other existing operations still compile and link. The Step 5 success and partial-cache runs still pass.
 
-### Checkpoint D — Cleanup
+## Step 8 — Run the failure and lifetime matrix
 
-Remove only the KMB catalog direct-client call and its now-unused local retry code. Keep the direct-client code required by CTB and other operations. Confirm response release on every success, parse failure, timeout, cancellation, and queue-submission failure path.
+**Change:** No new feature code. Exercise the integrated path under controlled failures:
 
-## 3.6 Device tests
+1. transport failure after retries;
+2. non-success HTTP status;
+3. body-limit failure;
+4. invalid JSON;
+5. bus timeout while the callback is pending;
+6. cancellation/app pause during retry;
+7. stale callback after catalog teardown.
 
-Run these cases on the device:
+**Gate:** Every case reports the existing bus failure/partial-catalog result, preserves the HTTP status where available, ignores stale callbacks, and releases the response exactly once. No stale route or variant data is committed.
 
-1. Fresh KMB and CTB catalog fetch: verify progress events, parsed routes, KMB variants, and saved cache.
-2. KMB transport failure: verify framework retries, one final bus failure result, and a usable app.
-3. KMB success with CTB failure: verify partial-provider counts and cache behavior.
-4. KMB response with invalid JSON: verify no crash and no leaked response body.
-5. Catalog cancellation or app pause during KMB retry: verify the callback is ignored or completed once and no stale catalog data is committed.
-6. Repeated catalog fetches: verify post-release heap returns to the phase 2 watermark.
+## Step 9 — Verify repeatability and record acceptance
 
-## Phase 3 acceptance record
+**Change:** No runtime change. Run at least five repeated catalog fetches, including one forced failure, and compare internal heap, largest internal block, and PSRAM against the Step 0 watermark.
 
 Record:
 
@@ -110,7 +112,9 @@ KMB status=<...> body=<...> attempts=<...>
 CTB status=<...>
 providers succeeded=<...> failed=<...>
 cache result=<complete|partial|restored|none>
+heap before/after=<...>/<...>
+psram before/after=<...>/<...>
 result=pass|fail
 ```
 
-Phase 3 is complete when normal KMB catalog fetch, forced KMB failure, partial-provider handling, cancellation/timeout cleanup, and repeated-fetch memory checks all pass without changing CTB behavior.
+**Gate:** Normal KMB catalog fetch, forced KMB failure, partial-provider handling, cancellation/timeout cleanup, invalid JSON, and repeated-fetch memory checks pass without changing CTB behavior. Only then mark Phase 3 complete and create the phase commit.
