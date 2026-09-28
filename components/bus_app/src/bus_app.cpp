@@ -1126,8 +1126,16 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
                          event->data.route_catalog.providers_succeeded,
                          event->data.route_catalog.providers_failed);
             } else if (event->status == ESP_ERR_NOT_FINISHED) {
-                app->setCatalogState(false, "Route data incomplete\nRetrying provider fetch...");
-                ESP_LOGW(TAG, "Route catalog partial: %u routes, %u providers succeeded, %u failed; refresh will retry",
+                app->setCatalogState(false, "Route data incomplete\nProvider refresh required");
+                // This is a terminal result for the current request. No retry
+                // is active after BUS_EVT_ROUTE_CATALOG, so do not leave the
+                // modal overlay blocking the rest of the application. Keep
+                // catalog_ready_ false so route-catalog actions remain guarded
+                // until a later complete fetch succeeds.
+                if (app->catalog_overlay_ != nullptr) {
+                    lv_obj_add_flag(app->catalog_overlay_, LV_OBJ_FLAG_HIDDEN);
+                }
+                ESP_LOGW(TAG, "Route catalog partial: %u routes, %u providers succeeded, %u failed; provider refresh required",
                          event->data.route_catalog.route_count,
                          event->data.route_catalog.providers_succeeded,
                          event->data.route_catalog.providers_failed);

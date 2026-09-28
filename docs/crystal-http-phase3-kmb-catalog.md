@@ -34,11 +34,19 @@ Capture one successful fresh KMB+CTB catalog fetch, one KMB failure, and one KMB
 
 ## Step 1 — Add a KMB-only handoff context
 
+Execution record: [Step 1 handoff context](crystal-http-phase3-step1-handoff.md).
+Source/build checks pass; device behavior is unchanged. Step 0 remains pending,
+so this preparatory change is not an acceptance of the Phase 3 device gates.
+
 **Change:** Add a small context owned by the catalog operation. It contains the bus request id, KMB URL, framework request id, completion state, response pointer, and cancellation/timeout state. Add the context and helper declarations without changing the request path.
 
 **Gate:** The project builds, no device behavior changes, and the context has one clear owner and one cleanup function. Document which task allocates and releases it.
 
 ## Step 2 — Submit the KMB request through `crystal_http`
+
+Execution record: [Step 2 submission](crystal-http-phase3-step2-submission.md).
+Build passes; device capture is pending because the serial port is currently
+held by another Python monitor.
 
 **Change:** Replace only the KMB catalog submission with `crystal_http_get()`. Keep the callback diagnostic-only: record framework status, body length, and both request ids, then release the response. Do not feed the body to the catalog parser yet.
 
@@ -57,17 +65,23 @@ owner: dedicated bus catalog owner id
 
 ## Step 3 — Make callback-to-bus handoff bounded and safe
 
+Implementation record: [Step 3 bounded handoff](crystal-http-phase3-step3-handoff.md).
+
 **Change:** Transfer response ownership from the callback to the waiting bus operation and signal the bus worker. The worker waits with a finite timeout, then owns parsing and release. The callback must not use LVGL, mutate UI state, or block on the bus worker. A timeout, cancellation, queue-submission failure, or stale context must cause a safe release or ignore path exactly once.
 
 **Gate:** Exercise success, callback error, timeout, cancellation, and queue-submission failure. Each case ends with one context cleanup and one response release at most; the `crystal_http` worker never waits for the bus worker. Record the result before proceeding.
 
 ## Step 4 — Reuse the existing KMB parser
 
+Implementation started after the successful Step 3 handoff capture.
+
 **Change:** Pass the owned response body to the existing KMB `data` array parser and variant extraction code. Parse before `crystal_http_response_release()`. Do not retain pointers into the response body; preserve PSRAM allocation and the existing “KMB data downloaded” and “KMB data resolved” progress messages.
 
 **Gate:** A captured valid KMB body produces the same route and variant counts as the baseline. Invalid JSON and a missing `data` array produce a controlled KMB failure, no crash, and no response-body leak.
 
 ## Step 5 — Restore complete catalog sequencing
+
+Step 4 device gate passed; proceed to sequencing verification.
 
 **Change:** Reconnect the migrated KMB result to the existing catalog operation: reset state at the same point, publish the same progress events in the same order, continue to the unchanged CTB fetch, and retain complete-cache and partial-cache behavior.
 

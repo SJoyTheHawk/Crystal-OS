@@ -1,10 +1,12 @@
 #include "bus_service.h"
 #include "bus_routes.h"
 #include "crystal_network.h"
+#include "crystal_http.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
 #include <errno.h>
@@ -16,7 +18,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "bus_service";
 
@@ -31,6 +35,9 @@ static const char *TAG = "bus_service";
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
 #define BUS_STOP_FETCH_ATTEMPTS BUS_ROUTE_FETCH_ATTEMPTS
 #define KMB_VARIANT_CAPACITY 2048
+#define KMB_CATALOG_OWNER_ID 0x4B4D4243u // "KMBC"
+#define KMB_CATALOG_MAX_BODY_BYTES (512u * 1024u)
+#define KMB_CATALOG_HANDOFF_WAIT_MS (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
 
 // Request types
 typedef enum {
@@ -51,6 +58,23 @@ typedef struct {
     char bound;
     uint8_t service_type;
 } bus_request_t;
+
+// Step 3 handoff context. The callback copies response data into owned memory,
+// signals the bus worker, and never waits for or touches UI state.
+typedef struct {
+    uint32_t bus_request_id;
+    char kmb_url[128];
+    uint32_t framework_request_id;
+    SemaphoreHandle_t completed_signal;
+    bool completed;
+    bool timed_out;
+    esp_err_t transport_error;
+    int status_code;
+    uint8_t attempts;
+    uint8_t *body;
+    size_t body_len;
+    bool cancelled;
+} kmb_catalog_handoff_t;
 
 // Service state
 static TaskHandle_t s_worker_task = NULL;
@@ -76,6 +100,144 @@ static void free_event_payload(bus_event_t *event);
 static char *normalize_stop_id(char *stop_id);
 static bool load_route_catalog_cache(void);
 static bool wait_for_network(void);
+static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id,
+                                                          const char *kmb_url);
+static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context);
+static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *response,
+                                            void *user_data);
+static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id);
+static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
+                                            uint8_t op, uint32_t request_id);
+
+static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id,
+                                                          const char *kmb_url)
+{
+    kmb_catalog_handoff_t *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        return NULL;
+    }
+    context->bus_request_id = bus_request_id;
+    strlcpy(context->kmb_url, kmb_url, sizeof(context->kmb_url));
+    context->completed_signal = xSemaphoreCreateBinary();
+    if (context->completed_signal == NULL) {
+        free(context);
+        return NULL;
+    }
+    return context;
+}
+
+static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context)
+{
+    if (context == NULL) return;
+    if (context->completed_signal != NULL) {
+        vSemaphoreDelete(context->completed_signal);
+    }
+    free(context->body);
+    free(context);
+}
+
+static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *response,
+                                            void *user_data)
+{
+    kmb_catalog_handoff_t *context = user_data;
+    if (context == NULL) {
+        if (response != NULL) crystal_http_response_release(response);
+        return;
+    }
+    if (response != NULL) {
+        context->status_code = response->status_code;
+        context->transport_error = response->transport_error;
+        context->attempts = response->attempts;
+        context->body_len = response->body_len;
+        if (response->body != NULL && response->body_len > 0) {
+            context->body = heap_caps_malloc(response->body_len,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (context->body == NULL) {
+                context->body_len = 0;
+                context->transport_error = ESP_ERR_NO_MEM;
+                ESP_LOGE(TAG, "KMB catalog handoff body allocation failed bytes=%u",
+                         (unsigned)response->body_len);
+            } else {
+                memcpy(context->body, response->body, response->body_len);
+            }
+        }
+        ESP_LOGI(TAG, "KMB catalog diagnostic bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 response->status_code, (unsigned)response->body_len,
+                 (unsigned)response->attempts,
+                 esp_err_to_name(response->transport_error));
+        crystal_http_response_release(response);
+    } else {
+        ESP_LOGW(TAG, "KMB catalog diagnostic bus_id=%lu framework_id=%lu missing response",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id);
+    }
+    context->completed = true;
+    xSemaphoreGive(context->completed_signal);
+    if (context->timed_out) {
+        kmb_catalog_handoff_cleanup(context);
+    }
+}
+
+static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id)
+{
+    kmb_catalog_handoff_t *context = kmb_catalog_handoff_create(
+        bus_request_id, KMB_BASE_URL "/route/");
+    if (context == NULL) {
+        ESP_LOGE(TAG, "KMB catalog diagnostic context allocation failed");
+        return 0;
+    }
+    crystal_http_options_t options = {
+        .url = context->kmb_url,
+        .timeout_ms = BUS_HTTP_TIMEOUT_MS,
+        .max_attempts = BUS_ROUTE_FETCH_ATTEMPTS,
+        .retry_backoff_ms = 500,
+        .retry_backoff_max_ms = 8000,
+        .max_body_bytes = KMB_CATALOG_MAX_BODY_BYTES,
+        .keep_alive = false,
+        .owner_id = KMB_CATALOG_OWNER_ID,
+    };
+    context->framework_request_id = crystal_http_get(
+        &options, kmb_catalog_diagnostic_callback, context);
+    if (context->framework_request_id == 0) {
+        ESP_LOGW(TAG, "KMB catalog diagnostic queue failed bus_id=%lu",
+                 (unsigned long)bus_request_id);
+        kmb_catalog_handoff_cleanup(context);
+        return 0;
+    }
+    ESP_LOGI(TAG, "KMB catalog diagnostic queued bus_id=%lu framework_id=%lu",
+             (unsigned long)bus_request_id,
+             (unsigned long)context->framework_request_id);
+
+    const TickType_t wait_ticks = pdMS_TO_TICKS(KMB_CATALOG_HANDOFF_WAIT_MS);
+    if (xSemaphoreTake(context->completed_signal, wait_ticks) != pdTRUE) {
+        context->timed_out = true;
+        context->cancelled = crystal_http_cancel(context->framework_request_id);
+        ESP_LOGW(TAG, "KMB catalog handoff timed out bus_id=%lu framework_id=%lu cancelled=%d",
+                 (unsigned long)bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 context->cancelled);
+        return 0;
+    }
+
+    ESP_LOGI(TAG, "KMB catalog handoff received bus_id=%lu framework_id=%lu status=%d body=%u",
+             (unsigned long)bus_request_id,
+             (unsigned long)context->framework_request_id,
+             context->status_code, (unsigned)context->body_len);
+    uint16_t result = 0;
+    if (context->body != NULL && context->body_len > 0 &&
+        context->status_code == 200 && context->transport_error == ESP_OK) {
+        cJSON *root = cJSON_ParseWithLength((const char *)context->body, context->body_len);
+        if (root != NULL) {
+            result = resolve_route_provider_json("KMB", root, 1u, bus_request_id);
+        } else {
+            ESP_LOGW(TAG, "Route catalog: KMB response JSON parse failed");
+        }
+    }
+    kmb_catalog_handoff_cleanup(context);
+    return result;
+}
 
 void bus_service_init(void)
 {
@@ -546,6 +708,64 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
     return ok;
 }
 
+static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
+                                            uint8_t op, uint32_t request_id)
+{
+    if (root == NULL) return 0;
+    cJSON *data = cJSON_GetObjectItem(root, "data");
+    uint16_t fetched = 0;
+    bus_event_t progress = {0};
+    progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+    progress.request_id = request_id;
+    snprintf(progress.data.route_catalog_progress.message,
+             sizeof(progress.data.route_catalog_progress.message),
+             "Resolving %s route data...\nPlease wait", label);
+    post_event(&progress);
+    ESP_LOGI(TAG, "Route catalog: resolving %s data", label);
+    if (op == (1u << BUS_OP_KMB)) {
+        free(s_kmb_variants);
+        s_kmb_variants = heap_caps_calloc(KMB_VARIANT_CAPACITY, sizeof(*s_kmb_variants),
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        s_kmb_variant_count = 0;
+    }
+    if (cJSON_IsArray(data)) {
+        const int count = cJSON_GetArraySize(data);
+        for (int i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(data, i);
+            cJSON *route = item != NULL ? cJSON_GetObjectItem(item, "route") : NULL;
+            if (route != NULL && cJSON_IsString(route) &&
+                bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
+                fetched++;
+            }
+            if (op == (1u << BUS_OP_KMB) && s_kmb_variants != NULL && route != NULL &&
+                cJSON_IsString(route) && s_kmb_variant_count < KMB_VARIANT_CAPACITY) {
+                cJSON *bound = cJSON_GetObjectItem(item, "bound");
+                cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
+                cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
+                cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
+                if (cJSON_IsString(bound) && cJSON_IsString(orig_en) && cJSON_IsString(dest_en) &&
+                    bound->valuestring[0] != '\0') {
+                    bus_route_variant_t *variant = &s_kmb_variants[s_kmb_variant_count++];
+                    strlcpy(variant->route, route->valuestring, sizeof(variant->route));
+                    variant->op = BUS_OP_KMB;
+                    variant->bound = bound->valuestring[0];
+                    variant->service_type = cJSON_IsNumber(service_type) ? service_type->valueint : 1;
+                    strlcpy(variant->orig_en, orig_en->valuestring, sizeof(variant->orig_en));
+                    strlcpy(variant->dest_en, dest_en->valuestring, sizeof(variant->dest_en));
+                }
+            }
+        }
+    }
+    cJSON_Delete(root);
+    if (fetched == 0) {
+        ESP_LOGE(TAG, "Route catalog: %s returned no routes", label);
+    } else {
+        ESP_LOGI(TAG, "Route catalog: resolved %u %s route records (%u KMB variants)",
+                 fetched, label, s_kmb_variant_count);
+    }
+    return fetched;
+}
+
 static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t op, uint32_t request_id)
 {
     cJSON *root = NULL;
@@ -664,8 +884,8 @@ static void process_route_catalog_request(const bus_request_t *req)
     const bool had_complete_cache = had_cache && s_route_cache_provider_mask == 0x03;
     bus_route_catalog_reset();
 
-    const uint16_t kmb_count = fetch_route_provider(
-        "KMB", KMB_BASE_URL "/route/", 1u, req->id);
+    // Step 4 parses the owned KMB response before releasing its handoff.
+    const uint16_t kmb_count = submit_kmb_catalog_diagnostic(req->id);
     const uint16_t ctb_count = fetch_route_provider(
         "CTB", CTB_BASE_URL "/route/ctb", 2u, req->id);
     const uint8_t succeeded = (kmb_count > 0 ? 1 : 0) + (ctb_count > 0 ? 1 : 0);
