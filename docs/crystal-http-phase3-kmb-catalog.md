@@ -90,11 +90,18 @@ Implementation record: [Step 5 sequencing](crystal-http-phase3-step5-sequencing.
 
 ## Step 6 — Remove nested KMB retry behavior
 
+Implementation record: [Step 6 framework retries](crystal-http-phase3-step6-retries.md).
+
 **Change:** Delete the KMB branch’s local retry loop only after framework retries are observed. Let `crystal_http` own transport retries, backoff, timeout, and body-limit decisions. Keep the CTB retry loop unchanged.
 
 **Gate:** A forced KMB failure shows the configured framework attempt count and backoff, one final bus failure result, and no multiplied or nested attempts. A successful request still produces one catalog result.
 
 ## Step 7 — Remove the KMB direct-client call
+
+Implementation record: [Step 7 direct-client removal](crystal-http-phase3-step7-direct-client.md).
+
+Source and build gate passed; device success and partial-cache behavior remain
+covered by the Step 5 and Step 6 captures.
 
 **Change:** Remove only the KMB catalog `esp_http_client` call and its now-unused local state/includes. Retain direct-client code needed by CTB and all later operations. Do not change the generic helper globally.
 
@@ -102,7 +109,11 @@ Implementation record: [Step 5 sequencing](crystal-http-phase3-step5-sequencing.
 
 ## Step 8 — Run the failure and lifetime matrix
 
-**Change:** No new feature code. Exercise the integrated path under controlled failures:
+Execution record: [Step 8 failure and lifetime matrix](crystal-http-phase3-step8-failure-lifetime.md).
+
+**Change:** Cancel active KMB and CTB requests when the existing network
+disconnected event is delivered, then exercise the integrated path under
+controlled failures:
 
 1. transport failure after retries;
 2. non-success HTTP status;

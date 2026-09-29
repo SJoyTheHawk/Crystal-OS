@@ -1139,6 +1139,14 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
                          event->data.route_catalog.route_count,
                          event->data.route_catalog.providers_succeeded,
                          event->data.route_catalog.providers_failed);
+            } else if (event->status == ESP_ERR_INVALID_STATE && crystal_network_has_ip()) {
+                // The request was cancelled by Wi-Fi loss, and the reconnect
+                // may have arrived before its final callback. Keep bootstrap
+                // eligible so the timer queues a fresh catalog request.
+                app->catalog_request_started_ = false;
+                app->catalog_bootstrap_checked_ = false;
+                app->setCatalogState(false, "Waiting for catalog refresh...");
+                ESP_LOGI(TAG, "Route catalog cancelled by network loss; automatic refresh is pending");
             } else {
                 app->setCatalogState(false, "Route data unavailable\nConnect to Wi-Fi and retry");
                 ESP_LOGE(TAG, "Route catalog bootstrap failed; cached routes remain active (%u routes)",
@@ -1185,6 +1193,7 @@ void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *
     }
     ESP_LOGI(TAG, "Network event received: id=%ld", static_cast<long>(id));
     if (id == CRYSTAL_NETWORK_DISCONNECTED) {
+        bus_service_network_disconnected();
         app->catalog_request_started_ = false;
         app->catalog_bootstrap_checked_ = false;
         ESP_LOGI(TAG, "Wi-Fi disconnected; catalog bootstrap is waiting");
@@ -1193,6 +1202,10 @@ void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *
     if (id != CRYSTAL_NETWORK_CONNECTED) {
         return;
     }
+    // A cancelled catalog result may arrive while Wi-Fi is still down and
+    // mark bootstrap as checked. Re-arm it on the subsequent connection so
+    // the LVGL timer queues a fresh KMB+CTB fetch.
+    app->catalog_bootstrap_checked_ = false;
     ESP_LOGI(TAG, "Wi-Fi connected; catalog bootstrap will be evaluated on the LVGL task");
 }
 

@@ -194,6 +194,16 @@ static void perform_request_once(request_slot_t *slot,
                                  response->transport_error == ESP_OK) response->transport_error = ESP_FAIL;
                         response->body[total] = '\0';
                         response->body_len = total;
+                        // A connection can open successfully and then time
+                        // out before headers/body data arrive. In that case
+                        // esp_http_client reports status -1 while the read
+                        // loop may still leave transport_error as ESP_OK.
+                        // Normalize it to a transport failure so framework
+                        // retry policy is applied.
+                        if (response->status_code <= 0 &&
+                            response->transport_error == ESP_OK) {
+                            response->transport_error = ESP_FAIL;
+                        }
                         if (response->transport_error == ESP_OK) {
                             ESP_LOGI(TAG, "body received id=%lu bytes=%u",
                                      (unsigned long)slot->request_id, (unsigned)total);

@@ -25,6 +25,11 @@
 static const char *TAG = "bus_service";
 
 #define KMB_BASE_URL "https://data.etabus.gov.hk/v1/transport/kmb"
+#ifdef CRYSTAL_HTTP_PHASE3_KMB_FORCE_FAILURE
+#define KMB_CATALOG_REQUEST_URL "https://invalid-kmb-test.invalid/route/"
+#else
+#define KMB_CATALOG_REQUEST_URL KMB_BASE_URL "/route/"
+#endif
 #define CTB_BASE_URL "https://rt.data.gov.hk/v2/transport/citybus"
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
@@ -83,6 +88,8 @@ static bus_listener_t s_listener = NULL;
 static void *s_listener_user_data = NULL;
 static uint32_t s_next_request_id = 1;
 static volatile bool s_cancel_all = false;
+static volatile bool s_network_lost = false;
+static volatile esp_http_client_handle_t s_active_direct_client = NULL;
 static time_t s_route_cache_fetched_at = 0;
 static uint8_t s_route_cache_provider_mask = 0;
 static bus_route_variant_t *s_kmb_variants = NULL;
@@ -103,9 +110,9 @@ static bool wait_for_network(void);
 static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id,
                                                           const char *kmb_url);
 static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context);
-static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *response,
-                                            void *user_data);
-static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id);
+static void kmb_catalog_handoff_callback(const crystal_http_response_t *response,
+                                          void *user_data);
+static uint16_t submit_kmb_catalog(uint32_t bus_request_id);
 static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                                             uint8_t op, uint32_t request_id);
 
@@ -136,8 +143,8 @@ static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context)
     free(context);
 }
 
-static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *response,
-                                            void *user_data)
+static void kmb_catalog_handoff_callback(const crystal_http_response_t *response,
+                                          void *user_data)
 {
     kmb_catalog_handoff_t *context = user_data;
     if (context == NULL) {
@@ -161,7 +168,7 @@ static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *respo
                 memcpy(context->body, response->body, response->body_len);
             }
         }
-        ESP_LOGI(TAG, "KMB catalog diagnostic bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
+        ESP_LOGI(TAG, "KMB catalog response bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
                  (unsigned long)context->bus_request_id,
                  (unsigned long)context->framework_request_id,
                  response->status_code, (unsigned)response->body_len,
@@ -169,7 +176,7 @@ static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *respo
                  esp_err_to_name(response->transport_error));
         crystal_http_response_release(response);
     } else {
-        ESP_LOGW(TAG, "KMB catalog diagnostic bus_id=%lu framework_id=%lu missing response",
+        ESP_LOGW(TAG, "KMB catalog response bus_id=%lu framework_id=%lu missing response",
                  (unsigned long)context->bus_request_id,
                  (unsigned long)context->framework_request_id);
     }
@@ -180,17 +187,19 @@ static void kmb_catalog_diagnostic_callback(const crystal_http_response_t *respo
     }
 }
 
-static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id)
+static uint16_t submit_kmb_catalog(uint32_t bus_request_id)
 {
     kmb_catalog_handoff_t *context = kmb_catalog_handoff_create(
-        bus_request_id, KMB_BASE_URL "/route/");
+        bus_request_id, KMB_CATALOG_REQUEST_URL);
     if (context == NULL) {
-        ESP_LOGE(TAG, "KMB catalog diagnostic context allocation failed");
+        ESP_LOGE(TAG, "KMB catalog handoff context allocation failed");
         return 0;
     }
     crystal_http_options_t options = {
         .url = context->kmb_url,
         .timeout_ms = BUS_HTTP_TIMEOUT_MS,
+        // KMB retries are owned exclusively by crystal_http. The catalog
+        // operation submits once and receives one final callback.
         .max_attempts = BUS_ROUTE_FETCH_ATTEMPTS,
         .retry_backoff_ms = 500,
         .retry_backoff_max_ms = 8000,
@@ -199,14 +208,14 @@ static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id)
         .owner_id = KMB_CATALOG_OWNER_ID,
     };
     context->framework_request_id = crystal_http_get(
-        &options, kmb_catalog_diagnostic_callback, context);
+        &options, kmb_catalog_handoff_callback, context);
     if (context->framework_request_id == 0) {
-        ESP_LOGW(TAG, "KMB catalog diagnostic queue failed bus_id=%lu",
+        ESP_LOGW(TAG, "KMB catalog queue failed bus_id=%lu",
                  (unsigned long)bus_request_id);
         kmb_catalog_handoff_cleanup(context);
         return 0;
     }
-    ESP_LOGI(TAG, "KMB catalog diagnostic queued bus_id=%lu framework_id=%lu",
+    ESP_LOGI(TAG, "KMB catalog queued bus_id=%lu framework_id=%lu",
              (unsigned long)bus_request_id,
              (unsigned long)context->framework_request_id);
 
@@ -429,6 +438,17 @@ void bus_service_cancel_all(void)
     }
 }
 
+void bus_service_network_disconnected(void)
+{
+    s_network_lost = true;
+    (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
+    esp_http_client_handle_t client = s_active_direct_client;
+    if (client != NULL) {
+        ESP_LOGW(TAG, "Network disconnected; cancelling active direct HTTP request");
+        (void)esp_http_client_close(client);
+    }
+}
+
 // Worker task
 static void bus_worker_task(void *arg)
 {
@@ -469,7 +489,7 @@ static void bus_worker_task(void *arg)
 // HTTP helper
 static esp_err_t http_get_json(const char *url, cJSON **out_json)
 {
-    if (!crystal_network_has_ip()) {
+    if (s_network_lost || !crystal_network_has_ip()) {
         ESP_LOGW(TAG, "HTTP request deferred: network has no IP address");
         return ESP_ERR_INVALID_STATE;
     }
@@ -489,9 +509,11 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
     if (client == NULL) {
         return ESP_FAIL;
     }
+    s_active_direct_client = client;
 
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
+        s_active_direct_client = NULL;
         esp_http_client_cleanup(client);
         return err;
     }
@@ -501,12 +523,14 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
 
     if (content_length < 0) {
         ESP_LOGW(TAG, "HTTP headers unavailable (status=%d)", status);
+        s_active_direct_client = NULL;
         esp_http_client_cleanup(client);
         return ESP_FAIL;
     }
 
     if (status != 200) {
         ESP_LOGW(TAG, "HTTP %d", status);
+        s_active_direct_client = NULL;
         esp_http_client_cleanup(client);
         return ESP_FAIL;
     }
@@ -515,12 +539,13 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
     char *buffer = heap_caps_malloc(content_length + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (buffer == NULL) {
         ESP_LOGE(TAG, "Failed to allocate %d bytes", content_length);
+        s_active_direct_client = NULL;
         esp_http_client_cleanup(client);
         return ESP_ERR_NO_MEM;
     }
 
     int total_read = 0;
-    while (total_read < content_length) {
+    while (!s_network_lost && total_read < content_length) {
         int read_len = esp_http_client_read(client, buffer + total_read, content_length - total_read);
         if (read_len <= 0) {
             break;
@@ -528,14 +553,20 @@ static esp_err_t http_get_json(const char *url, cJSON **out_json)
         total_read += read_len;
     }
 
-    if (total_read != content_length) {
+    const bool cancelled = s_network_lost;
+    if (cancelled || total_read != content_length) {
         ESP_LOGW(TAG, "HTTP body incomplete: read %d of %d bytes", total_read, content_length);
     }
 
     buffer[total_read] = '\0';
 
     // Don't call close() to preserve TLS session
+    s_active_direct_client = NULL;
     esp_http_client_cleanup(client);
+    if (cancelled) {
+        free(buffer);
+        return ESP_ERR_INVALID_STATE;
+    }
     ESP_LOGI(TAG, "Route catalog: API payload downloaded");
 
     // Parse JSON
@@ -777,6 +808,10 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
 {
     cJSON *root = NULL;
     for (uint8_t attempt = 1; attempt <= BUS_ROUTE_FETCH_ATTEMPTS; attempt++) {
+        if (s_network_lost) {
+            ESP_LOGW(TAG, "Route catalog: %s request cancelled by network loss", label);
+            break;
+        }
         bus_event_t progress = {0};
         progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
         progress.request_id = request_id;
@@ -798,14 +833,22 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
             break;
         }
         root = NULL;
+        if (s_network_lost) {
+            ESP_LOGW(TAG, "Route catalog: %s retry cancelled by network loss", label);
+            break;
+        }
         if (attempt < BUS_ROUTE_FETCH_ATTEMPTS) {
             ESP_LOGW(TAG, "Route catalog: %s request failed; retrying", label);
             vTaskDelay(pdMS_TO_TICKS(500));
         }
     }
     if (root == NULL) {
-        ESP_LOGE(TAG, "Route catalog: %s fetch failed after %u attempts",
-                 label, BUS_ROUTE_FETCH_ATTEMPTS);
+        if (s_network_lost) {
+            ESP_LOGW(TAG, "Route catalog: %s fetch cancelled by network loss", label);
+        } else {
+            ESP_LOGE(TAG, "Route catalog: %s fetch failed after %u attempts",
+                     label, BUS_ROUTE_FETCH_ATTEMPTS);
+        }
         return 0;
     }
 
@@ -880,6 +923,7 @@ static void process_route_catalog_request(const bus_request_t *req)
         post_event(&event);
         return;
     }
+    s_network_lost = false;
     bus_event_t progress = {0};
     progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
     progress.request_id = req->id;
@@ -891,10 +935,11 @@ static void process_route_catalog_request(const bus_request_t *req)
     const bool had_complete_cache = had_cache && s_route_cache_provider_mask == 0x03;
     bus_route_catalog_reset();
 
-    // Step 4 parses the owned KMB response before releasing its handoff.
-    const uint16_t kmb_count = submit_kmb_catalog_diagnostic(req->id);
+    // The framework-owned KMB response is parsed before its handoff is released.
+    const uint16_t kmb_count = submit_kmb_catalog(req->id);
     const uint16_t ctb_count = fetch_route_provider(
         "CTB", CTB_BASE_URL "/route/ctb", 2u, req->id);
+    const bool cancelled_by_network = s_network_lost;
     const uint8_t succeeded = (kmb_count > 0 ? 1 : 0) + (ctb_count > 0 ? 1 : 0);
     const uint8_t failed = 2 - succeeded;
 
@@ -943,10 +988,14 @@ static void process_route_catalog_request(const bus_request_t *req)
         } else {
             bus_route_catalog_reset();
         }
-        event.status = ESP_FAIL;
+        event.status = cancelled_by_network ? ESP_ERR_INVALID_STATE : ESP_FAIL;
         event.data.route_catalog.route_count = bus_route_catalog_count();
-        ESP_LOGE(TAG, "Route catalog: update failed; cached catalog %savailable",
-                 had_cache ? "" : "un");
+        if (cancelled_by_network) {
+            ESP_LOGW(TAG, "Route catalog: update cancelled by network loss; retry will follow reconnect");
+        } else {
+            ESP_LOGE(TAG, "Route catalog: update failed; cached catalog %savailable",
+                     had_cache ? "" : "un");
+        }
     }
     post_event(&event);
 }
