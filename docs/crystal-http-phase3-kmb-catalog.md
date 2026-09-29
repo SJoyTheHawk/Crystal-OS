@@ -82,6 +82,7 @@ Implementation started after the successful Step 3 handoff capture.
 ## Step 5 — Restore complete catalog sequencing
 
 Step 4 device gate passed; proceed to sequencing verification.
+Implementation record: [Step 5 sequencing](crystal-http-phase3-step5-sequencing.md).
 
 **Change:** Reconnect the migrated KMB result to the existing catalog operation: reset state at the same point, publish the same progress events in the same order, continue to the unchanged CTB fetch, and retain complete-cache and partial-cache behavior.
 

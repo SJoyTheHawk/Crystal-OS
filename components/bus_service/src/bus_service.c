@@ -228,6 +228,13 @@ static uint16_t submit_kmb_catalog_diagnostic(uint32_t bus_request_id)
     uint16_t result = 0;
     if (context->body != NULL && context->body_len > 0 &&
         context->status_code == 200 && context->transport_error == ESP_OK) {
+        bus_event_t downloaded = {0};
+        downloaded.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+        downloaded.request_id = bus_request_id;
+        snprintf(downloaded.data.route_catalog_progress.message,
+                 sizeof(downloaded.data.route_catalog_progress.message),
+                 "KMB data downloaded\nResolving route data...");
+        post_event(&downloaded);
         cJSON *root = cJSON_ParseWithLength((const char *)context->body, context->body_len);
         if (root != NULL) {
             result = resolve_route_provider_json("KMB", root, 1u, bus_request_id);
