@@ -649,7 +649,9 @@ void BusApp::buildKeypad(lv_coord_t width)
     lv_label_set_text(zero_label, "0");
     lv_obj_center(zero_label);
     lv_obj_add_event_cb(zero, onKeyPressed, LV_EVENT_CLICKED, this);
-    keypad_buttons_[9] = zero;
+    // BUS_ROUTE_CHARSET starts with zero, so keep the zero key attached to
+    // mask bit 0. Index 9 is already owned by the numeric 9 button above.
+    keypad_buttons_[0] = zero;
 
     lv_obj_t *backspace = lv_btn_create(keypad_container_);
     lv_obj_set_size(backspace, number_width, number_height);
@@ -664,6 +666,11 @@ void BusApp::buildKeypad(lv_coord_t width)
     // Alphabet bank: two columns, vertically scrollable. Keeping the bank
     // separate leaves the numeric keys large enough for reliable touch input.
     lv_obj_t *letter_strip = lv_obj_create(keypad_container_);
+    // The default LVGL theme adds a card border and a transient scrollbar to
+    // generic objects. Neither belongs on this dark keypad strip: remove the
+    // inherited styles and make every scroll-related part explicitly dark or
+    // transparent so dragging cannot flash a white edge.
+    lv_obj_remove_style_all(letter_strip);
     const lv_coord_t letter_x = numeric_width + gap;
     const lv_coord_t letter_width = keypad_width - letter_x;
     const lv_coord_t letter_gap = 6;
@@ -671,7 +678,12 @@ void BusApp::buildKeypad(lv_coord_t width)
     lv_obj_set_size(letter_strip, letter_width, keypad_height);
     lv_obj_set_pos(letter_strip, letter_x, 0);
     lv_obj_set_style_bg_color(letter_strip, lv_color_hex(kBgColor), 0);
+    lv_obj_set_style_bg_opa(letter_strip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(letter_strip, 0, 0);
+    lv_obj_set_style_shadow_width(letter_strip, 0, 0);
+    lv_obj_set_style_bg_opa(letter_strip, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
+    lv_obj_set_style_border_opa(letter_strip, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
+    lv_obj_set_style_shadow_opa(letter_strip, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
     lv_obj_set_style_pad_all(letter_strip, 0, 0);
     lv_obj_set_style_pad_row(letter_strip, letter_gap, 0);
     lv_obj_set_style_pad_column(letter_strip, letter_gap, 0);
@@ -679,6 +691,19 @@ void BusApp::buildKeypad(lv_coord_t width)
     lv_obj_set_flex_align(letter_strip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(letter_strip, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(letter_strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(letter_strip, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    // The board uses LVGL direct mode with two RGB frame buffers. A child
+    // scroll normally invalidates only its viewport, which can expose an
+    // unsynchronised rectangle in the other buffer during the swap. Redraw
+    // the complete screen for this small keypad scroll to keep both buffers
+    // identical and avoid a bright redraw block.
+    lv_obj_add_event_cb(letter_strip, [](lv_event_t *event) {
+        lv_obj_t *strip = lv_event_get_target(event);
+        lv_obj_t *screen = strip != nullptr ? lv_obj_get_screen(strip) : nullptr;
+        if (screen != nullptr) {
+            lv_obj_invalidate(screen);
+        }
+    }, LV_EVENT_SCROLL, nullptr);
     lv_obj_set_flex_flow(letter_strip, LV_FLEX_FLOW_ROW_WRAP);
 
     // Add letter buttons
@@ -1017,6 +1042,7 @@ void BusApp::refreshFavoriteETAs()
             favorites_[i].stop_id,
             favorites_[i].route,
             favorites_[i].op,
+            favorites_[i].bound,
             favorites_[i].service_type
         );
         if (favorite_request_ids_[i] != 0) {

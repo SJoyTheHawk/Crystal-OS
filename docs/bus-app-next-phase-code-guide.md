@@ -1,281 +1,174 @@
-# HTTPS/TLS Phase 5, Slice 1 — Bus Service Contracts and CTB Normalization Code Guide
+# HTTPS/TLS Phase 5, Slice 1 — Bus Service Contracts and CTB Normalization
 
 **Status:** Ready for implementation
 **Phase:** HTTPS/TLS Phase 5, first implementation slice
-**Scope:** Bus-service groundwork, CTB route/stop normalization, and the first
-CTB operation through `crystal_http`
 **Parent plans:**
 
 - [Incremental Global HTTPS/TLS plan](Incremental-Global-HTTPS:TLS-plan.md)
 - [Bus app integration plan](bus-app-integration-plan.md)
 
-This guide defines the first Phase 5 implementation slice after the KMB catalog and KMB
-route-stop migration. It deliberately leaves the KMB runtime path unchanged and
-keeps the final Phase 4 failure/lifetime acceptance deferred.
+This slice starts Phase 5 after the KMB catalog and KMB route-stop migrations.
+It adds the service contracts needed by the bus app and moves CTB route-stop
+requests through `crystal_http`. It does not complete Phase 5. KMB route
+variants, ETA, CTB catalog, CTB ETA, weather, and the remaining direct HTTP
+paths are later slices.
 
-This is not the complete Phase 5. Later Phase 5 slices will migrate KMB route
-variants, KMB ETA, the CTB catalog, CTB route variants, CTB ETA, and any
-remaining bus HTTPS calls.
+The implementation is divided into independent gates. Finish and record one
+step before starting the next. If a validation fails, stop at that step and
+keep the last passing state available for review.
 
-## Outcome of this slice
+## Rules for every step
 
-At the end of this slice:
+The TLS plan owns transport behavior: TLS setup, certificate validation, PSRAM
+response buffering, body limits, timeout, retry, cancellation, response
+release, and transport diagnostics. The bus plan owns provider parsing,
+normalized records, service events, and UI state.
 
-- KMB catalog and KMB stop requests still use `crystal_http`.
-- Bus events have one documented ownership and delivery rule.
-- KMB and CTB route variants and stops can be represented by one normalized
-  model without losing provider-specific identifiers.
-- One CTB operation, preferably CTB route stops, uses `crystal_http` with an
-  explicit body limit, retry policy, cancellation owner, and bounded handoff.
-- The app can distinguish a current result from a stale result by request id
-  and normalized identity.
-- No new code creates or cleans up an `esp_http_client` handle.
+The callback runs on the `crystal_http` worker. It may copy a bounded response
+into a service handoff context, record status/error/attempts, release the
+framework response exactly once, and signal the bus worker. It must not call
+LVGL, invoke the app listener, parse JSON, or free a context still used by the
+bus worker.
+
+`bus_service` owns a handoff context while parsing. `bus_app` owns event
+payloads after delivery on the LVGL task. Every terminal request produces one
+event and one cleanup path. Every event carries a bus request id; every
+framework submission also records its framework request id.
 
 Do not add ETA merging, favorites, language switching, or Nearby in this
-slice. Those features depend on these contracts.
+slice. They depend on the contracts below.
 
-## Read the existing code before editing
+## Step 0 — Freeze the CTB baseline and inspect the response schema
 
-The current implementation is concentrated in:
+**Purpose:** Capture provider behavior and the current memory boundary before
+changing CTB code.
 
-| Area | File | Role |
-| --- | --- | --- |
-| Public service contract | `components/bus_service/include/bus_service.h` | Requests, normalized records, events, listener API |
-| Worker and provider paths | `components/bus_service/src/bus_service.c` | Queue, KMB handoffs, CTB direct paths, parsing |
-| Route index | `components/bus_service/include/bus_routes.h` and `src/bus_routes.c` | Prefix filtering and runtime catalog |
-| App state and pages | `components/bus_app/src/bus_app.cpp` | LVGL pages, request generations, stale-result checks |
-| Shared transport | `components/crystal_http/include/crystal_http.h` and `src/crystal_http.c` | Queue, TLS, PSRAM body, retry, cancellation, release |
+**Code change:** Documentation only.
 
-`bus_service.c` still contains the legacy direct helper for CTB and other
-operations. Keep that path isolated while this slice is implemented, then
-remove it only when the corresponding operation has moved to `crystal_http`.
-The KMB stop handoff is the ownership pattern to copy.
-
-The older [bus-app-code-guide.md](bus-app-code-guide.md) describes the target
-application shape, but its direct HTTP examples are obsolete. For networking,
-this guide and the TLS plan take precedence.
-
-## Ownership and threading rules
-
-There are three ownership domains:
-
-1. `crystal_http` owns its active client and response body until the callback
-   returns or `crystal_http_response_release()` is called.
-2. `bus_service` owns a handoff context and any copied response body while the
-   worker parses it.
-3. `bus_app` owns copied event payloads after the event is delivered on the
-   LVGL task.
-
-The callback runs on the framework worker. It must only copy bounded data into
-the handoff context, record status/error/attempts, release the framework
-response exactly once, and signal the bus worker. It must not call LVGL, invoke
-the app listener, parse JSON, or free a context that the bus worker may still
-use.
-
-`post_event()` remains the only service-to-app delivery path. It must copy the
-event, queue delivery on the LVGL task, and free payloads if the listener is
-absent or queueing fails. The listener must be detached before app destruction.
-
-Every request carries both identities:
+**Device validation:** With the current image, select one CTB route in both
+directions if the current UI exposes it. Record:
 
 ```text
-bus request id       identifies the user operation
-framework request id identifies the HTTPS operation
-normalized identity  route + operator + bound + service type (+ stop id)
+route, direction, generated URL, HTTP status, body bytes, stop count/order
+internal heap before/after, largest block before/after, PSRAM before/after
 ```
 
-The app accepts an event only when its bus request id and current page identity
-match. A late callback may clean up its own context, but it must never replace
-the current page's rows.
+Capture one successful CTB route response and one route-stop response. Save
+the relevant JSON fields or a redacted fixture. Confirm the actual CTB field
+names for route, direction, stop id, sequence, names, and coordinates. Also
+record whether CTB returns an empty `data` array or a missing `data` field for
+no-result cases.
 
-## Normalize the public data model first
+**Pass condition:** The response schema is recorded, both directions are
+understood, and the current CTB path remains usable after a successful fetch.
+No transport code changes are made in this step.
 
-Update `bus_service.h` before adding another provider path. Preserve fixed-size
-POD records so the service remains C-only and payload sizes are predictable.
+## Step 1 — Define normalized records and request identity
 
-The normalized route variant identity is:
+**Purpose:** Give KMB and CTB one stable service contract before adding another
+provider implementation.
+
+**Files:**
+
+- `components/bus_service/include/bus_service.h`
+- `components/bus_service/src/bus_service.c`
+- `components/bus_app/src/bus_app.cpp` only where field names require it
+
+**Change:** Preserve fixed-size C records and add or correct fields needed by
+both providers. A route variant identity is:
 
 ```text
 route + operator + bound + service_type
 ```
 
-The normalized stop identity is provider-specific:
+A stop identity retains the provider source id:
 
 ```text
-route + operator + bound + service_type + source stop id
+route + operator + bound + service_type + provider stop id
 ```
 
-Do not assume KMB and CTB stop IDs are interchangeable. A co-operated stop can
-hold one source ID per operator and later be merged at the app layer.
+Stop and ETA requests must carry operator, bound, and service type. Do not
+assume KMB and CTB stop ids are interchangeable. Keep existing ABI names when
+possible; update all C and C++ call sites together if a field changes.
 
-The public records should contain at least:
+Document event ownership in the header. Successful arrays are owned by the
+listener after LVGL delivery; error events contain no allocated array.
 
-```c
-typedef struct {
-    char route[5];
-    bus_operator_t op;
-    bus_direction_t bound;
-    uint8_t service_type;
-    char origin_en[48];
-    char destination_en[48];
-    char origin_tc[48];
-    char destination_tc[48];
-} bus_route_variant_t;
+**Validation:**
 
-typedef struct {
-    char stop_id[20];
-    uint16_t sequence;
-    bus_operator_t op;
-    char name_en[60];
-    char name_tc[60];
-    float latitude;
-    float longitude;
-    bool resolved;
-} bus_stop_t;
+```bash
+git diff --check
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
 ```
 
-Use the repository's existing field names and ABI where possible. If a field is
-renamed, update all C and C++ call sites in the same change and record the
-compatibility impact. Do not silently overload `stop_id` with a cross-provider
-identity.
+Compile the public header from both a C source and a C++ source, and inspect
+the diff for LVGL pointers or provider-specific HTTP handles in the public
+contract.
 
-Extend request records so stop and ETA requests carry `op`, `bound`, and
-`service_type`. An ETA request without direction is unsafe because a provider
-can return both directions for one stop.
+**Pass condition:** The firmware builds, the public records represent both
+providers, and each event payload has one documented owner and cleanup path.
 
-## Provider adapter boundary
+## Step 2 — Add provider parser boundaries and CTB fixtures
 
-Keep provider-specific JSON parsing separate from normalization. Add internal C
-helpers in `bus_service.c` first; split them into `bus_provider_kmb.c`,
-`bus_provider_ctb.c`, and `bus_normalize.c` only when the boundaries become
-large enough to test independently.
+**Purpose:** Validate CTB normalization without involving TLS or UI timing.
 
-Each adapter should expose the equivalent of:
+**Files:** Start with internal helpers in
+`components/bus_service/src/bus_service.c`. Split into provider files only if
+the code becomes large enough to warrant it.
 
-```c
-typedef struct {
-    bus_operator_t op;
-    const char *url;
-    size_t body_limit;
-    uint32_t timeout_ms;
-    uint8_t max_attempts;
-    uint32_t owner_id;
-} bus_provider_policy_t;
-
-static esp_err_t parse_route_variants(const uint8_t *body, size_t len,
-                                      bus_route_variant_t **out,
-                                      uint8_t *count);
-
-static esp_err_t parse_route_stops(const uint8_t *body, size_t len,
-                                   bus_operator_t op,
-                                   bus_stop_t **out,
-                                   uint16_t *count);
-```
-
-The parser contract is strict:
+**Change:** Add a CTB route-stop parser with this contract:
 
 - malformed JSON returns a parse error;
 - missing or non-array `data` returns a controlled error;
-- an empty array returns an explicit empty result;
-- invalid records are skipped only when the remaining records are usable;
-- a response with no valid records never becomes a successful event;
-- output arrays are allocated in PSRAM and have one documented owner.
+- an empty array is an explicit empty result;
+- invalid records are skipped only when usable records remain;
+- no valid records never becomes a successful stop event;
+- output arrays use PSRAM and have one documented owner;
+- source stop ids and sequence order are preserved.
 
-Before coding the CTB parser, capture and inspect one real route response and
-one real route-stop response. Confirm field names, direction values, route
-codes, stop IDs, sequence types, and whether the response contains provider
-metadata. Do not infer the schema from the KMB payload.
+Add fixtures for one valid response, malformed JSON, missing `data`, empty
+`data`, and one invalid record. Keep KMB parsing behavior unchanged.
 
-## First CTB migration: route stops
+**Validation:** Run the parser fixture or host check for every input. Verify
+the expected error code, output count, order, source ids, and one free of every
+allocated output. Then run `idf.py build` and `git diff --check`.
 
-Use CTB route stops as the first CTB operation because it has a clear visible
-result and exercises the same handoff that KMB stops already proved.
+**Pass condition:** All fixture cases produce the documented result without a
+leak, invalid free, or successful event for unusable data.
 
-### Request path
+## Step 3 — Submit CTB route stops through `crystal_http`
 
-1. `bus_service_request_stops()` validates route, operator, bound, and service
-   type, assigns a bus request id, and queues one request.
-2. The worker builds the CTB URL from the normalized request.
-3. The worker allocates a CTB handoff context containing the bus request id,
-   normalized identity, framework id, semaphore, status/error/attempts, and
-   bounded PSRAM body.
-4. The worker submits one `crystal_http_get()` request with a CTB-specific
-   policy. It does not call the legacy `http_get_json()` helper.
-5. The callback copies the body, releases the framework response, and signals
-   the worker.
-6. The worker parses the copied body with the CTB adapter, emits one terminal
-   event, and cleans up the handoff exactly once.
+**Purpose:** Move CTB stop transport to the shared TLS owner while the
+existing parser and UI result path remain isolated.
 
-Use a dedicated owner id such as `CTB_STOPS_OWNER_ID`; do not reuse the KMB
-owner. Start with an interactive policy sized from measured CTB responses:
+**Files:**
+
+- `components/bus_service/src/bus_service.c`
+- `components/bus_service/CMakeLists.txt` only for temporary controlled test
+  switches, default OFF
+
+**Change:** Add a dedicated `CTB_STOPS_OWNER_ID` and a CTB handoff context
+containing the bus id, route, bound, operator, framework id, semaphore,
+status/error/attempts, and bounded PSRAM body.
+
+Submit one `crystal_http_get()` request. Do not call the legacy
+`http_get_json()` helper. Start with this measured policy:
 
 ```text
 timeout: 8 seconds
 max attempts: 3
 backoff: 500 ms, capped at 2 seconds
-keep-alive: disabled initially
-body limit: measured maximum plus a bounded safety margin
+keep-alive: disabled
+body limit: measured CTB maximum plus a bounded safety margin
 ```
 
-The policy is a starting point. Change it only when a device measurement
-justifies the change.
+The diagnostic callback copies the body, records both ids and response fields,
+releases the framework response once, and signals the worker. Do not reconnect
+the CTB parser until the handoff is proven.
 
-### Cancellation
-
-Network loss, app pause/destroy, Back, and a superseding stop request must call
-`crystal_http_cancel_owner(CTB_STOPS_OWNER_ID)` and mark the request stale.
-Cancellation must prevent another retry while there is no network lease. A
-late callback still releases its response and signals only a live context.
-
-The app must show a reconnect or cancelled state and remain usable. It must not
-display rows from the cancelled CTB request.
-
-## App integration contract
-
-The app should remain provider-neutral after service delivery:
-
-- Search rows display normalized route variants and operator labels.
-- Stop rows display sequence and resolved name when available, otherwise a
-  clearly marked placeholder.
-- Back returns to the previous page and cancels the page owner.
-- A result is accepted only for the active page generation.
-- Provider-specific source IDs remain hidden inside the normalized stop record.
-
-Do not merge KMB and CTB arrays by position. Merge only by an explicit
-normalized identity or a later stop-resolution identity that includes operator
-source IDs.
-
-## Implementation gates
-
-### Gate A — Contract and ownership review
-
-Change only headers, internal types, and event ownership documentation.
-
-Checks:
-
-- `bus_service.h` compiles from both C and C++.
-- request records include operator, bound, and service type where required;
-- every event payload has one owner and one cleanup path;
-- no LVGL pointer enters a service or framework callback.
-
-### Gate B — CTB parser fixture
-
-Add a small fixture or host-side parser check for one valid route response, one
-valid stop response, malformed JSON, missing `data`, empty `data`, and one
-invalid record.
-
-Checks:
-
-- valid records preserve order and source IDs;
-- invalid input returns a controlled error;
-- every allocated output is freed by the documented owner.
-
-### Gate C — CTB framework submission
-
-Replace only CTB route-stop submission. Keep CTB parsing and UI behavior
-unchanged until the framework handoff is proven.
-
-Expected logs:
+**Validation:** Build and run one CTB inbound and one outbound request. Confirm
+logs similar to:
 
 ```text
 bus_service: CTB stops submitted route=... bound=... bus_id=... framework_id=...
@@ -284,25 +177,127 @@ crystal_http: response status=200 body=... bytes
 bus_service: CTB stops response ... status=200 body=... attempts=1 error=ESP_OK
 ```
 
-### Gate D — CTB parser and normalized event
+Run a temporary invalid-host failure if needed. Confirm the final callback,
+one response release, no crash, and stable heap/PSRAM. Keep the switch OFF for
+normal firmware.
 
-Reconnect the CTB parser and emit `BUS_EVT_STOPS_LIST` with the normalized
-records. Validate inbound and outbound routes and one empty/error response.
+**Pass condition:** CTB transport succeeds in both directions, controlled
+failure reaches one terminal callback, and the existing UI behavior is not
+claimed as migrated until Step 4.
 
-### Gate E — Cancellation and stale selection
+## Step 4 — Connect the CTB parser and normalized stop event
 
-Disconnect Wi-Fi during connection and body read, press Back during an active
-request, and select another route before completion. Confirm one release, no
-late rows, no retry storm, and stable heap/PSRAM.
+**Purpose:** Deliver CTB stops through the existing app event path.
 
-### Gate F — Direct-client boundary
+**Files:**
 
-After CTB route stops pass, remove only that operation's direct-client path.
-Leave unrelated CTB and ETA direct paths untouched until their own migration.
-Run a source check that the CTB stop branch contains no `esp_http_client`,
-`esp_tls`, or certificate-bundle ownership.
+- `components/bus_service/src/bus_service.c`
+- `components/bus_service/include/bus_service.h` if event fields need revision
+- `components/bus_app/src/bus_app.cpp`
 
-## Build and device checks
+**Change:** Parse the owned CTB body in the bus worker, create normalized
+`bus_stop_t` records, and emit `BUS_EVT_STOPS_LIST` with the original bus
+request id. Emit one controlled error for HTTP failure, invalid JSON, missing
+or empty data, allocation failure, and transport failure. Never pass the
+handoff body or an error string as a stop array.
+
+The app accepts the event only when the request id and selected route identity
+match the current stop page. It frees the received array exactly once and
+shows a usable empty or error state.
+
+**Validation:** Select one CTB inbound and one outbound route. Confirm the
+displayed rows preserve provider sequence and source ids. Exercise one
+malformed or empty fixture and select another route afterward.
+
+**Pass condition:** Valid CTB rows appear in the stop page, invalid responses
+produce one error or empty state, and a later route remains usable.
+
+## Step 5 — Add CTB cancellation and stale-result handling
+
+**Purpose:** Make CTB requests safe during page and network changes.
+
+**Files:**
+
+- `components/bus_service/src/bus_service.c`
+- `components/bus_service/include/bus_service.h`
+- `components/bus_app/src/bus_app.cpp`
+
+**Change:** Network loss, app pause/destroy, Back, and a superseding stop
+request cancel `CTB_STOPS_OWNER_ID`. Mark the request stale before cancelling.
+No retry may start while the network lease is lost. A late callback releases
+its own framework response and can signal only a live handoff context.
+
+**Validation:** Perform four device checks:
+
+1. disconnect Wi-Fi during TLS connection;
+2. disconnect Wi-Fi during body download;
+3. press Back during an active CTB request;
+4. select route B before route A completes.
+
+Record cancellation latency, attempts, terminal error, response releases,
+stale-event handling, and heap/PSRAM after cleanup.
+
+**Pass condition:** Each case has one terminal event and one response release,
+does not consume the remaining retry budget, adds no stale rows, and leaves the
+app usable.
+
+## Step 6 — Remove only the CTB stop direct-client path
+
+**Purpose:** Close the CTB route-stop ownership boundary after transport,
+parser, and lifetime behavior pass.
+
+**Files:**
+
+- `components/bus_service/src/bus_service.c`
+- `components/bus_service/CMakeLists.txt` if a temporary test hook is removed
+
+**Change:** Remove the CTB stop branch's direct `esp_http_client` ownership
+and local retry loop. Leave unrelated CTB catalog, route variant, ETA, and
+weather paths untouched until their own migrations.
+
+**Validation:** Run:
+
+```bash
+rg -n "esp_http_client|esp_tls|esp_crt_bundle|http_get_json" \
+  components/bus_service/src/bus_service.c
+git diff --check
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
+```
+
+The source result may still show legacy helpers used by other operations, but
+the CTB stop branch must contain no direct client call. Repeat one CTB inbound,
+one outbound, one cancellation, and one stale-selection run.
+
+**Pass condition:** CTB stops still work through `crystal_http`, the direct
+client is absent from that branch, and all earlier device checks still pass.
+
+## Step 7 — Record the slice and hand off to the next Phase 5 slice
+
+**Purpose:** Make the result reviewable before migrating another operation.
+
+Record:
+
+```text
+phase5 slice=1
+firmware commit=<sha>
+step=<0..6>
+operator=<KMB|CTB> route=<route> bound=<I|O>
+bus request=<id> framework request=<id>
+status=<...> error=<...> attempts=<...> body=<...> stops=<...>
+response releases=<...>
+heap/PSRAM before and after=<...>
+result=pass|fail|deferred
+known follow-up=<...>
+```
+
+The slice is ready to hand off when Steps 0 through 6 pass and the normal test
+switches are disabled. The next Phase 5 slice can migrate KMB route variants
+or the CTB catalog, using the same provider contract and handoff. Return to
+the deferred KMB Phase 4 failure/lifetime matrix after CTB and weather clients
+are available.
+
+## Common build commands
 
 From the repository root:
 
@@ -310,26 +305,7 @@ From the repository root:
 source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
 idf.py build
 git diff --check
-```
-
-Keep the Phase 3/4 temporary test options disabled for normal CTB work:
-
-```bash
 grep CRYSTAL_HTTP_PHASE build/CMakeCache.txt
 ```
 
-Record for every device run:
-
-```text
-firmware commit=<sha>
-bus request=<id> framework request=<id>
-operator=<KMB|CTB> route=<route> bound=<I|O>
-status=<...> error=<...> attempts=<...> body=<...>
-stops=<...> response releases=<...>
-heap/PSRAM before and after=<...>
-result=pass|fail
-```
-
-Do not proceed to CTB ETA or co-operated-route merging until the CTB stop
-operation passes Gates A–F. Return to the deferred KMB Phase 4 matrix after
-the CTB and weather clients are available, as required by the parent plan.
+All temporary Phase 3/4 test options must be `OFF` during normal CTB runs.

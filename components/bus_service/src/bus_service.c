@@ -39,7 +39,7 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
-#define ROUTE_CACHE_VERSION 4u
+#define ROUTE_CACHE_VERSION 5u
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
@@ -564,7 +564,10 @@ uint32_t bus_service_request_stops(const char *route,
     return req.id;
 }
 
-uint32_t bus_service_request_stop_detail(const char *stop_id, uint8_t op)
+uint32_t bus_service_request_stop_detail(const char *stop_id,
+                                         uint8_t op,
+                                         char bound,
+                                         uint8_t service_type)
 {
     if (s_request_queue == NULL) {
         bus_service_init();
@@ -575,6 +578,8 @@ uint32_t bus_service_request_stop_detail(const char *stop_id, uint8_t op)
     req.id = s_next_request_id++;
     strlcpy(req.stop_id, stop_id, sizeof(req.stop_id));
     req.op = op;
+    req.bound = bound;
+    req.service_type = service_type;
 
     if (xQueueSend(s_request_queue, &req, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Request queue full");
@@ -587,6 +592,7 @@ uint32_t bus_service_request_stop_detail(const char *stop_id, uint8_t op)
 uint32_t bus_service_request_eta(const char *stop_id,
                                    const char *route,
                                    uint8_t op,
+                                   char bound,
                                    uint8_t service_type)
 {
     if (s_request_queue == NULL) {
@@ -599,6 +605,7 @@ uint32_t bus_service_request_eta(const char *stop_id,
     strlcpy(req.stop_id, stop_id, sizeof(req.stop_id));
     strlcpy(req.route, route, sizeof(req.route));
     req.op = op;
+    req.bound = bound;
     req.service_type = service_type;
 
     if (xQueueSend(s_request_queue, &req, 0) != pdTRUE) {
@@ -974,6 +981,8 @@ static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                 cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
                 cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
                 cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
+                cJSON *orig_tc = cJSON_GetObjectItem(item, "orig_tc");
+                cJSON *dest_tc = cJSON_GetObjectItem(item, "dest_tc");
                 if (cJSON_IsString(bound) && cJSON_IsString(orig_en) && cJSON_IsString(dest_en) &&
                     bound->valuestring[0] != '\0') {
                     bus_route_variant_t *variant = &s_kmb_variants[s_kmb_variant_count++];
@@ -983,6 +992,12 @@ static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                     variant->service_type = cJSON_IsNumber(service_type) ? service_type->valueint : 1;
                     strlcpy(variant->orig_en, orig_en->valuestring, sizeof(variant->orig_en));
                     strlcpy(variant->dest_en, dest_en->valuestring, sizeof(variant->dest_en));
+                    if (cJSON_IsString(orig_tc)) {
+                        strlcpy(variant->orig_tc, orig_tc->valuestring, sizeof(variant->orig_tc));
+                    }
+                    if (cJSON_IsString(dest_tc)) {
+                        strlcpy(variant->dest_tc, dest_tc->valuestring, sizeof(variant->dest_tc));
+                    }
                 }
             }
         }
@@ -1081,6 +1096,8 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
                 cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
                 cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
                 cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
+                cJSON *orig_tc = cJSON_GetObjectItem(item, "orig_tc");
+                cJSON *dest_tc = cJSON_GetObjectItem(item, "dest_tc");
                 if (cJSON_IsString(bound) && cJSON_IsString(orig_en) && cJSON_IsString(dest_en) &&
                     bound->valuestring[0] != '\0') {
                     bus_route_variant_t *variant = &s_kmb_variants[s_kmb_variant_count++];
@@ -1090,6 +1107,12 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
                     variant->service_type = cJSON_IsNumber(service_type) ? service_type->valueint : 1;
                     strlcpy(variant->orig_en, orig_en->valuestring, sizeof(variant->orig_en));
                     strlcpy(variant->dest_en, dest_en->valuestring, sizeof(variant->dest_en));
+                    if (cJSON_IsString(orig_tc)) {
+                        strlcpy(variant->orig_tc, orig_tc->valuestring, sizeof(variant->orig_tc));
+                    }
+                    if (cJSON_IsString(dest_tc)) {
+                        strlcpy(variant->dest_tc, dest_tc->valuestring, sizeof(variant->dest_tc));
+                    }
                 }
             }
         }
@@ -1210,6 +1233,7 @@ static void process_route_request(const bus_request_t *req)
     bus_event_t event = {0};
     event.type = BUS_EVT_ROUTE_VARIANTS;
     event.request_id = req->id;
+    strlcpy(event.identity.route, req->route, sizeof(event.identity.route));
 
     // Check which operators have this route
     uint8_t ops = bus_route_get_operators(req->route, strlen(req->route));
@@ -1236,6 +1260,8 @@ static void process_route_request(const bus_request_t *req)
                                 cJSON *service_type = cJSON_GetObjectItem(item, "service_type");
                                 cJSON *orig_en = cJSON_GetObjectItem(item, "orig_en");
                                 cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
+                                cJSON *orig_tc = cJSON_GetObjectItem(item, "orig_tc");
+                                cJSON *dest_tc = cJSON_GetObjectItem(item, "dest_tc");
 
                                 if (cJSON_IsString(route) &&
                                     strcmp(route->valuestring, req->route) == 0 &&
@@ -1247,6 +1273,12 @@ static void process_route_request(const bus_request_t *req)
                                     variants[valid_count].service_type = service_type ? service_type->valueint : 1;
                                     strlcpy(variants[valid_count].orig_en, orig_en->valuestring, sizeof(variants[valid_count].orig_en));
                                     strlcpy(variants[valid_count].dest_en, dest_en->valuestring, sizeof(variants[valid_count].dest_en));
+                                    if (cJSON_IsString(orig_tc)) {
+                                        strlcpy(variants[valid_count].orig_tc, orig_tc->valuestring, sizeof(variants[valid_count].orig_tc));
+                                    }
+                                    if (cJSON_IsString(dest_tc)) {
+                                        strlcpy(variants[valid_count].dest_tc, dest_tc->valuestring, sizeof(variants[valid_count].dest_tc));
+                                    }
                                     valid_count++;
                                 }
                             }
@@ -1284,6 +1316,10 @@ static void process_stops_request(const bus_request_t *req)
     bus_event_t event = {0};
     event.type = BUS_EVT_STOPS_LIST;
     event.request_id = req->id;
+    strlcpy(event.identity.route, req->route, sizeof(event.identity.route));
+    event.identity.op = (bus_operator_t)req->op;
+    event.identity.bound = (bus_direction_t)req->bound;
+    event.identity.service_type = req->service_type;
 
     if (req->op == BUS_OP_KMB) {
         // KMB route data uses I/O bound codes, but the live route-stop
@@ -1372,7 +1408,12 @@ static void process_stops_request(const bus_request_t *req)
                                 }
                                 strlcpy(stops[valid_count].stop_id, stop_id->valuestring, sizeof(stops[valid_count].stop_id));
                                 normalize_stop_id(stops[valid_count].stop_id);
+                                strlcpy(stops[valid_count].route, req->route,
+                                        sizeof(stops[valid_count].route));
                                 stops[valid_count].seq = (uint16_t)sequence;
+                                stops[valid_count].op = BUS_OP_KMB;
+                                stops[valid_count].bound = (bus_direction_t)req->bound;
+                                stops[valid_count].service_type = req->service_type;
                                 stops[valid_count].resolved = false;
                                 snprintf(stops[valid_count].name_en, sizeof(stops[valid_count].name_en), "Stop %d", sequence);
                                 valid_count++;
@@ -1424,6 +1465,11 @@ static void process_eta_request(const bus_request_t *req)
     bus_event_t event = {0};
     event.type = BUS_EVT_ETA;
     event.request_id = req->id;
+    strlcpy(event.identity.route, req->route, sizeof(event.identity.route));
+    event.identity.op = (bus_operator_t)req->op;
+    event.identity.bound = (bus_direction_t)req->bound;
+    event.identity.service_type = req->service_type;
+    strlcpy(event.identity.stop_id, req->stop_id, sizeof(event.identity.stop_id));
     strlcpy(event.data.eta.stop_id, req->stop_id, sizeof(event.data.eta.stop_id));
 
     if (req->op == BUS_OP_KMB) {

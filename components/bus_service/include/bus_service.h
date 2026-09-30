@@ -29,16 +29,33 @@ typedef struct {
     uint8_t service_type;       // KMB only; always 1 for CTB
     char orig_en[48];
     char dest_en[48];
+    char orig_tc[48];
+    char dest_tc[48];
 } bus_route_variant_t;
 
 // Stop info (lazy-loaded)
 typedef struct {
     char stop_id[20];
+    char route[5];
     uint16_t seq;               // Sequence number on route (1-indexed)
+    bus_operator_t op;
+    bus_direction_t bound;
+    uint8_t service_type;
     char name_en[60];
+    char name_tc[60];
     float lat, lon;
     bool resolved;              // Name fetched flag
 } bus_stop_t;
+
+// Provider-neutral request identity. The route and direction identify the
+// selected variant; stop_id remains the provider's source identifier.
+typedef struct {
+    char route[5];
+    bus_operator_t op;
+    bus_direction_t bound;
+    uint8_t service_type;
+    char stop_id[20];
+} bus_request_identity_t;
 
 // ETA entry
 typedef struct {
@@ -69,6 +86,7 @@ typedef enum {
 typedef struct {
     bus_event_type_t type;
     uint32_t request_id;
+    bus_request_identity_t identity;
     esp_err_t status;
     union {
         struct {
@@ -101,7 +119,9 @@ typedef struct {
     } data;
 } bus_event_t;
 
-// Listener callback (called on LVGL task)
+// Listener callback (called on LVGL task). For successful array events, the
+// listener owns the PSRAM array after the callback and must free it exactly
+// once. Error events contain no allocated array payload.
 typedef void (*bus_listener_t)(const bus_event_t *event, void *user_data);
 
 // Initialize service (creates worker task)
@@ -132,12 +152,16 @@ uint32_t bus_service_request_stops(const char *route,
                                      uint8_t service_type);
 
 // Request stop detail (name + coords)
-uint32_t bus_service_request_stop_detail(const char *stop_id, uint8_t op);
+uint32_t bus_service_request_stop_detail(const char *stop_id,
+                                         uint8_t op,
+                                         char bound,
+                                         uint8_t service_type);
 
 // Request ETA
 uint32_t bus_service_request_eta(const char *stop_id,
                                    const char *route,
                                    uint8_t op,
+                                   char bound,
                                    uint8_t service_type);
 
 // Cancel all pending requests
