@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <ctime>
+#include <cstdint>
 
 namespace {
 constexpr const char *TAG = "bus_app";
@@ -830,6 +831,7 @@ void BusApp::rebuildSearchResults()
     struct SearchDisplayRow {
         uint16_t match_index;
         char bound;
+        bus_operator_t op;
     };
 
     static SearchDisplayRow display_rows[kMaxDisplayedRows];
@@ -855,19 +857,31 @@ void BusApp::rebuildSearchResults()
             has_outbound |= variants[variant_index].bound == BUS_DIR_OUTBOUND;
         }
 
+        // KMB variants carry the direction and destination details used by
+        // the stop page. CTB-only catalog entries have no cached variants yet,
+        // so retain them as CTB placeholder rows instead of treating them as
+        // KMB routes.
+        const bus_operator_t display_operator = variant_count > 0
+            ? BUS_OP_KMB
+            : ((entry.ops & (1u << BUS_OP_CTB)) != 0 ? BUS_OP_CTB : BUS_OP_KMB);
+
         // Circular routes expose only one direction in the KMB cache. Keep
         // that route to one row instead of inventing a missing direction.
         if (variant_count == 0 || (!has_inbound && !has_outbound)) {
-            display_rows[display_count++] = {matches[match_index], BUS_DIR_INBOUND};
+            display_rows[display_count++] = {
+                matches[match_index], BUS_DIR_INBOUND, display_operator};
             if (display_count < kMaxDisplayedRows) {
-                display_rows[display_count++] = {matches[match_index], BUS_DIR_OUTBOUND};
+                display_rows[display_count++] = {
+                    matches[match_index], BUS_DIR_OUTBOUND, display_operator};
             }
         } else {
             if (has_inbound) {
-                display_rows[display_count++] = {matches[match_index], BUS_DIR_INBOUND};
+                display_rows[display_count++] = {
+                    matches[match_index], BUS_DIR_INBOUND, display_operator};
             }
             if (has_outbound && display_count < kMaxDisplayedRows) {
-                display_rows[display_count++] = {matches[match_index], BUS_DIR_OUTBOUND};
+                display_rows[display_count++] = {
+                    matches[match_index], BUS_DIR_OUTBOUND, display_operator};
             }
         }
     }
@@ -898,9 +912,11 @@ void BusApp::rebuildSearchResults()
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
-        // The bound is enough to identify the cached KMB variant when the
-        // row is tapped; the route number is carried by the first label.
-        lv_obj_set_user_data(row, reinterpret_cast<void *>(static_cast<intptr_t>(display_rows[i].bound)));
+        // Store direction and operator together for the click handler. The
+        // route number is carried by the first label.
+        const intptr_t row_data = (static_cast<intptr_t>(display_rows[i].op) << 8) |
+                                  static_cast<unsigned char>(display_rows[i].bound);
+        lv_obj_set_user_data(row, reinterpret_cast<void *>(row_data));
         lv_obj_add_event_cb(row, onRouteVariantClicked, LV_EVENT_CLICKED, this);
 
         lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
@@ -914,10 +930,9 @@ void BusApp::rebuildSearchResults()
         }
         if (entry.ops & (1u << BUS_OP_CTB)) strlcat(operators, "CTB", sizeof(operators));
 
-        // The two placeholder rows represent the cached KMB inbound and
-        // outbound variants. Use the corresponding cached destination for
-        // the right-aligned detail text; CTB remains represented by the
-        // operator label until its variants are normalized into the cache.
+        // Use the corresponding cached KMB destination for the right-aligned
+        // detail text. CTB remains represented by its operator label until
+        // CTB route variants are normalized into the cache.
         static bus_route_variant_t variants[8];
         const uint8_t variant_count = bus_service_get_cached_route_variants(
             route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
@@ -1418,6 +1433,20 @@ void BusApp::onRouteResultClicked(lv_event_t *e)
     app->route_variant_count_ = bus_service_get_cached_route_variants(
         app->search_buffer_, app->route_variants_,
         static_cast<uint8_t>(sizeof(app->route_variants_) / sizeof(app->route_variants_[0])));
+    if (app->route_variant_count_ == 0 &&
+        (bus_route_get_operators(route, strlen(route)) & (1u << BUS_OP_CTB)) != 0) {
+        // The route catalog contains CTB-only routes without direction
+        // variants. Keep both directions selectable until CTB variants are
+        // added to the normalized catalog.
+        for (char bound : {BUS_DIR_INBOUND, BUS_DIR_OUTBOUND}) {
+            bus_route_variant_t &variant =
+                app->route_variants_[app->route_variant_count_++];
+            strlcpy(variant.route, route, sizeof(variant.route));
+            variant.op = BUS_OP_CTB;
+            variant.bound = static_cast<bus_direction_t>(bound);
+            variant.service_type = 1;
+        }
+    }
     app->rebuildRouteVariantResults();
     ESP_LOGI(TAG, "Route result selected from cache: %s (%u variants)", route,
              app->route_variant_count_);
@@ -1441,22 +1470,27 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
         return;
     }
 
-    const char bound = static_cast<char>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)));
+    const intptr_t row_data = reinterpret_cast<intptr_t>(lv_obj_get_user_data(row));
+    const char bound = static_cast<char>(row_data & 0xff);
+    const bus_operator_t operator_id = static_cast<bus_operator_t>(
+        (row_data >> 8) & 0xff);
     memset(&app->current_route_, 0, sizeof(app->current_route_));
     strlcpy(app->current_route_.route, route, sizeof(app->current_route_.route));
-    app->current_route_.op = BUS_OP_KMB;
+    app->current_route_.op = operator_id == BUS_OP_CTB ? BUS_OP_CTB : BUS_OP_KMB;
     app->current_route_.bound = bound == BUS_DIR_OUTBOUND ? BUS_DIR_OUTBOUND : BUS_DIR_INBOUND;
     app->current_route_.service_type = 1;
 
-    // Use the cached variant to preserve the service type and destination;
-    // the request itself is still made directly from the selected row.
+    // Use the cached KMB variant to preserve the service type and destination;
+    // CTB-only rows keep the normalized default service type.
     static bus_route_variant_t variants[8];
-    const uint8_t variant_count = bus_service_get_cached_route_variants(
-        route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
-    for (uint8_t i = 0; i < variant_count; i++) {
-        if (variants[i].bound == app->current_route_.bound) {
-            app->current_route_ = variants[i];
-            break;
+    if (app->current_route_.op == BUS_OP_KMB) {
+        const uint8_t variant_count = bus_service_get_cached_route_variants(
+            route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
+        for (uint8_t i = 0; i < variant_count; i++) {
+            if (variants[i].bound == app->current_route_.bound) {
+                app->current_route_ = variants[i];
+                break;
+            }
         }
     }
 

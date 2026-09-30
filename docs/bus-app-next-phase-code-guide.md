@@ -38,6 +38,32 @@ framework submission also records its framework request id.
 Do not add ETA merging, favorites, language switching, or Nearby in this
 slice. They depend on the contracts below.
 
+## Route number collision rule
+
+The printed route number is a display label, not a provider identity. KMB and
+CTB can operate independent routes with the same label, and a co-operated
+label can contain both providers. The implementation must never use the route
+string alone to select, cache, request, or merge a route.
+
+Use two related records:
+
+```text
+route group:   normalized route label                         (display only)
+route variant: route label + operator + bound + service_type   (identity)
+stop identity: route variant + provider stop id               (identity)
+```
+
+The searchable catalog may group equal labels into one visible result and show
+the available operators. Selecting a result must expose provider-qualified
+direction choices. For example, a label served by both KMB and CTB must retain
+up to four independent choices: KMB inbound, KMB outbound, CTB inbound, and
+CTB outbound. The stop request, event identity, cache record, favorite, and
+ETA request must retain the selected operator.
+
+Do not infer a provider or a destination from the numeric route pattern. Route
+numbering conventions are useful local knowledge but are not a stable API
+contract; provider fields and normalized identities are authoritative.
+
 ## Step 0 — Freeze the CTB baseline and inspect the response schema
 
 **Purpose:** Capture provider behavior and the current memory boundary before
@@ -136,6 +162,35 @@ allocated output. Then run `idf.py build` and `git diff --check`.
 
 **Pass condition:** All fixture cases produce the documented result without a
 leak, invalid free, or successful event for unusable data.
+
+## Step 3A — Normalize provider-qualified route options before CTB events
+
+**Purpose:** Make duplicate KMB/CTB route labels safe before the CTB stop
+parser is connected to the app.
+
+**Change:** Treat `bus_route_name_t` and its operator bitmask as a display
+group only. Replace the KMB-only cached-variant assumption with a provider
+qualified route-option store. Persist every KMB and CTB route variant, or keep
+an equivalent provider-specific option index, and bump the route-cache version
+when the record layout changes. A CTB route response that does not provide
+direction-specific destinations may create inbound and outbound choices with
+empty destination fields; it must not copy a KMB variant or invent a direction
+from the route number.
+
+Update Search so an equal label can expose separate KMB and CTB choices. The
+selected option must populate `bus_route_variant_t::op` before queuing the stop
+request. Keep the existing route-group display compact by showing the operator
+set on the label.
+
+**Validation:** Use fixtures containing a KMB-only label, a CTB-only label, and
+one label present in both catalogs. Confirm that equal labels remain separate
+provider options, that KMB and CTB selections produce different request
+identities, and that the cache reload preserves both providers. Confirm that a
+CTB-only label is searchable after a complete catalog refresh.
+
+**Pass condition:** No route selection, cache lookup, or request path chooses a
+provider from the route number alone. Do not proceed to CTB stop-event
+integration until this gate passes.
 
 ## Step 3 — Submit CTB route stops through `crystal_http`
 

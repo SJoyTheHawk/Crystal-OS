@@ -95,6 +95,12 @@ Use a normalized route variant as the identity for discovery:
 route + operator + bound + service_type
 ```
 
+The route label alone is a display group. KMB and CTB may publish different
+routes with the same number, so the catalog may merge equal labels only for
+display and must retain provider-qualified options underneath. Search and
+cache lookups must select the operator before creating a stop or ETA request;
+they must never infer the provider from the route number.
+
 Use a favorite identity that includes the stop:
 
 ```text

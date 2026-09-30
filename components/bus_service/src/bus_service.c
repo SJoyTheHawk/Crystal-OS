@@ -36,6 +36,11 @@ static const char *TAG = "bus_service";
 #define KMB_CATALOG_REQUEST_URL KMB_BASE_URL "/route/"
 #endif
 #define CTB_BASE_URL "https://rt.data.gov.hk/v2/transport/citybus"
+#ifdef CRYSTAL_HTTP_PHASE5_CTB_STOPS_FORCE_FAILURE
+#define CTB_STOPS_BASE_URL "https://invalid-ctb-stop-test.invalid"
+#else
+#define CTB_STOPS_BASE_URL CTB_BASE_URL
+#endif
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
@@ -47,8 +52,14 @@ static const char *TAG = "bus_service";
 #define KMB_VARIANT_CAPACITY 2048
 #define KMB_CATALOG_OWNER_ID 0x4B4D4243u // "KMBC"
 #define KMB_STOPS_OWNER_ID 0x4B4D5354u // "KMST"
+#define CTB_STOPS_OWNER_ID 0x43544253u // "CTBS"
 #define KMB_STOP_TIMEOUT_MS 8000
 #define KMB_STOP_MAX_ATTEMPTS 3
+#define CTB_STOP_TIMEOUT_MS 8000
+#define CTB_STOP_MAX_ATTEMPTS 3
+// Step 0 live CTB measurements are still deferred; keep this bounded
+// provisional limit until inbound and outbound captures establish the margin.
+#define CTB_STOP_MAX_BODY_BYTES (64u * 1024u)
 #ifdef CRYSTAL_HTTP_PHASE4_KMB_STOPS_FORCE_BODY_LIMIT
 #define KMB_STOP_MAX_BODY_BYTES (1u * 1024u)
 #else
@@ -57,6 +68,7 @@ static const char *TAG = "bus_service";
 #define KMB_CATALOG_MAX_BODY_BYTES (512u * 1024u)
 #define KMB_CATALOG_HANDOFF_WAIT_MS (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
 #define KMB_STOP_HANDOFF_WAIT_MS (KMB_STOP_TIMEOUT_MS * KMB_STOP_MAX_ATTEMPTS + 5000u)
+#define CTB_STOP_HANDOFF_WAIT_MS (CTB_STOP_TIMEOUT_MS * CTB_STOP_MAX_ATTEMPTS + 5000u)
 
 // Request types
 typedef enum {
@@ -117,6 +129,27 @@ typedef struct {
     size_t body_len;
 } kmb_stops_handoff_t;
 
+// Step 3 CTB transport handoff. The framework response is released by the
+// callback after its body is copied into this PSRAM-owned buffer. Parsing and
+// event delivery remain disconnected until the next step.
+typedef struct {
+    uint32_t bus_request_id;
+    char route[5];
+    bus_direction_t bound;
+    bus_operator_t op;
+    uint8_t service_type;
+    uint32_t framework_request_id;
+    SemaphoreHandle_t completed_signal;
+    bool completed;
+    bool timed_out;
+    bool cancelled;
+    esp_err_t transport_error;
+    int status_code;
+    uint8_t attempts;
+    uint8_t *body;
+    size_t body_len;
+} ctb_stops_handoff_t;
+
 // Service state
 static TaskHandle_t s_worker_task = NULL;
 static QueueHandle_t s_request_queue = NULL;
@@ -157,6 +190,12 @@ static void kmb_stops_handoff_callback(const crystal_http_response_t *response,
 static kmb_stops_handoff_t *submit_kmb_stops(const bus_request_t *request,
                                              const char *direction,
                                              const char *kmb_url);
+static ctb_stops_handoff_t *ctb_stops_handoff_create(const bus_request_t *request);
+static void ctb_stops_handoff_cleanup(ctb_stops_handoff_t *context);
+static void ctb_stops_handoff_callback(const crystal_http_response_t *response,
+                                       void *user_data);
+static ctb_stops_handoff_t *submit_ctb_stops(const bus_request_t *request,
+                                             const char *ctb_url);
 static uint16_t submit_kmb_catalog(uint32_t bus_request_id);
 static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                                             uint8_t op, uint32_t request_id);
@@ -320,6 +359,142 @@ static kmb_stops_handoff_t *submit_kmb_stops(const bus_request_t *request,
              (unsigned long)context->framework_request_id,
              context->status_code, (unsigned)context->body_len,
              (unsigned)context->attempts, esp_err_to_name(context->transport_error));
+    return context;
+}
+
+static ctb_stops_handoff_t *ctb_stops_handoff_create(const bus_request_t *request)
+{
+    if (request == NULL) {
+        return NULL;
+    }
+
+    ctb_stops_handoff_t *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        return NULL;
+    }
+    context->bus_request_id = request->id;
+    strlcpy(context->route, request->route, sizeof(context->route));
+    context->bound = (bus_direction_t)request->bound;
+    context->op = (bus_operator_t)request->op;
+    context->service_type = request->service_type;
+    context->completed_signal = xSemaphoreCreateBinary();
+    if (context->completed_signal == NULL) {
+        free(context);
+        return NULL;
+    }
+    return context;
+}
+
+static void ctb_stops_handoff_cleanup(ctb_stops_handoff_t *context)
+{
+    if (context == NULL) return;
+    if (context->completed_signal != NULL) {
+        vSemaphoreDelete(context->completed_signal);
+    }
+    free(context->body);
+    free(context);
+}
+
+static void ctb_stops_handoff_callback(const crystal_http_response_t *response,
+                                       void *user_data)
+{
+    ctb_stops_handoff_t *context = user_data;
+    if (context == NULL) {
+        if (response != NULL) crystal_http_response_release(response);
+        return;
+    }
+
+    if (response != NULL) {
+        context->status_code = response->status_code;
+        context->transport_error = response->transport_error;
+        context->attempts = response->attempts;
+        context->body_len = response->body_len;
+        if (response->body != NULL && response->body_len > 0) {
+            context->body = heap_caps_malloc(response->body_len + 1,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (context->body == NULL) {
+                context->body_len = 0;
+                context->transport_error = ESP_ERR_NO_MEM;
+                ESP_LOGE(TAG, "CTB stops handoff body allocation failed bytes=%u",
+                         (unsigned)response->body_len);
+            } else {
+                memcpy(context->body, response->body, response->body_len);
+                context->body[response->body_len] = '\0';
+            }
+        }
+        ESP_LOGI(TAG, "CTB stops response bus_id=%lu framework_id=%lu route=%s bound=%c op=%u status=%d body=%u attempts=%u error=%s",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 context->route, (char)context->bound, (unsigned)context->op,
+                 response->status_code, (unsigned)response->body_len,
+                 (unsigned)response->attempts,
+                 esp_err_to_name(response->transport_error));
+        crystal_http_response_release(response);
+    } else {
+        context->transport_error = ESP_FAIL;
+        ESP_LOGW(TAG, "CTB stops response bus_id=%lu framework_id=%lu missing response",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id);
+    }
+
+    context->completed = true;
+    xSemaphoreGive(context->completed_signal);
+    if (context->timed_out) {
+        ctb_stops_handoff_cleanup(context);
+    }
+}
+
+static ctb_stops_handoff_t *submit_ctb_stops(const bus_request_t *request,
+                                             const char *ctb_url)
+{
+    ctb_stops_handoff_t *context = ctb_stops_handoff_create(request);
+    if (context == NULL) {
+        ESP_LOGE(TAG, "CTB stops handoff context allocation failed bus_id=%lu",
+                 (unsigned long)(request != NULL ? request->id : 0));
+        return NULL;
+    }
+
+    crystal_http_options_t options = {
+        .url = ctb_url,
+        .timeout_ms = CTB_STOP_TIMEOUT_MS,
+        .max_attempts = CTB_STOP_MAX_ATTEMPTS,
+        .retry_backoff_ms = 500,
+        .retry_backoff_max_ms = 2000,
+        .max_body_bytes = CTB_STOP_MAX_BODY_BYTES,
+        .keep_alive = false,
+        .owner_id = CTB_STOPS_OWNER_ID,
+    };
+    context->framework_request_id = crystal_http_get(
+        &options, ctb_stops_handoff_callback, context);
+    if (context->framework_request_id == 0) {
+        ESP_LOGW(TAG, "CTB stops queue failed bus_id=%lu",
+                 (unsigned long)request->id);
+        ctb_stops_handoff_cleanup(context);
+        return NULL;
+    }
+
+    ESP_LOGI(TAG, "CTB stops submitted route=%s bound=%c bus_id=%lu framework_id=%lu",
+             request->route, request->bound,
+             (unsigned long)request->id,
+             (unsigned long)context->framework_request_id);
+
+    if (xSemaphoreTake(context->completed_signal,
+                       pdMS_TO_TICKS(CTB_STOP_HANDOFF_WAIT_MS)) != pdTRUE) {
+        context->timed_out = true;
+        context->cancelled = crystal_http_cancel(context->framework_request_id);
+        ESP_LOGW(TAG, "CTB stops handoff timed out bus_id=%lu framework_id=%lu cancelled=%d",
+                 (unsigned long)request->id,
+                 (unsigned long)context->framework_request_id,
+                 context->cancelled);
+        return NULL;
+    }
+
+    ESP_LOGI(TAG, "CTB stops handoff received bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
+             (unsigned long)request->id,
+             (unsigned long)context->framework_request_id,
+             context->status_code, (unsigned)context->body_len,
+             (unsigned)context->attempts,
+             esp_err_to_name(context->transport_error));
     return context;
 }
 
@@ -1312,6 +1487,7 @@ static void process_stops_request(const bus_request_t *req)
     char url[256];
     cJSON *root = NULL;
     kmb_stops_handoff_t *handoff = NULL;
+    ctb_stops_handoff_t *ctb_handoff = NULL;
     esp_err_t request_err = ESP_FAIL;
     bus_event_t event = {0};
     event.type = BUS_EVT_STOPS_LIST;
@@ -1363,23 +1539,26 @@ static void process_stops_request(const bus_request_t *req)
             return;
         }
     } else {
+        const char *direction = req->bound == BUS_DIR_OUTBOUND
+            ? "outbound" : "inbound";
         snprintf(url, sizeof(url), "%s/route-stop/CTB/%s/%s",
-                 CTB_BASE_URL, req->route, req->bound == 'O' ? "outbound" : "inbound");
-        ESP_LOGI(TAG, "Route stops: fetching %s", url);
-        for (uint8_t attempt = 1; attempt <= BUS_STOP_FETCH_ATTEMPTS; attempt++) {
-            root = NULL;
-            ESP_LOGI(TAG, "Route stops: request attempt %u/%u", (unsigned)attempt,
-                     (unsigned)BUS_STOP_FETCH_ATTEMPTS);
-            request_err = http_get_json(url, &root);
-            if (request_err == ESP_OK && root != NULL) {
-                break;
-            }
-            if (attempt < BUS_STOP_FETCH_ATTEMPTS) {
-                ESP_LOGW(TAG, "Route stops request failed; retrying (%u/%u)",
-                         (unsigned)attempt, (unsigned)BUS_STOP_FETCH_ATTEMPTS);
-                vTaskDelay(pdMS_TO_TICKS(500));
-            }
+                 CTB_STOPS_BASE_URL, req->route, direction);
+        ESP_LOGI(TAG, "CTB stops: submitting %s", url);
+        ctb_handoff = submit_ctb_stops(req, url);
+        if (ctb_handoff != NULL) {
+            ESP_LOGI(TAG, "CTB stops transport complete route=%s bound=%c status=%d body=%u attempts=%u error=%s",
+                     req->route, req->bound, ctb_handoff->status_code,
+                     (unsigned)ctb_handoff->body_len,
+                     (unsigned)ctb_handoff->attempts,
+                     esp_err_to_name(ctb_handoff->transport_error));
+            ctb_stops_handoff_cleanup(ctb_handoff);
+        } else {
+            ESP_LOGW(TAG, "CTB stops transport did not complete route=%s bound=%c",
+                     req->route, req->bound);
         }
+        // Step 3 proves the transport handoff only. Step 4 reconnects the
+        // owned body to the CTB parser and BUS_EVT_STOPS_LIST delivery.
+        return;
     }
 
     if (request_err == ESP_OK && root != NULL) {
