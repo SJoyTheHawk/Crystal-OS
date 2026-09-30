@@ -730,17 +730,35 @@ void BusApp::updateKeypadState()
 {
     size_t len = strlen(search_buffer_);
     uint32_t mask = bus_route_next_mask(search_buffer_, len);
+    lv_obj_t *letter_strip = nullptr;
     for (size_t i = 0; i < BUS_ROUTE_CHARSET_LEN; i++) {
         lv_obj_t *button = keypad_buttons_[i];
         if (button == nullptr) {
             continue;
         }
         const bool enabled = (mask & (1u << i)) != 0;
+        if (i >= 10) {
+            // Letter choices should use the available space efficiently. A
+            // hidden child is removed from the row-wrap layout, so the
+            // remaining letters move into the vacated slot.
+            if (enabled) {
+                lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (letter_strip == nullptr) {
+                letter_strip = lv_obj_get_parent(button);
+            }
+            continue;
+        }
         lv_obj_t *label = lv_obj_get_child(button, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(enabled ? kCardBg : 0x111827), 0);
         if (label != nullptr) {
             lv_obj_set_style_text_color(label, lv_color_hex(enabled ? kTextPrimary : 0x475569), 0);
         }
+    }
+    if (letter_strip != nullptr) {
+        lv_obj_scroll_to_y(letter_strip, 0, LV_ANIM_OFF);
     }
     rebuildSearchResults();
 }
