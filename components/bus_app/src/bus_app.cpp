@@ -238,6 +238,14 @@ bool BusApp::onDestroy()
 bool BusApp::onBack()
 {
     if (stop_page_ != nullptr && !lv_obj_has_flag(stop_page_, LV_OBJ_FLAG_HIDDEN)) {
+        if (stop_request_id_ != 0) {
+            ESP_LOGI(TAG, "Leaving stop page; cancelling stops request=%lu",
+                     static_cast<unsigned long>(stop_request_id_));
+            bus_service_cancel_stops();
+            // Any callback already queued for this page is stale as soon as
+            // Back is pressed, even if its framework cancellation races it.
+            stop_request_id_ = 0;
+        }
         lv_obj_add_flag(stop_page_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(search_tab_, LV_OBJ_FLAG_HIDDEN);
         return true;
@@ -1173,6 +1181,12 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
                         lv_label_set_text(message, event->data.error.message);
                     }
                 }
+            } else if (event->status == ESP_ERR_INVALID_STATE && event->request_id != 0) {
+                // A stop request cancelled by Back or a network loss may
+                // finish after the page has cleared its request id. It is a
+                // stale lifecycle result and must not show a global error.
+                ESP_LOGI(TAG, "Ignoring stale cancelled bus request id=%lu",
+                         static_cast<unsigned long>(event->request_id));
             } else {
                 app->showError(event->data.error.message);
             }

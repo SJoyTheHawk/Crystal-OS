@@ -25,6 +25,11 @@
 static const char *TAG = "bus_service";
 
 #define KMB_BASE_URL "https://data.etabus.gov.hk/v1/transport/kmb"
+#ifdef CRYSTAL_HTTP_PHASE4_KMB_STOPS_FORCE_FAILURE
+#define KMB_STOPS_REQUEST_URL "https://invalid-kmb-stop-test.invalid/route-stop/"
+#else
+#define KMB_STOPS_REQUEST_URL KMB_BASE_URL "/route-stop/"
+#endif
 #ifdef CRYSTAL_HTTP_PHASE3_KMB_FORCE_FAILURE
 #define KMB_CATALOG_REQUEST_URL "https://invalid-kmb-test.invalid/route/"
 #else
@@ -41,8 +46,17 @@ static const char *TAG = "bus_service";
 #define BUS_STOP_FETCH_ATTEMPTS BUS_ROUTE_FETCH_ATTEMPTS
 #define KMB_VARIANT_CAPACITY 2048
 #define KMB_CATALOG_OWNER_ID 0x4B4D4243u // "KMBC"
+#define KMB_STOPS_OWNER_ID 0x4B4D5354u // "KMST"
+#define KMB_STOP_TIMEOUT_MS 8000
+#define KMB_STOP_MAX_ATTEMPTS 3
+#ifdef CRYSTAL_HTTP_PHASE4_KMB_STOPS_FORCE_BODY_LIMIT
+#define KMB_STOP_MAX_BODY_BYTES (1u * 1024u)
+#else
+#define KMB_STOP_MAX_BODY_BYTES (64u * 1024u)
+#endif
 #define KMB_CATALOG_MAX_BODY_BYTES (512u * 1024u)
 #define KMB_CATALOG_HANDOFF_WAIT_MS (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
+#define KMB_STOP_HANDOFF_WAIT_MS (KMB_STOP_TIMEOUT_MS * KMB_STOP_MAX_ATTEMPTS + 5000u)
 
 // Request types
 typedef enum {
@@ -81,6 +95,28 @@ typedef struct {
     bool cancelled;
 } kmb_catalog_handoff_t;
 
+// Phase 4 Step 1 handoff context. The context is intentionally disconnected
+// from the live stop request until the framework submission step. The future
+// callback will copy the response body into this context and signal the bus
+// worker; it must never access LVGL state.
+typedef struct {
+    uint32_t bus_request_id;
+    char route[5];
+    char direction[9];
+    uint8_t service_type;
+    char kmb_url[256];
+    uint32_t framework_request_id;
+    SemaphoreHandle_t completed_signal;
+    bool completed;
+    bool timed_out;
+    bool cancelled;
+    esp_err_t transport_error;
+    int status_code;
+    uint8_t attempts;
+    uint8_t *body;
+    size_t body_len;
+} kmb_stops_handoff_t;
+
 // Service state
 static TaskHandle_t s_worker_task = NULL;
 static QueueHandle_t s_request_queue = NULL;
@@ -112,6 +148,15 @@ static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id
 static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context);
 static void kmb_catalog_handoff_callback(const crystal_http_response_t *response,
                                           void *user_data);
+static kmb_stops_handoff_t *kmb_stops_handoff_create(const bus_request_t *request,
+                                                     const char *direction,
+                                                     const char *kmb_url);
+static void kmb_stops_handoff_cleanup(kmb_stops_handoff_t *context);
+static void kmb_stops_handoff_callback(const crystal_http_response_t *response,
+                                       void *user_data);
+static kmb_stops_handoff_t *submit_kmb_stops(const bus_request_t *request,
+                                             const char *direction,
+                                             const char *kmb_url);
 static uint16_t submit_kmb_catalog(uint32_t bus_request_id);
 static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                                             uint8_t op, uint32_t request_id);
@@ -141,6 +186,141 @@ static void kmb_catalog_handoff_cleanup(kmb_catalog_handoff_t *context)
     }
     free(context->body);
     free(context);
+}
+
+static kmb_stops_handoff_t *kmb_stops_handoff_create(const bus_request_t *request,
+                                                     const char *direction,
+                                                     const char *kmb_url)
+{
+    if (request == NULL || direction == NULL || kmb_url == NULL) {
+        return NULL;
+    }
+
+    kmb_stops_handoff_t *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        return NULL;
+    }
+    context->bus_request_id = request->id;
+    strlcpy(context->route, request->route, sizeof(context->route));
+    strlcpy(context->direction, direction, sizeof(context->direction));
+    context->service_type = request->service_type;
+    strlcpy(context->kmb_url, kmb_url, sizeof(context->kmb_url));
+    context->completed_signal = xSemaphoreCreateBinary();
+    if (context->completed_signal == NULL) {
+        free(context);
+        return NULL;
+    }
+    return context;
+}
+
+static void kmb_stops_handoff_cleanup(kmb_stops_handoff_t *context)
+{
+    if (context == NULL) return;
+    if (context->completed_signal != NULL) {
+        vSemaphoreDelete(context->completed_signal);
+    }
+    free(context->body);
+    free(context);
+}
+
+static void kmb_stops_handoff_callback(const crystal_http_response_t *response,
+                                       void *user_data)
+{
+    kmb_stops_handoff_t *context = user_data;
+    if (context == NULL) {
+        if (response != NULL) crystal_http_response_release(response);
+        return;
+    }
+    if (response != NULL) {
+        context->status_code = response->status_code;
+        context->transport_error = response->transport_error;
+        context->attempts = response->attempts;
+        context->body_len = response->body_len;
+        if (response->body != NULL && response->body_len > 0) {
+            context->body = heap_caps_malloc(response->body_len + 1,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (context->body == NULL) {
+                context->body_len = 0;
+                context->transport_error = ESP_ERR_NO_MEM;
+                ESP_LOGE(TAG, "KMB stops handoff body allocation failed bytes=%u",
+                         (unsigned)response->body_len);
+            } else {
+                memcpy(context->body, response->body, response->body_len);
+                context->body[response->body_len] = '\0';
+            }
+        }
+        ESP_LOGI(TAG, "KMB stops diagnostic bus_id=%lu framework_id=%lu route=%s direction=%s status=%d body=%u attempts=%u error=%s",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 context->route, context->direction,
+                 response->status_code, (unsigned)response->body_len,
+                 (unsigned)response->attempts,
+                 esp_err_to_name(response->transport_error));
+        crystal_http_response_release(response);
+    } else {
+        context->transport_error = ESP_FAIL;
+        ESP_LOGW(TAG, "KMB stops diagnostic bus_id=%lu framework_id=%lu missing response",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id);
+    }
+    context->completed = true;
+    xSemaphoreGive(context->completed_signal);
+    if (context->timed_out) {
+        kmb_stops_handoff_cleanup(context);
+    }
+}
+
+static kmb_stops_handoff_t *submit_kmb_stops(const bus_request_t *request,
+                                             const char *direction,
+                                             const char *kmb_url)
+{
+    kmb_stops_handoff_t *context = kmb_stops_handoff_create(request, direction, kmb_url);
+    if (context == NULL) {
+        ESP_LOGE(TAG, "KMB stops diagnostic context allocation failed bus_id=%lu",
+                 (unsigned long)(request != NULL ? request->id : 0));
+        return NULL;
+    }
+
+    crystal_http_options_t options = {
+        .url = context->kmb_url,
+        .timeout_ms = KMB_STOP_TIMEOUT_MS,
+        .max_attempts = KMB_STOP_MAX_ATTEMPTS,
+        .retry_backoff_ms = 500,
+        .retry_backoff_max_ms = 2000,
+        .max_body_bytes = KMB_STOP_MAX_BODY_BYTES,
+        .keep_alive = false,
+        .owner_id = KMB_STOPS_OWNER_ID,
+    };
+    context->framework_request_id = crystal_http_get(
+        &options, kmb_stops_handoff_callback, context);
+    if (context->framework_request_id == 0) {
+        ESP_LOGW(TAG, "KMB stops diagnostic queue failed bus_id=%lu",
+                 (unsigned long)request->id);
+        kmb_stops_handoff_cleanup(context);
+        return NULL;
+    }
+    ESP_LOGI(TAG, "KMB stops submitted route=%s bound=%c bus_id=%lu framework_id=%lu",
+             request->route, request->bound,
+             (unsigned long)request->id,
+             (unsigned long)context->framework_request_id);
+
+    if (xSemaphoreTake(context->completed_signal,
+                       pdMS_TO_TICKS(KMB_STOP_HANDOFF_WAIT_MS)) != pdTRUE) {
+        context->timed_out = true;
+        context->cancelled = crystal_http_cancel(context->framework_request_id);
+        ESP_LOGW(TAG, "KMB stops diagnostic timed out bus_id=%lu framework_id=%lu cancelled=%d",
+                 (unsigned long)request->id,
+                 (unsigned long)context->framework_request_id,
+                 context->cancelled);
+        return NULL;
+    }
+
+    ESP_LOGI(TAG, "KMB stops handoff received bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
+             (unsigned long)request->id,
+             (unsigned long)context->framework_request_id,
+             context->status_code, (unsigned)context->body_len,
+             (unsigned)context->attempts, esp_err_to_name(context->transport_error));
+    return context;
 }
 
 static void kmb_catalog_handoff_callback(const crystal_http_response_t *response,
@@ -432,16 +612,29 @@ uint32_t bus_service_request_eta(const char *stop_id,
 void bus_service_cancel_all(void)
 {
     s_cancel_all = true;
+    (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
+    (void)crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
     // Clear queue
     if (s_request_queue != NULL) {
         xQueueReset(s_request_queue);
     }
 }
 
+void bus_service_cancel_stops(void)
+{
+    const size_t cancelled = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
+    ESP_LOGI(TAG, "KMB stop cancellation requested count=%u", (unsigned)cancelled);
+}
+
 void bus_service_network_disconnected(void)
 {
     s_network_lost = true;
     (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
+    const size_t cancelled_stops = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
+    if (cancelled_stops > 0) {
+        ESP_LOGW(TAG, "Network disconnected; cancelling KMB stop request count=%u",
+                 (unsigned)cancelled_stops);
+    }
     esp_http_client_handle_t client = s_active_direct_client;
     if (client != NULL) {
         ESP_LOGW(TAG, "Network disconnected; cancelling active direct HTTP request");
@@ -1086,6 +1279,8 @@ static void process_stops_request(const bus_request_t *req)
 {
     char url[256];
     cJSON *root = NULL;
+    kmb_stops_handoff_t *handoff = NULL;
+    esp_err_t request_err = ESP_FAIL;
     bus_event_t event = {0};
     event.type = BUS_EVT_STOPS_LIST;
     event.request_id = req->id;
@@ -1094,34 +1289,70 @@ static void process_stops_request(const bus_request_t *req)
         // KMB route data uses I/O bound codes, but the live route-stop
         // endpoint requires the path words "inbound" and "outbound".
         const char *direction = req->bound == BUS_DIR_OUTBOUND ? "outbound" : "inbound";
-        snprintf(url, sizeof(url), "%s/route-stop/%s/%s/%d",
-                 KMB_BASE_URL, req->route, direction, req->service_type);
+        snprintf(url, sizeof(url), "%s%s/%s/%d",
+                 KMB_STOPS_REQUEST_URL, req->route, direction, req->service_type);
+
+        handoff = submit_kmb_stops(req, direction, url);
+        if (handoff != NULL && handoff->transport_error == ESP_OK &&
+                handoff->status_code == 200 && handoff->body != NULL &&
+                handoff->body_len > 0) {
+            ESP_LOGI(TAG, "KMB stops data downloaded route=%s direction=%s bytes=%u",
+                     req->route, direction, (unsigned)handoff->body_len);
+            ESP_LOGI(TAG, "KMB stops parsing route=%s body=%u",
+                     req->route, (unsigned)handoff->body_len);
+            root = cJSON_ParseWithLength((const char *)handoff->body,
+                                         handoff->body_len);
+            if (root == NULL) {
+                ESP_LOGW(TAG, "KMB stops response JSON parse failed route=%s",
+                         req->route);
+            }
+            request_err = root != NULL ? ESP_OK : ESP_FAIL;
+            kmb_stops_handoff_cleanup(handoff);
+            handoff = NULL;
+        } else {
+            const esp_err_t failure_status = handoff != NULL
+                ? handoff->transport_error : ESP_FAIL;
+            if (handoff != NULL) {
+                ESP_LOGW(TAG, "KMB stops request failed route=%s status=%d error=%s",
+                         req->route, handoff->status_code,
+                         esp_err_to_name(handoff->transport_error));
+                kmb_stops_handoff_cleanup(handoff);
+                handoff = NULL;
+            }
+            event.type = BUS_EVT_ERROR;
+            event.status = failure_status;
+            strlcpy(event.data.error.message, "Failed to fetch stops",
+                    sizeof(event.data.error.message));
+            post_event(&event);
+            return;
+        }
     } else {
         snprintf(url, sizeof(url), "%s/route-stop/CTB/%s/%s",
                  CTB_BASE_URL, req->route, req->bound == 'O' ? "outbound" : "inbound");
-    }
-    ESP_LOGI(TAG, "Route stops: fetching %s", url);
-
-    esp_err_t request_err = ESP_FAIL;
-    for (uint8_t attempt = 1; attempt <= BUS_STOP_FETCH_ATTEMPTS; attempt++) {
-        root = NULL;
-        ESP_LOGI(TAG, "Route stops: request attempt %u/%u", (unsigned)attempt,
-                 (unsigned)BUS_STOP_FETCH_ATTEMPTS);
-        request_err = http_get_json(url, &root);
-        if (request_err == ESP_OK && root != NULL) {
-            break;
-        }
-        if (attempt < BUS_STOP_FETCH_ATTEMPTS) {
-            ESP_LOGW(TAG, "Route stops request failed; retrying (%u/%u)",
-                     (unsigned)attempt, (unsigned)BUS_STOP_FETCH_ATTEMPTS);
-            vTaskDelay(pdMS_TO_TICKS(500));
+        ESP_LOGI(TAG, "Route stops: fetching %s", url);
+        for (uint8_t attempt = 1; attempt <= BUS_STOP_FETCH_ATTEMPTS; attempt++) {
+            root = NULL;
+            ESP_LOGI(TAG, "Route stops: request attempt %u/%u", (unsigned)attempt,
+                     (unsigned)BUS_STOP_FETCH_ATTEMPTS);
+            request_err = http_get_json(url, &root);
+            if (request_err == ESP_OK && root != NULL) {
+                break;
+            }
+            if (attempt < BUS_STOP_FETCH_ATTEMPTS) {
+                ESP_LOGW(TAG, "Route stops request failed; retrying (%u/%u)",
+                         (unsigned)attempt, (unsigned)BUS_STOP_FETCH_ATTEMPTS);
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
         }
     }
 
     if (request_err == ESP_OK && root != NULL) {
         cJSON *data = cJSON_GetObjectItem(root, "data");
+        ESP_LOGI(TAG, "KMB stops parser data=%s",
+                 cJSON_IsArray(data) ? "array" : "missing-or-invalid");
         if (cJSON_IsArray(data)) {
             int count = cJSON_GetArraySize(data);
+            ESP_LOGI(TAG, "KMB stops parser entries=%d", count);
             if (count > 0) {
                 bus_stop_t *stops = heap_caps_calloc(count, sizeof(bus_stop_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                 if (stops != NULL) {
@@ -1132,28 +1363,50 @@ static void process_stops_request(const bus_request_t *req)
                             cJSON *stop_id = cJSON_GetObjectItem(item, "stop");
                             cJSON *seq = cJSON_GetObjectItem(item, "seq");
 
-                            if (stop_id && seq) {
+                            if (cJSON_IsString(stop_id) &&
+                                    (cJSON_IsNumber(seq) || cJSON_IsString(seq))) {
+                                const int sequence = cJSON_IsNumber(seq)
+                                    ? seq->valueint : atoi(seq->valuestring);
+                                if (sequence <= 0) {
+                                    continue;
+                                }
                                 strlcpy(stops[valid_count].stop_id, stop_id->valuestring, sizeof(stops[valid_count].stop_id));
                                 normalize_stop_id(stops[valid_count].stop_id);
-                                stops[valid_count].seq = seq->valueint;
+                                stops[valid_count].seq = (uint16_t)sequence;
                                 stops[valid_count].resolved = false;
-                                snprintf(stops[valid_count].name_en, sizeof(stops[valid_count].name_en), "Stop %d", seq->valueint);
+                                snprintf(stops[valid_count].name_en, sizeof(stops[valid_count].name_en), "Stop %d", sequence);
                                 valid_count++;
                             }
                         }
                     }
 
-                    event.data.stops_list.stops = stops;
-                    event.data.stops_list.count = valid_count;
-                    event.status = ESP_OK;
-                    post_event(&event);
+                    if (valid_count > 0) {
+                        event.data.stops_list.stops = stops;
+                        event.data.stops_list.count = valid_count;
+                        event.status = ESP_OK;
+                        ESP_LOGI(TAG, "KMB stops resolved route=%s count=%d",
+                                 req->route, valid_count);
+                        post_event(&event);
 
-                    // Don't free stops here - listener owns them
+                        // Don't free stops here - listener owns them
+                        cJSON_Delete(root);
+                        return;
+                    }
+                    ESP_LOGW(TAG, "KMB stops parser found no valid entries route=%s",
+                             req->route);
+                    free(stops);
                 }
+                else {
+                    ESP_LOGE(TAG, "KMB stops parser allocation failed entries=%d",
+                             count);
+                }
+            }
+            else {
+                ESP_LOGW(TAG, "KMB stops parser returned empty data route=%s",
+                         req->route);
             }
         }
         cJSON_Delete(root);
-        return;
     }
 
     // Error case

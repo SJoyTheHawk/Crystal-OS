@@ -30,6 +30,33 @@ The existing code also contains correctness issues that must be handled before a
 - `Favorite::op` stores one operator, but a co-operated route needs an operator set or separate normalized ETA requests.
 - The current favorite ETA match uses only `stop_id`; the same stop can have multiple route, direction, service type, or operator records.
 
+## HTTPS/TLS migration dependency and sequencing
+
+The bus app integration continues alongside the HTTPS/TLS hardening. The KMB
+catalog and KMB route-stop operations already use `crystal_http`; their final
+failure/lifetime acceptance run is deferred while this integration proceeds.
+That deferral does not block the next bus-service work, but it does mean the
+Phase 4 hardening phase remains pending final acceptance.
+
+Use the shared transport at the service boundary in this order:
+
+1. Finish the normalized service contracts and LVGL-task event delivery before
+   adding more provider-specific screens.
+2. Implement CTB route, stop, and provider-result adapters with their own
+   parsing and normalization code.
+3. Submit each CTB HTTPS operation through `crystal_http` once its normalized
+   request and response contract is defined. Reuse the KMB bounded handoff,
+   ownership, cancellation, and stale-request pattern.
+4. Add co-operated-route merging only after KMB and CTB records can be
+   represented by the same normalized model.
+5. Return to the deferred KMB failure/lifetime matrix after CTB and weather
+   clients are available, then run contention and global direct-client checks.
+
+This is deliberate interleaving, not a return to a large combined migration:
+the bus plan owns provider contracts and user flow, while the HTTPS plan owns
+transport lifetime, buffering, retries, cancellation, and diagnostics. Keep
+those responsibilities separate so a failed device gate remains localizable.
+
 ## Capability matrix
 
 | # | Workflow capability | Current implementation | Readiness | Required work |

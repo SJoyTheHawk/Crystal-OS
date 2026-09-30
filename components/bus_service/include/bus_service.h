@@ -142,6 +142,8 @@ uint32_t bus_service_request_eta(const char *stop_id,
 
 // Cancel all pending requests
 void bus_service_cancel_all(void);
+// Cancel the active KMB stop request when leaving the stop page.
+void bus_service_cancel_stops(void);
 // Abort active HTTP work when the network lease is lost. A later connected
 // event may start a fresh catalog operation.
 void bus_service_network_disconnected(void);
