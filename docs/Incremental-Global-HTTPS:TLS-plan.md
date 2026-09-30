@@ -279,13 +279,20 @@ The stop page must show the stop rows after a successful response. Failure must 
 
 **Purpose:** Complete the bus service migration in small functional groups.
 
+The first implementation slice is documented in
+[HTTPS/TLS Phase 5, Slice 1](bus-app-next-phase-code-guide.md). It combines
+the required bus-service contracts with the first CTB normalized operation.
+This slice starts Phase 5; it does not complete the phase.
+
 Migrate in this order:
 
-1. KMB route variants.
-2. KMB ETA requests.
-3. CTB route catalog.
-4. CTB route variants and stop requests when their normalization path is ready.
-5. CTB ETA requests.
+1. Service contracts and event ownership groundwork, then the first CTB
+   normalized operation, as defined by the Phase 5 Slice 1 guide.
+2. KMB route variants.
+3. KMB ETA requests.
+4. CTB route catalog.
+5. CTB route variants and remaining stop requests.
+6. CTB ETA requests.
 
 After each operation, retain the existing bus event type and UI behavior.
 
