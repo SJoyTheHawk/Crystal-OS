@@ -472,8 +472,6 @@ void drain_event_queue(lv_timer_t *)
             memcpy(text, message.data, message.length);
             show_toast(text);
             ESP_LOGI(TAG, "toast displayed: %s", text);
-        } else if (message.type == UI_EVT_TIME_SYNCED) {
-            show_toast("Time synchronized");
         } else if (message.type == UI_EVT_TIMER_EXPIRED) {
             show_toast("Timer finished");
         } else if (message.type == UI_EVT_WEATHER && message.length == sizeof(CrystalWeatherReading)) {
@@ -673,7 +671,6 @@ void sntp_synced(struct timeval *tv)
         store_value("time.last_sync", last_sync);
     }
     ESP_LOGI(TAG, "SNTP synchronized system clock and RTC");
-    (void)crystal_ui_post(UI_EVT_TIME_SYNCED);
 }
 
 void service_task(void *)

@@ -447,6 +447,18 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
     lv_obj_add_flag(search_tab_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(search_tab_, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(search_tab_, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(search_tab_, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    // The display uses direct mode with two RGB buffers. Scrolling normally
+    // invalidates only the moved region, which can leave a stale horizontal
+    // band in the other buffer while it is being scanned out. Redraw the
+    // complete screen whenever the search page moves.
+    lv_obj_add_event_cb(search_tab_, [](lv_event_t *event) {
+        lv_obj_t *page = lv_event_get_target(event);
+        lv_obj_t *screen = page != nullptr ? lv_obj_get_screen(page) : nullptr;
+        if (screen != nullptr) {
+            lv_obj_invalidate(screen);
+        }
+    }, LV_EVENT_SCROLL, nullptr);
     lv_obj_add_flag(search_tab_, LV_OBJ_FLAG_HIDDEN);  // Start hidden
 
     // Input display
@@ -517,6 +529,8 @@ void BusApp::buildStopPage(lv_coord_t width, lv_coord_t height)
     }, LV_EVENT_CLICKED, this);
 
     stop_title_ = makeLabel(stop_page_, &lv_font_montserrat_20, kTextPrimary);
+    lv_obj_set_width(stop_title_, width - 88 - kPad);
+    lv_label_set_long_mode(stop_title_, LV_LABEL_LONG_DOT);
     lv_obj_align(stop_title_, LV_ALIGN_TOP_LEFT, 88, 8);
 
     stop_list_ = lv_obj_create(stop_page_);
@@ -541,8 +555,18 @@ void BusApp::showStopPage(const bus_route_variant_t &variant)
     if (stop_page_ == nullptr || search_tab_ == nullptr) {
         return;
     }
-    char title[80];
-    snprintf(title, sizeof(title), "%s  •  To %s", variant.route, variant.dest_en);
+    const char *operator_name = variant.op == BUS_OP_CTB ? "CTB" :
+                                variant.op == BUS_OP_NWFB ? "NWFB" : "KMB";
+    const char *direction_name = variant.bound == BUS_DIR_OUTBOUND
+        ? "Outbound" : "Inbound";
+    char title[128];
+    if (variant.dest_en[0] != '\0') {
+        snprintf(title, sizeof(title), "%s  •  %s  •  %s  •  To %s",
+                 variant.route, operator_name, direction_name, variant.dest_en);
+    } else {
+        snprintf(title, sizeof(title), "%s  •  %s  •  %s",
+                 variant.route, operator_name, direction_name);
+    }
     lv_label_set_text(stop_title_, title);
     lv_obj_clean(stop_list_);
     lv_obj_t *loading = makeLabel(stop_list_, &lv_font_montserrat_16, kTextSecondary);
@@ -562,6 +586,8 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
     if (count == 0) {
         lv_obj_t *empty = makeLabel(stop_list_, &lv_font_montserrat_16, kTextSecondary);
         lv_label_set_text(empty, "No bus stops available");
+        lv_obj_set_width(empty, LV_PCT(100));
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
         return;
     }
     for (uint16_t i = 0; i < count; i++) {
@@ -873,32 +899,13 @@ void BusApp::rebuildSearchResults()
                     matches[match_index], variant.bound,
                     static_cast<bus_operator_t>(variant.op), variant.service_type};
             }
-        } else {
-            // A partially populated catalog can still expose a searchable
-            // route group. Keep its provider-qualified choices explicit until
-            // the next complete refresh supplies direction records.
-            const uint8_t operators = entry.ops;
-            for (uint8_t op = BUS_OP_KMB;
-                 op <= BUS_OP_CTB && display_count < kMaxDisplayedRows; op++) {
-                if ((operators & (1u << op)) == 0) {
-                    continue;
-                }
-                display_rows[display_count++] = SearchDisplayRow{
-                    matches[match_index], BUS_DIR_INBOUND,
-                    static_cast<bus_operator_t>(op), 1};
-                if (display_count < kMaxDisplayedRows) {
-                    display_rows[display_count++] = SearchDisplayRow{
-                        matches[match_index], BUS_DIR_OUTBOUND,
-                        static_cast<bus_operator_t>(op), 1};
-                }
-            }
         }
     }
 
     // Include the container's vertical padding as well as the row spacing;
     // otherwise the last result is clipped at the bottom of the card.
     lv_obj_set_height(search_results_, 28 + display_count * (row_height + row_gap));
-    if (match_count == 0) {
+    if (display_count == 0) {
         lv_obj_t *empty = makeLabel(search_results_, &lv_font_montserrat_16, kTextSecondary);
         lv_label_set_text(empty, "No matching routes");
         lv_obj_center(empty);
@@ -919,8 +926,17 @@ void BusApp::rebuildSearchResults()
         lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
         lv_obj_set_style_radius(row, 6, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        // Keep the button's touch feedback on the dark palette. The default
+        // theme pressed style is light and briefly flashes while a route row
+        // is tapped or selected.
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
+        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(row, 0, 0);
         // Store the complete provider-qualified identity for the click
         // handler. The route label remains display text only.
         const intptr_t row_data = (static_cast<intptr_t>(display_rows[i].op) << 16) |
@@ -940,12 +956,12 @@ void BusApp::rebuildSearchResults()
         const char wanted_bound = display_rows[i].bound;
         const bus_operator_t wanted_operator = display_rows[i].op;
         const uint8_t wanted_service_type = display_rows[i].service_type;
-        const char *destination = "";
+        const bus_route_variant_t *selected_variant = nullptr;
         for (uint8_t variant_index = 0; variant_index < variant_count; variant_index++) {
             if (variants[variant_index].bound == wanted_bound &&
                 variants[variant_index].op == wanted_operator &&
                 variants[variant_index].service_type == wanted_service_type) {
-                destination = variants[variant_index].dest_en;
+                selected_variant = &variants[variant_index];
                 break;
             }
         }
@@ -954,9 +970,14 @@ void BusApp::rebuildSearchResults()
         const char *direction_name = display_rows[i].bound == BUS_DIR_OUTBOUND
             ? "Outbound" : "Inbound";
         char details[96];
-        if (destination[0] != '\0') {
+        if (selected_variant != nullptr && selected_variant->orig_en[0] != '\0' &&
+            selected_variant->dest_en[0] != '\0') {
+            snprintf(details, sizeof(details), "%s  •  %s  •  To %s  •  From %s",
+                     operator_name, direction_name, selected_variant->dest_en,
+                     selected_variant->orig_en);
+        } else if (selected_variant != nullptr && selected_variant->dest_en[0] != '\0') {
             snprintf(details, sizeof(details), "%s  •  %s  •  To %s",
-                     operator_name, direction_name, destination);
+                     operator_name, direction_name, selected_variant->dest_en);
         } else {
             snprintf(details, sizeof(details), "%s  •  %s", operator_name, direction_name);
         }
@@ -1020,8 +1041,14 @@ void BusApp::rebuildRouteVariantResults()
         lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
         lv_obj_set_style_radius(row, 6, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
+        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(row, 0, 0);
 
         lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
         lv_label_set_text(route_label, variant.route);
@@ -1181,11 +1208,12 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
                 if (event->status == ESP_OK) {
                     free(event->data.stops_list.stops);
                 }
-                ESP_LOGI(TAG, "Ignoring stale stop result id=%lu route=%s op=%u bound=%c",
+                ESP_LOGI(TAG, "Ignoring stale stop result id=%lu route=%s op=%u bound=%c service_type=%u",
                          static_cast<unsigned long>(event->request_id),
                          event->identity.route,
                          static_cast<unsigned>(event->identity.op),
-                         static_cast<char>(event->identity.bound));
+                         static_cast<char>(event->identity.bound),
+                         static_cast<unsigned>(event->identity.service_type));
                 break;
             }
             app->stop_request_id_ = 0;
@@ -1248,11 +1276,12 @@ void BusApp::onBusEvent(const bus_event_t *event, void *user_data)
         case BUS_EVT_ERROR:
             if (event->request_id == app->stop_request_id_) {
                 if (!stopIdentityMatches(event->identity, app->current_route_)) {
-                    ESP_LOGI(TAG, "Ignoring stale stop error id=%lu route=%s op=%u bound=%c",
+                    ESP_LOGI(TAG, "Ignoring stale stop error id=%lu route=%s op=%u bound=%c service_type=%u",
                              static_cast<unsigned long>(event->request_id),
                              event->identity.route,
                              static_cast<unsigned>(event->identity.op),
-                             static_cast<char>(event->identity.bound));
+                             static_cast<char>(event->identity.bound),
+                             static_cast<unsigned>(event->identity.service_type));
                     break;
                 }
                 app->stop_request_id_ = 0;
@@ -1289,10 +1318,11 @@ void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *
     }
     ESP_LOGI(TAG, "Network event received: id=%ld", static_cast<long>(id));
     if (id == CRYSTAL_NETWORK_DISCONNECTED) {
-        // Mark the visible stop request stale before cancellation. The page
-        // remains available, but a late terminal event must not show an error
-        // for the route that was interrupted by Wi-Fi loss.
-        app->stop_request_id_ = 0;
+        // Keep an active stop request current until its cancellation event is
+        // delivered. The service labels that terminal event as "Waiting for
+        // network", allowing the visible loading state to resolve cleanly.
+        // Back and route replacement clear the id first, so their late
+        // cancellation events remain stale by construction.
         bus_service_network_disconnected();
         app->catalog_request_started_ = false;
         app->catalog_bootstrap_checked_ = false;
@@ -1302,6 +1332,7 @@ void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *
     if (id != CRYSTAL_NETWORK_CONNECTED) {
         return;
     }
+    bus_service_network_connected();
     // A cancelled catalog result may arrive while Wi-Fi is still down and
     // mark bootstrap as checked. Re-arm it on the subsequent connection so
     // the LVGL timer queues a fresh KMB+CTB fetch.
@@ -1334,6 +1365,10 @@ void BusApp::evaluateCatalogBootstrap()
     if (!crystal_network_has_ip()) {
         setCatalogState(cached_catalog_available, cached_catalog_available ? "" :
                         "Waiting for Wi-Fi connection...");
+        // The connected network event clears this gate when a new IP lease is
+        // available. Until then, avoid rebuilding the Search keypad/results
+        // every 500 ms while the device is offline.
+        catalog_bootstrap_checked_ = true;
         return;
     }
     if (catalog_request_started_) {
@@ -1460,20 +1495,6 @@ void BusApp::onRouteResultClicked(lv_event_t *e)
     app->route_variant_count_ = bus_service_get_cached_route_variants(
         app->search_buffer_, app->route_variants_,
         static_cast<uint8_t>(sizeof(app->route_variants_) / sizeof(app->route_variants_[0])));
-    if (app->route_variant_count_ == 0 &&
-        (bus_route_get_operators(route, strlen(route)) & (1u << BUS_OP_CTB)) != 0) {
-        // The route catalog contains CTB-only routes without direction
-        // variants. Keep both directions selectable until CTB variants are
-        // added to the normalized catalog.
-        for (char bound : {BUS_DIR_INBOUND, BUS_DIR_OUTBOUND}) {
-            bus_route_variant_t &variant =
-                app->route_variants_[app->route_variant_count_++];
-            strlcpy(variant.route, route, sizeof(variant.route));
-            variant.op = BUS_OP_CTB;
-            variant.bound = static_cast<bus_direction_t>(bound);
-            variant.service_type = 1;
-        }
-    }
     app->rebuildRouteVariantResults();
     ESP_LOGI(TAG, "Route result selected from cache: %s (%u variants)", route,
              app->route_variant_count_);
@@ -1497,6 +1518,29 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
         return;
     }
 
+    const intptr_t row_data = reinterpret_cast<intptr_t>(lv_obj_get_user_data(row));
+    const char bound = static_cast<char>(row_data & 0xff);
+    const uint8_t service_type = static_cast<uint8_t>((row_data >> 8) & 0xff);
+    const bus_operator_t operator_id = static_cast<bus_operator_t>(
+        (row_data >> 16) & 0xff);
+    static bus_route_variant_t variants[32];
+    const uint8_t variant_count = bus_service_get_cached_route_variants(
+        route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
+    const bus_route_variant_t *selected_variant = nullptr;
+    for (uint8_t i = 0; i < variant_count; i++) {
+        if (variants[i].op == operator_id && variants[i].bound == bound &&
+            variants[i].service_type == service_type) {
+            selected_variant = &variants[i];
+            break;
+        }
+    }
+    if (selected_variant == nullptr) {
+        ESP_LOGW(TAG, "Selected route variant missing from cache route=%s op=%u bound=%c service_type=%u",
+                 route, static_cast<unsigned>(operator_id), bound,
+                 static_cast<unsigned>(service_type));
+        return;
+    }
+
     // A new route supersedes the previous stop request. Invalidate its id
     // before cancelling so a racing callback is stale by construction.
     if (app->stop_request_id_ != 0) {
@@ -1505,32 +1549,7 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
         app->stop_request_id_ = 0;
         bus_service_cancel_stops();
     }
-
-    const intptr_t row_data = reinterpret_cast<intptr_t>(lv_obj_get_user_data(row));
-    const char bound = static_cast<char>(row_data & 0xff);
-    const uint8_t service_type = static_cast<uint8_t>((row_data >> 8) & 0xff);
-    const bus_operator_t operator_id = static_cast<bus_operator_t>(
-        (row_data >> 16) & 0xff);
-    memset(&app->current_route_, 0, sizeof(app->current_route_));
-    strlcpy(app->current_route_.route, route, sizeof(app->current_route_.route));
-    app->current_route_.op = operator_id == BUS_OP_CTB ? BUS_OP_CTB : BUS_OP_KMB;
-    app->current_route_.bound = bound == BUS_DIR_OUTBOUND ? BUS_DIR_OUTBOUND : BUS_DIR_INBOUND;
-    app->current_route_.service_type = service_type == 0 ? 1 : service_type;
-
-    // Restore the exact provider-qualified option selected from the cache.
-    static bus_route_variant_t variants[32];
-    {
-        const uint8_t variant_count = bus_service_get_cached_route_variants(
-            route, variants, static_cast<uint8_t>(sizeof(variants) / sizeof(variants[0])));
-        for (uint8_t i = 0; i < variant_count; i++) {
-            if (variants[i].op == app->current_route_.op &&
-                variants[i].bound == app->current_route_.bound &&
-                variants[i].service_type == app->current_route_.service_type) {
-                app->current_route_ = variants[i];
-                break;
-            }
-        }
-    }
+    app->current_route_ = *selected_variant;
 
     app->showStopPage(app->current_route_);
     app->stop_request_id_ = bus_service_request_stops(
@@ -1545,9 +1564,11 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
             lv_label_set_text(message, "Unable to request bus stops");
         }
     }
-    ESP_LOGI(TAG, "Route variant selected: %s %c %s -> stops request=%lu",
+    ESP_LOGI(TAG, "Route variant selected: route=%s op=%u bound=%c service_type=%u destination=%s -> stops request=%lu",
              app->current_route_.route,
+             static_cast<unsigned>(app->current_route_.op),
              app->current_route_.bound,
+             static_cast<unsigned>(app->current_route_.service_type),
              app->current_route_.dest_en,
              static_cast<unsigned long>(app->stop_request_id_));
 }

@@ -12,7 +12,7 @@ The current service uses these CTB endpoints:
 
 ```text
 route list:
-https://rt.data.gov.hk/v2/transport/citybus/route/ctb
+https://rt.data.gov.hk/v2/transport/citybus/route/CTB
 
 route stops (provider spelling):
 https://rt.data.gov.hk/v2/transport/citybus/route-stop/ctb/{route}/{inbound|outbound}

@@ -172,6 +172,8 @@ void bus_service_cancel_stops(void);
 // Abort active HTTP work when the network lease is lost. A later connected
 // event may start a fresh catalog operation.
 void bus_service_network_disconnected(void);
+// Clear the network-loss gate after a new IP lease is available.
+void bus_service_network_connected(void);
 
 #ifdef __cplusplus
 }

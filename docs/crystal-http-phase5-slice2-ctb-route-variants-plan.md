@@ -1,6 +1,8 @@
 # Tracked Slice 2 — CTB Route Variants and Destinations
 
-**Status:** Planned; implementation not started  
+**Status:** S2.2, S2.3, S2.4, and S2.5 lifecycle guards implemented; route
+refresh, cache save, and CTB inbound/outbound stop handoff verified on device.
+The S2.5 device acceptance matrix and shared-label KMB/CTB check remain.
 **Owner boundary:** `bus_service` owns CTB request meaning and normalization;
 `crystal_http` owns HTTPS, buffering, retries, cancellation, and response release.
 
@@ -13,6 +15,7 @@ Related records:
 - [Slice 1 code guide](bus-app-next-phase-code-guide.md)
 - [Slice 1 evidence and sign-off](crystal-http-phase5-step7-slice1.md)
 - [Slice 2 code guide](crystal-http-phase5-slice2-ctb-route-variants-code-guide.md)
+- [Slice 2 Step 2.5 lifecycle evidence](crystal-http-phase5-slice2-step2-5.md)
 - [Bus app integration plan](bus-app-integration-plan.md)
 - [Global HTTPS/TLS plan](Incremental-Global-HTTPS:TLS-plan.md)
 

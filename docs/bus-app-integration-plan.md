@@ -6,8 +6,13 @@
 
 **Progress (2026-10-01):** HTTPS/TLS Phase 5 Slice 1 is implementation-signed
 off for handoff, with conditional device acceptance recorded in its evidence
-file. CTB route variants and destinations are now tracked as Slice 2 with a
-separate implementation plan and code guide.
+file. Slice 2 established provider-qualified CTB variants, cache identity,
+stop handoff, and lifecycle guards. The next slice is intentionally split out:
+route normalization and CTB route-level destination summaries land before the
+stop picker and stop-name resolution.
+
+See [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+and its [code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
 
 This document compares the requested workflow in [`bus-app-workflow.md`](bus-app-workflow.md), [`bus-app-ui-design.md`](bus-app-ui-design.md), and [`bus-app-code-guide.md`](bus-app-code-guide.md) with the code that currently exists in `components/bus_service` and `components/bus_app`. Each implementation step should be completed and verified before starting the next one.
 
@@ -70,9 +75,9 @@ those responsibilities separate so a failed device gate remains localizable.
 | 2 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
 | 3 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()`, `rebuildSearchResults()` | Complete | Compact reference-style keypad, reset/backspace, loading lock, catalog-backed ascending route rows, adaptive key dimming, disabled-until-complete Go action, route selection, and page scrolling are implemented. Separate inbound/outbound rows and terminal destinations are intentionally handled by rows 5/9 after route variants are loaded. |
 | 4 | Route prefix validation | `bus_route_is_complete()`, `bus_route_next_mask()`, `bus_route_get_operators()` | Complete | Validation now reads the active runtime catalog (with the compiled fixture as a fallback), matches only the typed prefix, handles invalid/null input safely, and returns operator metadata for complete routes. |
-| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model, sorted deterministically, and displayed as separate inbound/outbound rows with operator and origin/destination metadata. Provider-specific discovery remains covered by rows 6–8. |
+| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model and sorted deterministically. Directional destinations are shown only when authoritative; route-level CTB destination summaries are the next slice. |
 | 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
-| 7 | CTB route variants | Step 3A provider-qualified choices | Planned | Implement [Tracked Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) and its [code guide](crystal-http-phase5-slice2-ctb-route-variants-code-guide.md) so inbound/outbound destinations are authoritative. |
+| 7 | CTB route variants | Step 3A provider-qualified choices | Implemented with deferred destination association | [Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) preserves CTB identity and direction. The public route list does not associate terminal pairs with direction; [Slice 3](crystal-http-phase5-slice3-normalized-route-metadata-plan.md) retains those pairs as route-level metadata for Search. |
 | 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
 | 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
 | 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |
@@ -187,10 +192,31 @@ The official public specification describes KMB's `/stop-eta/{stop_id}` response
 
 **Exit check:** The keypad and result list work with the fixture and with the full generated index, including reset, backspace, impossible-character dimming, and both directions.
 
-### Step 4 — Add route variants and the stop picker
+### Step 4A — Normalize route metadata and show destinations (next slice)
+
+This is the next implementation slice. It moves the useful part of the CTB
+route response into Search without weakening directional identity.
+
+- Define a provider-neutral route summary beside `bus_route_variant_t`.
+- Centralize route, direction, service-type, and localized-text normalization.
+- Retain CTB origin/destination pairs even when `bound` is absent.
+- Persist and reload summaries with a bumped cache schema.
+- Show CTB route-level destinations in route rows and label them as summaries
+  when a direction-specific destination is unavailable.
+- Keep stop requests based only on the selected normalized variant.
+
+See [Slice 3 plan](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+and [Slice 3 code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
+
+**Exit check:** A CTB route row shows provider destinations, a selected
+inbound/outbound row still produces the same stop URL, and cache reload keeps
+the route summaries and provider identities.
+
+### Step 4B — Add the stop picker
 
 **Goal:** Let a user choose a direction and a stop.
 
+- Consume the normalized route summaries and variants from Step 4A.
 - Implement route discovery for every supported operator and merge variants by normalized route/bound/service type.
 - Use the Search result rows as the direction chooser. If only one variant exists, it may be selected automatically; otherwise each row shows the operator, direction, and destination.
 - Implement route-stop requests for the selected variant and return sequence plus source stop IDs.

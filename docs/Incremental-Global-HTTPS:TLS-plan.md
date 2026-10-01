@@ -1,5 +1,13 @@
 # Incremental Global HTTPS/TLS Implementation
 
+**Status:** Active architecture and transport-ownership plan
+
+**Sequencing note (2026-10-01):** Phases 0–2 and the core `crystal_http`
+framework are established. The old Phase 3/4 detailed records are historical
+and live under `docs/archive/`. Bus-service work is now tracked as Phase 5
+slices; [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+is the next bus slice. Phases 6–8 remain active follow-up work.
+
 Each phase ends with a separate commit and a device test. A phase is accepted only when its visible output matches the expected result.
 
 ## How to use this plan
@@ -175,7 +183,7 @@ Failure output must include the transport error and HTTP status without crashing
 
 ## Phase 2 — Validate TLS memory behavior
 
-Detailed procedure: [crystal-http-phase2-validation.md](crystal-http-phase2-validation.md)
+Historical procedure: [archived Phase 2 validation](archive/crystal-http-phase2-validation.md)
 
 **Status:** Passed on device. Twenty cold-start HTTPS smoke requests completed successfully with stable cleanup measurements.
 
@@ -212,7 +220,7 @@ Acceptance requires repeated requests without memory leaks or progressive heap l
 
 ## Phase 3 — Migrate the KMB route catalog
 
-Detailed implementation plan: [crystal-http-phase3-kmb-catalog.md](crystal-http-phase3-kmb-catalog.md)
+Historical implementation plan: [archived Phase 3 KMB catalog plan](archive/crystal-http-phase3-kmb-catalog.md)
 
 Execute the detailed plan as ten gated steps, Step 0 through Step 9. Each step is a separate reviewable change: freeze the baseline, add the handoff context, submit through `crystal_http`, establish bounded response ownership, reconnect the existing parser and catalog sequence, remove nested retries, remove only the KMB direct-client call, run the failure/lifetime matrix, and record repeatability results. Do not advance when a step's device or build gate fails.
 
@@ -241,14 +249,14 @@ Test both successful fetch and forced KMB connection failure.
 
 ## Phase 4 — Migrate KMB route-stop requests
 
-Detailed implementation plan: [crystal-http-phase4-kmb-stops.md](crystal-http-phase4-kmb-stops.md)
+Historical implementation plan: [archived Phase 4 KMB stops plan](archive/crystal-http-phase4-kmb-stops.md)
 
 Execute the detailed plan as ten gated steps, Step 0 through Step 9. Do not
 advance when a build, device, ownership, or lifetime gate fails.
 
 **Status:** Implementation complete for the current slice; final Step 8/9
 acceptance is deferred while bus-service normalization and CTB integration
-continue. See [Phase 4 Step 9 evidence](crystal-http-phase4-step9-repeatability.md).
+continue. See [archived Phase 4 Step 9 evidence](archive/crystal-http-phase4-step9-repeatability.md).
 
 **Purpose:** Directly address the unstable request currently failing on the ESP32.
 
@@ -280,21 +288,21 @@ The stop page must show the stop rows after a successful response. Failure must 
 **Purpose:** Complete the bus service migration in small functional groups.
 
 The completed first implementation slice is documented in
-[HTTPS/TLS Phase 5, Slice 1](bus-app-next-phase-code-guide.md), with its
+[HTTPS/TLS Phase 5, Slice 1](crystal-http-phase5-step7-slice1-code-guide.md), with its
 [signed evidence record](crystal-http-phase5-step7-slice1.md). It combines
 the required bus-service contracts with the first CTB normalized operation.
 Slice 1 is signed off for handoff; formal device acceptance remains conditional
 on the evidence items recorded in its evidence record.
 
-Migrate in this order:
+The current bus-service sequence is maintained in the [bus app integration
+plan](bus-app-integration-plan.md). The next transport-relevant work is:
 
-1. Service contracts and event ownership groundwork, then the first CTB
-   normalized operation, as defined by the Phase 5 Slice 1 guide.
-2. KMB route variants.
-3. KMB ETA requests.
-4. CTB route catalog.
-5. [Tracked Slice 2: CTB route variants and destinations](crystal-http-phase5-slice2-ctb-route-variants-plan.md), using its [code guide](crystal-http-phase5-slice2-ctb-route-variants-code-guide.md), followed by the remaining stop requests.
-6. CTB ETA requests.
+1. [Tracked Slice 3: normalized route metadata and destination-first Search](crystal-http-phase5-slice3-normalized-route-metadata-plan.md), using its [code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
+2. Continue the remaining bus operations one at a time, preserving the
+   provider-neutral contracts and the `crystal_http` handoff.
+3. Return to the deferred KMB failure/lifetime matrix after the active bus
+   operation slices and weather migration have enough call sites for a useful
+   contention test.
 
 After each operation, retain the existing bus event type and UI behavior.
 
@@ -307,7 +315,8 @@ crystal_http: response status=...
 bus_service: operation parsed successfully
 ```
 
-No bus source file should directly include or call `esp_http_client` after this phase.
+No bus source file should directly include or call `esp_http_client` after the
+remaining bus HTTPS operations are migrated.
 
 ## Phase 6 — Migrate Crystal OS weather networking
 

@@ -34,3 +34,10 @@ if(CRYSTAL_HTTP_PHASE5_CTB_STOPS_FORCE_FAILURE)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE
         CRYSTAL_HTTP_PHASE5_CTB_STOPS_FORCE_FAILURE=1)
 endif()
+
+set(CRYSTAL_HTTP_PHASE5_CTB_ROUTE_FORCE_FAILURE OFF CACHE BOOL
+    "Use an invalid CTB route endpoint for the Phase 5 Slice 2 handoff validation")
+if(CRYSTAL_HTTP_PHASE5_CTB_ROUTE_FORCE_FAILURE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        CRYSTAL_HTTP_PHASE5_CTB_ROUTE_FORCE_FAILURE=1)
+endif()

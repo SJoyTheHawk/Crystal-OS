@@ -38,6 +38,11 @@ static const char *TAG = "bus_service";
 #define KMB_CATALOG_REQUEST_URL KMB_BASE_URL "/route/"
 #endif
 #define CTB_BASE_URL "https://rt.data.gov.hk/v2/transport/citybus"
+#ifdef CRYSTAL_HTTP_PHASE5_CTB_ROUTE_FORCE_FAILURE
+#define CTB_ROUTE_VARIANT_REQUEST_URL "https://invalid-ctb-route-test.invalid/route/CTB"
+#else
+#define CTB_ROUTE_VARIANT_REQUEST_URL CTB_BASE_URL "/route/CTB"
+#endif
 #ifdef CRYSTAL_HTTP_PHASE5_CTB_STOPS_FORCE_FAILURE
 #define CTB_STOPS_BASE_URL "https://invalid-ctb-stop-test.invalid"
 #else
@@ -46,7 +51,7 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
-#define ROUTE_CACHE_VERSION 6u
+#define ROUTE_CACHE_VERSION 7u
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
@@ -54,6 +59,7 @@ static const char *TAG = "bus_service";
 #define ROUTE_VARIANT_CAPACITY 4096
 #define KMB_CATALOG_OWNER_ID 0x4B4D4243u // "KMBC"
 #define KMB_STOPS_OWNER_ID 0x4B4D5354u // "KMST"
+#define CTB_ROUTE_VARIANTS_OWNER_ID 0x43545256u // "CTRV"
 #define CTB_STOPS_OWNER_ID 0x43544253u // "CTBS"
 #define KMB_STOP_TIMEOUT_MS 8000
 #define KMB_STOP_MAX_ATTEMPTS 3
@@ -62,6 +68,7 @@ static const char *TAG = "bus_service";
 // Step 0 live CTB measurements are still deferred; keep this bounded
 // provisional limit until inbound and outbound captures establish the margin.
 #define CTB_STOP_MAX_BODY_BYTES (64u * 1024u)
+#define CTB_ROUTE_VARIANT_MAX_BODY_BYTES (512u * 1024u)
 #ifdef CRYSTAL_HTTP_PHASE4_KMB_STOPS_FORCE_BODY_LIMIT
 #define KMB_STOP_MAX_BODY_BYTES (1u * 1024u)
 #else
@@ -71,6 +78,8 @@ static const char *TAG = "bus_service";
 #define KMB_CATALOG_HANDOFF_WAIT_MS (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
 #define KMB_STOP_HANDOFF_WAIT_MS (KMB_STOP_TIMEOUT_MS * KMB_STOP_MAX_ATTEMPTS + 5000u)
 #define CTB_STOP_HANDOFF_WAIT_MS (CTB_STOP_TIMEOUT_MS * CTB_STOP_MAX_ATTEMPTS + 5000u)
+#define CTB_ROUTE_VARIANT_HANDOFF_WAIT_MS \
+    (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
 
 // Request types
 typedef enum {
@@ -152,6 +161,26 @@ typedef struct {
     size_t body_len;
 } ctb_stops_handoff_t;
 
+// Slice 2 route-variant transport handoff. The callback owns only the
+// framework response lifetime; the bus worker owns this context and its body.
+typedef struct {
+    uint32_t bus_request_id;
+    uint32_t framework_request_id;
+    char route[5];
+    bus_operator_t op;
+    bus_direction_t bound;
+    uint8_t service_type;
+    SemaphoreHandle_t completed_signal;
+    bool completed;
+    bool timed_out;
+    bool cancelled;
+    esp_err_t transport_error;
+    int status_code;
+    uint8_t attempts;
+    uint8_t *body;
+    size_t body_len;
+} ctb_route_variants_handoff_t;
+
 // Service state
 static TaskHandle_t s_worker_task = NULL;
 static QueueHandle_t s_request_queue = NULL;
@@ -200,10 +229,27 @@ static void ctb_stops_handoff_callback(const crystal_http_response_t *response,
                                        void *user_data);
 static ctb_stops_handoff_t *submit_ctb_stops(const bus_request_t *request,
                                              const char *ctb_url);
+static ctb_route_variants_handoff_t *ctb_route_variants_handoff_create(
+    uint32_t bus_request_id, const char *route, bus_operator_t op,
+    bus_direction_t bound, uint8_t service_type);
+static void ctb_route_variants_handoff_cleanup(
+    ctb_route_variants_handoff_t *context);
+static void ctb_route_variants_handoff_callback(
+    const crystal_http_response_t *response, void *user_data);
+static ctb_route_variants_handoff_t *submit_ctb_route_variants(
+    uint32_t bus_request_id, const char *route, bus_operator_t op,
+    bus_direction_t bound, uint8_t service_type, const char *url);
+static uint16_t fetch_ctb_route_provider(const char *label, const char *url,
+                                         uint32_t request_id);
 static uint16_t submit_kmb_catalog(uint32_t bus_request_id);
 static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                                             uint8_t op, uint32_t request_id);
 static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op);
+static bool append_normalized_route_variant(const bus_route_variant_t *candidate);
+static uint16_t resolve_ctb_route_provider_body(const char *label,
+                                                const uint8_t *body,
+                                                size_t body_len,
+                                                uint32_t request_id);
 
 static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id,
                                                           const char *kmb_url)
@@ -478,8 +524,9 @@ static ctb_stops_handoff_t *submit_ctb_stops(const bus_request_t *request,
         return NULL;
     }
 
-    ESP_LOGI(TAG, "CTB stops submitted route=%s bound=%c bus_id=%lu framework_id=%lu",
-             request->route, request->bound,
+    ESP_LOGI(TAG, "CTB stops submitted route=%s op=%u bound=%c service_type=%u bus_id=%lu framework_id=%lu",
+             request->route, (unsigned)request->op, request->bound,
+             (unsigned)request->service_type,
              (unsigned long)request->id,
              (unsigned long)context->framework_request_id);
 
@@ -500,6 +547,160 @@ static ctb_stops_handoff_t *submit_ctb_stops(const bus_request_t *request,
              context->status_code, (unsigned)context->body_len,
              (unsigned)context->attempts,
              esp_err_to_name(context->transport_error));
+    return context;
+}
+
+static ctb_route_variants_handoff_t *ctb_route_variants_handoff_create(
+    uint32_t bus_request_id, const char *route, bus_operator_t op,
+    bus_direction_t bound, uint8_t service_type)
+{
+    ctb_route_variants_handoff_t *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        return NULL;
+    }
+    context->bus_request_id = bus_request_id;
+    if (route != NULL) {
+        strlcpy(context->route, route, sizeof(context->route));
+    }
+    context->op = op;
+    context->bound = bound;
+    context->service_type = service_type;
+    context->completed_signal = xSemaphoreCreateBinary();
+    if (context->completed_signal == NULL) {
+        free(context);
+        return NULL;
+    }
+    return context;
+}
+
+static void ctb_route_variants_handoff_cleanup(
+    ctb_route_variants_handoff_t *context)
+{
+    if (context == NULL) return;
+    if (context->completed_signal != NULL) {
+        vSemaphoreDelete(context->completed_signal);
+    }
+    free(context->body);
+    free(context);
+}
+
+static void ctb_route_variants_handoff_callback(
+    const crystal_http_response_t *response, void *user_data)
+{
+    ctb_route_variants_handoff_t *context = user_data;
+    if (context == NULL) {
+        if (response != NULL) crystal_http_response_release(response);
+        return;
+    }
+
+    if (response != NULL) {
+        context->status_code = response->status_code;
+        context->transport_error = response->transport_error;
+        context->attempts = response->attempts;
+        context->body_len = response->body_len;
+        if (response->body != NULL && response->body_len > 0) {
+            context->body = heap_caps_malloc(response->body_len + 1,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (context->body == NULL) {
+                context->body_len = 0;
+                context->transport_error = ESP_ERR_NO_MEM;
+                ESP_LOGE(TAG,
+                         "CTB route variants handoff body allocation failed bytes=%u",
+                         (unsigned)response->body_len);
+            } else {
+                memcpy(context->body, response->body, response->body_len);
+                context->body[response->body_len] = '\0';
+            }
+        }
+        ESP_LOGI(TAG,
+                 "CTB route variants response bus_id=%lu framework_id=%lu route=%s op=%u bound=%c service_type=%u status=%d body=%u attempts=%u error=%s",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 context->route, (unsigned)context->op,
+                 context->bound == BUS_DIR_INBOUND || context->bound == BUS_DIR_OUTBOUND
+                     ? (char)context->bound : '-',
+                 (unsigned)context->service_type, response->status_code,
+                 (unsigned)response->body_len, (unsigned)response->attempts,
+                 esp_err_to_name(response->transport_error));
+        // The callback is the sole owner of the framework response release.
+        crystal_http_response_release(response);
+    } else {
+        context->transport_error = ESP_FAIL;
+        ESP_LOGW(TAG,
+                 "CTB route variants response bus_id=%lu framework_id=%lu missing response",
+                 (unsigned long)context->bus_request_id,
+                 (unsigned long)context->framework_request_id);
+    }
+
+    context->completed = true;
+    xSemaphoreGive(context->completed_signal);
+    if (context->timed_out) {
+        ctb_route_variants_handoff_cleanup(context);
+    }
+}
+
+static ctb_route_variants_handoff_t *submit_ctb_route_variants(
+    uint32_t bus_request_id, const char *route, bus_operator_t op,
+    bus_direction_t bound, uint8_t service_type, const char *url)
+{
+    if (url == NULL || url[0] == '\0') {
+        return NULL;
+    }
+    ctb_route_variants_handoff_t *context =
+        ctb_route_variants_handoff_create(bus_request_id, route, op, bound,
+                                           service_type);
+    if (context == NULL) {
+        ESP_LOGE(TAG, "CTB route variants handoff context allocation failed bus_id=%lu",
+                 (unsigned long)bus_request_id);
+        return NULL;
+    }
+
+    crystal_http_options_t options = {
+        .url = url,
+        .timeout_ms = BUS_HTTP_TIMEOUT_MS,
+        .max_attempts = BUS_ROUTE_FETCH_ATTEMPTS,
+        .retry_backoff_ms = 500,
+        .retry_backoff_max_ms = 8000,
+        .max_body_bytes = CTB_ROUTE_VARIANT_MAX_BODY_BYTES,
+        .keep_alive = false,
+        .owner_id = CTB_ROUTE_VARIANTS_OWNER_ID,
+    };
+    context->framework_request_id = crystal_http_get(
+        &options, ctb_route_variants_handoff_callback, context);
+    if (context->framework_request_id == 0) {
+        ESP_LOGW(TAG, "CTB route variants queue failed bus_id=%lu",
+                 (unsigned long)bus_request_id);
+        ctb_route_variants_handoff_cleanup(context);
+        return NULL;
+    }
+
+    ESP_LOGI(TAG,
+             "CTB route variants submitted route=%s op=%u bound=%c service_type=%u bus_id=%lu framework_id=%lu url=%s",
+             context->route, (unsigned)context->op,
+             context->bound == BUS_DIR_INBOUND || context->bound == BUS_DIR_OUTBOUND
+                 ? (char)context->bound : '-',
+             (unsigned)context->service_type, (unsigned long)bus_request_id,
+             (unsigned long)context->framework_request_id,
+             url);
+
+    if (xSemaphoreTake(context->completed_signal,
+                       pdMS_TO_TICKS(CTB_ROUTE_VARIANT_HANDOFF_WAIT_MS)) != pdTRUE) {
+        context->timed_out = true;
+        context->cancelled = crystal_http_cancel(context->framework_request_id);
+        ESP_LOGW(TAG,
+                 "CTB route variants handoff timed out bus_id=%lu framework_id=%lu cancelled=%d",
+                 (unsigned long)bus_request_id,
+                 (unsigned long)context->framework_request_id,
+                 context->cancelled);
+        return NULL;
+    }
+
+    ESP_LOGI(TAG,
+             "CTB route variants handoff received bus_id=%lu framework_id=%lu status=%d body=%u attempts=%u error=%s",
+             (unsigned long)bus_request_id,
+             (unsigned long)context->framework_request_id,
+             context->status_code, (unsigned)context->body_len,
+             (unsigned)context->attempts, esp_err_to_name(context->transport_error));
     return context;
 }
 
@@ -799,9 +1000,13 @@ uint32_t bus_service_request_eta(const char *stop_id,
 void bus_service_cancel_all(void)
 {
     s_cancel_all = true;
-    (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
-    (void)crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
-    (void)crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
+    const size_t kmb_catalog = crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
+    const size_t ctb_route = crystal_http_cancel_owner(CTB_ROUTE_VARIANTS_OWNER_ID);
+    const size_t kmb_stops = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
+    const size_t ctb_stops = crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
+    ESP_LOGI(TAG, "All bus cancellation requested kmb_catalog=%u ctb_route=%u kmb_stops=%u ctb_stops=%u",
+             (unsigned)kmb_catalog, (unsigned)ctb_route,
+             (unsigned)kmb_stops, (unsigned)ctb_stops);
     // Clear queue
     if (s_request_queue != NULL) {
         xQueueReset(s_request_queue);
@@ -820,17 +1025,31 @@ void bus_service_network_disconnected(void)
 {
     s_network_lost = true;
     (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
+    const size_t ctb_route_cancelled =
+        crystal_http_cancel_owner(CTB_ROUTE_VARIANTS_OWNER_ID);
     const size_t kmb_cancelled = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
     const size_t ctb_cancelled = crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
-    if (kmb_cancelled > 0 || ctb_cancelled > 0) {
-        ESP_LOGW(TAG, "Network disconnected; cancelling stop requests kmb=%u ctb=%u",
-                 (unsigned)kmb_cancelled, (unsigned)ctb_cancelled);
-    }
+    ESP_LOGW(TAG,
+             "Network disconnected; bus HTTP cancellation ctb_route=%u kmb_stops=%u ctb_stops=%u",
+             (unsigned)ctb_route_cancelled, (unsigned)kmb_cancelled,
+             (unsigned)ctb_cancelled);
     esp_http_client_handle_t client = s_active_direct_client;
     if (client != NULL) {
         ESP_LOGW(TAG, "Network disconnected; cancelling active direct HTTP request");
         (void)esp_http_client_close(client);
     }
+}
+
+void bus_service_network_connected(void)
+{
+    if (!crystal_network_has_ip()) {
+        ESP_LOGW(TAG, "Network connected signal received without an IP lease");
+        return;
+    }
+    if (s_network_lost) {
+        ESP_LOGI(TAG, "Network lease restored; bus HTTP requests enabled");
+    }
+    s_network_lost = false;
 }
 
 // Worker task
@@ -996,6 +1215,58 @@ typedef struct {
     uint16_t reserved2;
 } route_cache_header_t;
 
+static bool route_variant_record_valid(const bus_route_variant_t *variant)
+{
+    if (variant == NULL || memchr(variant->route, '\0', sizeof(variant->route)) == NULL ||
+        variant->route[0] == '\0' || variant->op > BUS_OP_NWFB ||
+        (variant->bound != BUS_DIR_INBOUND &&
+         variant->bound != BUS_DIR_OUTBOUND) || variant->service_type == 0) {
+        return false;
+    }
+    return memchr(variant->orig_en, '\0', sizeof(variant->orig_en)) != NULL &&
+           memchr(variant->dest_en, '\0', sizeof(variant->dest_en)) != NULL &&
+           memchr(variant->orig_tc, '\0', sizeof(variant->orig_tc)) != NULL &&
+           memchr(variant->dest_tc, '\0', sizeof(variant->dest_tc)) != NULL;
+}
+
+static bool route_variant_identity_equal(const bus_route_variant_t *left,
+                                         const bus_route_variant_t *right)
+{
+    return left != NULL && right != NULL &&
+           strcmp(left->route, right->route) == 0 && left->op == right->op &&
+           left->bound == right->bound &&
+           left->service_type == right->service_type;
+}
+
+static bool parse_route_service_type(const cJSON *value, uint8_t *out)
+{
+    if (out == NULL) return false;
+    if (value == NULL) {
+        *out = 1;
+        return true;
+    }
+    long parsed = 0;
+    if (cJSON_IsNumber(value)) {
+        if (value->valuedouble < 1.0 || value->valuedouble > UINT8_MAX ||
+            value->valuedouble != (double)(long)value->valuedouble) {
+            return false;
+        }
+        parsed = (long)value->valuedouble;
+    } else if (cJSON_IsString(value) && value->valuestring != NULL &&
+               value->valuestring[0] != '\0') {
+        char *end = NULL;
+        parsed = strtol(value->valuestring, &end, 10);
+        if (end == value->valuestring || *end != '\0' || parsed < 1 ||
+            parsed > UINT8_MAX) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    *out = (uint8_t)parsed;
+    return true;
+}
+
 static bool load_route_catalog_cache(void)
 {
     FILE *file = fopen(ROUTE_CACHE_PATH, "rb");
@@ -1047,7 +1318,8 @@ static bool load_route_catalog_cache(void)
         return false;
     }
     for (uint16_t i = 0; i < header.variant_count; i++) {
-        if (fread(&s_route_variants[i], sizeof(s_route_variants[i]), 1, file) != 1) {
+        if (fread(&s_route_variants[i], sizeof(s_route_variants[i]), 1, file) != 1 ||
+            !route_variant_record_valid(&s_route_variants[i])) {
             bus_route_catalog_reset();
             free(s_route_variants);
             s_route_variants = NULL;
@@ -1056,6 +1328,23 @@ static bool load_route_catalog_cache(void)
             ESP_LOGW(TAG, "Route catalog cache: truncated variant data");
             return false;
         }
+        for (uint16_t previous = 0; previous < i; previous++) {
+            if (route_variant_identity_equal(&s_route_variants[previous],
+                                             &s_route_variants[i])) {
+                bus_route_catalog_reset();
+                free(s_route_variants);
+                s_route_variants = NULL;
+                s_route_variant_count = 0;
+                fclose(file);
+                ESP_LOGW(TAG, "Route catalog cache: duplicate variant identity");
+                return false;
+            }
+        }
+        // The cache can contain a few thousand variants. Yield periodically
+        // while validating identities so this worker does not starve IDLE.
+        if ((i & 0x3Fu) == 0x3Fu) {
+            vTaskDelay(1);
+        }
     }
     s_route_variant_count = header.variant_count;
     s_route_cache_fetched_at = (time_t)header.fetched_at;
@@ -1063,18 +1352,40 @@ static bool load_route_catalog_cache(void)
     fclose(file);
     const time_t now = time(NULL);
     if (s_route_cache_fetched_at > 0 && now > s_route_cache_fetched_at) {
-        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes (%ld days old)",
-                 bus_route_catalog_count(),
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants mask=0x%02x (%ld days old)",
+                 bus_route_catalog_count(), (unsigned)s_route_variant_count,
+                 (unsigned)s_route_cache_provider_mask,
                  (long)((now - s_route_cache_fetched_at) / 86400));
     } else {
-        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes (clock unavailable)",
-                 bus_route_catalog_count());
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants mask=0x%02x (clock unavailable)",
+                 bus_route_catalog_count(), (unsigned)s_route_variant_count,
+                 (unsigned)s_route_cache_provider_mask);
     }
     return true;
 }
 
 static bool save_route_catalog_cache(uint8_t provider_mask)
 {
+    if (s_route_variant_count > 0 && s_route_variants == NULL) {
+        ESP_LOGE(TAG, "Route catalog cache: missing variant store");
+        return false;
+    }
+    for (uint16_t i = 0; i < s_route_variant_count; i++) {
+        if (!route_variant_record_valid(&s_route_variants[i])) {
+            ESP_LOGE(TAG, "Route catalog cache: invalid variant at %u", i);
+            return false;
+        }
+        for (uint16_t previous = 0; previous < i; previous++) {
+            if (route_variant_identity_equal(&s_route_variants[previous],
+                                             &s_route_variants[i])) {
+                ESP_LOGE(TAG, "Route catalog cache: duplicate variant at %u", i);
+                return false;
+            }
+        }
+        if ((i & 0x3Fu) == 0x3Fu) {
+            vTaskDelay(1);
+        }
+    }
     FILE *file = fopen(ROUTE_CACHE_TEMP_PATH, "wb");
     if (file == NULL) {
         ESP_LOGE(TAG, "Route catalog cache: cannot open temporary file (errno=%d)", errno);
@@ -1130,18 +1441,57 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
     return ok;
 }
 
+static bool route_variant_has_terminals(const bus_route_variant_t *variant)
+{
+    return variant != NULL &&
+           (variant->orig_en[0] != '\0' || variant->dest_en[0] != '\0' ||
+            variant->orig_tc[0] != '\0' || variant->dest_tc[0] != '\0');
+}
+
+static bool append_normalized_route_variant(const bus_route_variant_t *candidate)
+{
+    if (candidate == NULL || s_route_variants == NULL ||
+        candidate->route[0] == '\0' ||
+        strlen(candidate->route) >= sizeof(candidate->route) ||
+        (candidate->bound != BUS_DIR_INBOUND &&
+         candidate->bound != BUS_DIR_OUTBOUND) || candidate->service_type == 0) {
+        return false;
+    }
+    for (uint16_t i = 0; i < s_route_variant_count; i++) {
+        bus_route_variant_t *existing = &s_route_variants[i];
+        if (strcmp(existing->route, candidate->route) == 0 &&
+            existing->op == candidate->op &&
+            existing->bound == candidate->bound &&
+            existing->service_type == candidate->service_type) {
+            // A later explicit provider record may complete an earlier
+            // direction-only placeholder, but duplicates remain stable.
+            if (!route_variant_has_terminals(existing) &&
+                route_variant_has_terminals(candidate)) {
+                *existing = *candidate;
+            }
+            return false;
+        }
+    }
+    if (s_route_variant_count >= ROUTE_VARIANT_CAPACITY) {
+        return false;
+    }
+    s_route_variants[s_route_variant_count++] = *candidate;
+    return true;
+}
+
 static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
 {
-    if (item == NULL || s_route_variants == NULL || s_route_variant_count >= ROUTE_VARIANT_CAPACITY) {
+    if (item == NULL || s_route_variants == NULL) {
         return 0;
     }
 
     cJSON *route = cJSON_GetObjectItem(item, "route");
-    if (!cJSON_IsString(route) || route->valuestring[0] == '\0' || strlen(route->valuestring) >= sizeof(s_route_variants[0].route)) {
+    if (!cJSON_IsString(route) || route->valuestring[0] == '\0' ||
+        strlen(route->valuestring) >= sizeof(s_route_variants[0].route)) {
         return 0;
     }
     char normalized_route[sizeof(s_route_variants[0].route)] = {0};
-    for (size_t i = 0; i < strlen(route->valuestring); i++) {
+    for (size_t i = 0; route->valuestring[i] != '\0'; i++) {
         normalized_route[i] = (char)toupper((unsigned char)route->valuestring[i]);
     }
 
@@ -1154,50 +1504,46 @@ static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
     const bool has_bound = cJSON_IsString(bound) &&
                            (bound->valuestring[0] == BUS_DIR_INBOUND ||
                             bound->valuestring[0] == BUS_DIR_OUTBOUND);
-    const uint8_t variant_service_type = cJSON_IsNumber(service_type)
-        ? (uint8_t)service_type->valueint : 1;
-    const char *orig_en_value = cJSON_IsString(orig_en) ? orig_en->valuestring : "";
-    const char *dest_en_value = cJSON_IsString(dest_en) ? dest_en->valuestring : "";
-    const char *orig_tc_value = cJSON_IsString(orig_tc) ? orig_tc->valuestring : "";
-    const char *dest_tc_value = cJSON_IsString(dest_tc) ? dest_tc->valuestring : "";
+    uint8_t variant_service_type = 1;
+    if (!parse_route_service_type(service_type, &variant_service_type)) {
+        return 0;
+    }
     if (op == BUS_OP_KMB && !has_bound) {
         return 0;
     }
-    const uint8_t direction_count = has_bound ? 1 : 2;
+
+    bus_route_variant_t candidate = {0};
+    strlcpy(candidate.route, normalized_route, sizeof(candidate.route));
+    candidate.op = op;
+    candidate.service_type = variant_service_type;
     const char directions[2] = {BUS_DIR_INBOUND, BUS_DIR_OUTBOUND};
+    const uint8_t direction_count = has_bound ? 1u : 2u;
     uint16_t appended = 0;
-
-    for (uint8_t direction_index = 0; direction_index < direction_count; direction_index++) {
-        const char direction = has_bound ? bound->valuestring[0] : directions[direction_index];
-        bool duplicate = false;
-        for (uint16_t i = 0; i < s_route_variant_count; i++) {
-            if (strcmp(s_route_variants[i].route, normalized_route) == 0 &&
-                s_route_variants[i].op == op &&
-                s_route_variants[i].bound == direction &&
-                s_route_variants[i].service_type == variant_service_type) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate || s_route_variant_count >= ROUTE_VARIANT_CAPACITY) {
-            continue;
-        }
-
-        bus_route_variant_t *variant = &s_route_variants[s_route_variant_count++];
-        strlcpy(variant->route, normalized_route, sizeof(variant->route));
-        variant->op = op;
-        variant->bound = direction;
-        variant->service_type = variant_service_type;
-        // CTB route catalog records without a bound do not identify a
-        // direction-specific destination. Keep those choices empty rather
-        // than copying a KMB destination into the CTB identity.
+    for (uint8_t direction_index = 0; direction_index < direction_count;
+         direction_index++) {
+        memset(candidate.orig_en, 0, sizeof(candidate.orig_en));
+        memset(candidate.dest_en, 0, sizeof(candidate.dest_en));
+        memset(candidate.orig_tc, 0, sizeof(candidate.orig_tc));
+        memset(candidate.dest_tc, 0, sizeof(candidate.dest_tc));
+        candidate.bound = has_bound ? bound->valuestring[0]
+                                    : directions[direction_index];
         if (has_bound || op == BUS_OP_KMB) {
-            strlcpy(variant->orig_en, orig_en_value, sizeof(variant->orig_en));
-            strlcpy(variant->dest_en, dest_en_value, sizeof(variant->dest_en));
-            strlcpy(variant->orig_tc, orig_tc_value, sizeof(variant->orig_tc));
-            strlcpy(variant->dest_tc, dest_tc_value, sizeof(variant->dest_tc));
+            strlcpy(candidate.orig_en,
+                    cJSON_IsString(orig_en) ? orig_en->valuestring : "",
+                    sizeof(candidate.orig_en));
+            strlcpy(candidate.dest_en,
+                    cJSON_IsString(dest_en) ? dest_en->valuestring : "",
+                    sizeof(candidate.dest_en));
+            strlcpy(candidate.orig_tc,
+                    cJSON_IsString(orig_tc) ? orig_tc->valuestring : "",
+                    sizeof(candidate.orig_tc));
+            strlcpy(candidate.dest_tc,
+                    cJSON_IsString(dest_tc) ? dest_tc->valuestring : "",
+                    sizeof(candidate.dest_tc));
         }
-        appended++;
+        if (append_normalized_route_variant(&candidate)) {
+            appended++;
+        }
     }
     return appended;
 }
@@ -1239,56 +1585,21 @@ static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
     return fetched;
 }
 
-static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t op, uint32_t request_id)
+static uint16_t resolve_ctb_route_provider_body(const char *label,
+                                                const uint8_t *body,
+                                                size_t body_len,
+                                                uint32_t request_id)
 {
-    cJSON *root = NULL;
-    for (uint8_t attempt = 1; attempt <= BUS_ROUTE_FETCH_ATTEMPTS; attempt++) {
-        if (s_network_lost) {
-            ESP_LOGW(TAG, "Route catalog: %s request cancelled by network loss", label);
-            break;
-        }
-        bus_event_t progress = {0};
-        progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
-        progress.request_id = request_id;
-        snprintf(progress.data.route_catalog_progress.message,
-                 sizeof(progress.data.route_catalog_progress.message),
-                 "Downloading %s route data...\nPlease wait", label);
-        post_event(&progress);
-        ESP_LOGI(TAG, "Route catalog: downloading data from %s API %s (attempt %u/%u)",
-                 label, url, (unsigned)attempt, (unsigned)BUS_ROUTE_FETCH_ATTEMPTS);
-        if (http_get_json(url, &root) == ESP_OK && root != NULL) {
-            ESP_LOGI(TAG, "Route catalog: data downloaded from %s API", label);
-            bus_event_t downloaded = {0};
-            downloaded.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
-            downloaded.request_id = request_id;
-            snprintf(downloaded.data.route_catalog_progress.message,
-                     sizeof(downloaded.data.route_catalog_progress.message),
-                     "%s data downloaded\nResolving route data...", label);
-            post_event(&downloaded);
-            break;
-        }
-        root = NULL;
-        if (s_network_lost) {
-            ESP_LOGW(TAG, "Route catalog: %s retry cancelled by network loss", label);
-            break;
-        }
-        if (attempt < BUS_ROUTE_FETCH_ATTEMPTS) {
-            ESP_LOGW(TAG, "Route catalog: %s request failed; retrying", label);
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
-    }
-    if (root == NULL) {
-        if (s_network_lost) {
-            ESP_LOGW(TAG, "Route catalog: %s fetch cancelled by network loss", label);
-        } else {
-            ESP_LOGE(TAG, "Route catalog: %s fetch failed after %u attempts",
-                     label, BUS_ROUTE_FETCH_ATTEMPTS);
-        }
+    bus_route_variant_t *variants = NULL;
+    uint16_t variant_count = 0;
+    const esp_err_t parse_status = bus_ctb_parse_route_variants(
+        body, body_len, NULL, &variants, &variant_count);
+    if (parse_status != ESP_OK) {
+        ESP_LOGW(TAG, "Route catalog: %s variant parse failed status=%s",
+                 label, esp_err_to_name(parse_status));
         return 0;
     }
 
-    cJSON *data = cJSON_GetObjectItem(root, "data");
-    uint16_t fetched = 0;
     bus_event_t progress = {0};
     progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
     progress.request_id = request_id;
@@ -1296,27 +1607,71 @@ static uint16_t fetch_route_provider(const char *label, const char *url, uint8_t
              sizeof(progress.data.route_catalog_progress.message),
              "Resolving %s route data...\nPlease wait", label);
     post_event(&progress);
-    ESP_LOGI(TAG, "Route catalog: resolving %s data", label);
-    if (cJSON_IsArray(data)) {
-        const int count = cJSON_GetArraySize(data);
-        for (int i = 0; i < count; i++) {
-            cJSON *item = cJSON_GetArrayItem(data, i);
-            cJSON *route = item != NULL ? cJSON_GetObjectItem(item, "route") : NULL;
-            if (route != NULL && cJSON_IsString(route) &&
-                bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
-                fetched++;
-            }
-            (void)append_route_variants_from_item(
-                item, op == (1u << BUS_OP_KMB) ? BUS_OP_KMB : BUS_OP_CTB);
+
+    uint16_t fetched = 0;
+    for (uint16_t i = 0; i < variant_count; i++) {
+        if (bus_route_catalog_add(variants[i].route,
+                                  strlen(variants[i].route),
+                                  1u << BUS_OP_CTB)) {
+            fetched++;
         }
+        (void)append_normalized_route_variant(&variants[i]);
     }
-    cJSON_Delete(root);
-    if (fetched == 0) {
-        ESP_LOGE(TAG, "Route catalog: %s returned no routes", label);
+    free(variants);
+    ESP_LOGI(TAG,
+             "Route catalog: resolved %u %s route records (%u provider variants)",
+             fetched, label, s_route_variant_count);
+    return fetched;
+}
+
+static uint16_t fetch_ctb_route_provider(const char *label, const char *url,
+                                         uint32_t request_id)
+{
+    if (label == NULL || url == NULL) {
+        return 0;
+    }
+
+    bus_event_t progress = {0};
+    progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+    progress.request_id = request_id;
+    snprintf(progress.data.route_catalog_progress.message,
+             sizeof(progress.data.route_catalog_progress.message),
+             "Downloading %s route data...\nPlease wait", label);
+    post_event(&progress);
+    ESP_LOGI(TAG,
+             "Route catalog: downloading data from %s API %s through crystal_http",
+             label, url);
+
+    // This is one framework request. Retry attempts, response buffering, and
+    // response release remain owned by crystal_http and the handoff callback.
+    ctb_route_variants_handoff_t *context = submit_ctb_route_variants(
+        request_id, "", BUS_OP_CTB, (bus_direction_t)0, 1, url);
+    if (context == NULL) {
+        ESP_LOGE(TAG, "Route catalog: %s handoff failed", label);
+        return 0;
+    }
+
+    uint16_t fetched = 0;
+    if (context->body != NULL && context->body_len > 0 &&
+        context->status_code == 200 && context->transport_error == ESP_OK) {
+        progress = (bus_event_t){0};
+        progress.type = BUS_EVT_ROUTE_CATALOG_PROGRESS;
+        progress.request_id = request_id;
+        snprintf(progress.data.route_catalog_progress.message,
+                 sizeof(progress.data.route_catalog_progress.message),
+                 "%s data downloaded\nResolving route data...", label);
+        post_event(&progress);
+        fetched = resolve_ctb_route_provider_body(label, context->body,
+                                                  context->body_len,
+                                                  request_id);
     } else {
-        ESP_LOGI(TAG, "Route catalog: resolved %u %s route records (%u provider variants)",
-                 fetched, label, s_route_variant_count);
+        ESP_LOGW(TAG,
+                 "Route catalog: %s transport failed status=%d body=%u error=%s",
+                 label, context->status_code, (unsigned)context->body_len,
+                 esp_err_to_name(context->transport_error));
     }
+
+    ctb_route_variants_handoff_cleanup(context);
     return fetched;
 }
 
@@ -1354,8 +1709,8 @@ static void process_route_catalog_request(const bus_request_t *req)
 
     // The framework-owned KMB response is parsed before its handoff is released.
     const uint16_t kmb_count = submit_kmb_catalog(req->id);
-    const uint16_t ctb_count = fetch_route_provider(
-        "CTB", CTB_BASE_URL "/route/ctb", 2u, req->id);
+    const uint16_t ctb_count = fetch_ctb_route_provider(
+        "CTB", CTB_ROUTE_VARIANT_REQUEST_URL, req->id);
     const bool cancelled_by_network = s_network_lost;
     const uint8_t succeeded = (kmb_count > 0 ? 1 : 0) + (ctb_count > 0 ? 1 : 0);
     const uint8_t failed = 2 - succeeded;
@@ -1521,7 +1876,9 @@ static void process_stops_request(const bus_request_t *req)
             }
             event.type = BUS_EVT_ERROR;
             event.status = failure_status;
-            strlcpy(event.data.error.message, "Failed to fetch stops",
+            strlcpy(event.data.error.message,
+                    failure_status == ESP_ERR_INVALID_STATE || s_network_lost
+                        ? "Waiting for network" : "Failed to fetch stops",
                     sizeof(event.data.error.message));
             post_event(&event);
             return;
@@ -1531,19 +1888,24 @@ static void process_stops_request(const bus_request_t *req)
             ? "outbound" : "inbound";
         snprintf(url, sizeof(url), "%s/route-stop/CTB/%s/%s",
                  CTB_STOPS_BASE_URL, req->route, direction);
-        ESP_LOGI(TAG, "CTB stops: submitting %s", url);
+        ESP_LOGI(TAG, "CTB stops: submitting route=%s op=%u bound=%c service_type=%u url=%s",
+                 req->route, (unsigned)req->op, req->bound,
+                 (unsigned)req->service_type, url);
         ctb_handoff = submit_ctb_stops(req, url);
         if (ctb_handoff == NULL) {
             event.type = BUS_EVT_ERROR;
             event.status = ESP_FAIL;
-            strlcpy(event.data.error.message, "Failed to fetch stops",
+            strlcpy(event.data.error.message,
+                    s_network_lost || !crystal_network_has_ip()
+                        ? "Waiting for network" : "Failed to fetch stops",
                     sizeof(event.data.error.message));
             post_event(&event);
             return;
         }
 
-        ESP_LOGI(TAG, "CTB stops transport complete route=%s bound=%c status=%d body=%u attempts=%u error=%s",
-                 req->route, req->bound, ctb_handoff->status_code,
+        ESP_LOGI(TAG, "CTB stops transport complete route=%s op=%u bound=%c service_type=%u status=%d body=%u attempts=%u error=%s",
+                 req->route, (unsigned)req->op, req->bound,
+                 (unsigned)req->service_type, ctb_handoff->status_code,
                  (unsigned)ctb_handoff->body_len,
                  (unsigned)ctb_handoff->attempts,
                  esp_err_to_name(ctb_handoff->transport_error));
@@ -1556,7 +1918,9 @@ static void process_stops_request(const bus_request_t *req)
             ctb_handoff = NULL;
             event.type = BUS_EVT_ERROR;
             event.status = failure_status;
-            strlcpy(event.data.error.message, "Failed to fetch stops",
+            strlcpy(event.data.error.message,
+                    failure_status == ESP_ERR_INVALID_STATE || s_network_lost
+                        ? "Waiting for network" : "Failed to fetch stops",
                     sizeof(event.data.error.message));
             post_event(&event);
             return;
@@ -1568,8 +1932,9 @@ static void process_stops_request(const bus_request_t *req)
             ctb_handoff->body, ctb_handoff->body_len, req->route,
             (bus_direction_t)req->bound, req->service_type,
             &stops, &stop_count);
-        ESP_LOGI(TAG, "CTB stops parsed route=%s bound=%c status=%s count=%u",
-                 req->route, req->bound, esp_err_to_name(parse_status),
+        ESP_LOGI(TAG, "CTB stops parsed route=%s op=%u bound=%c service_type=%u status=%s count=%u",
+                 req->route, (unsigned)req->op, req->bound,
+                 (unsigned)req->service_type, esp_err_to_name(parse_status),
                  (unsigned)stop_count);
         ctb_stops_handoff_cleanup(ctb_handoff);
         ctb_handoff = NULL;

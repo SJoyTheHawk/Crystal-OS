@@ -1,0 +1,22 @@
+{
+  "type": "RouteList",
+  "version": "2.0",
+  "data": [
+    {
+      "co": "CTB",
+      "route": "969",
+      "bound": "I",
+      "service_type": 1,
+      "orig_en": "First origin",
+      "dest_en": "First destination"
+    },
+    {
+      "co": "CTB",
+      "route": "969",
+      "bound": "I",
+      "service_type": 1,
+      "orig_en": "Second origin",
+      "dest_en": "Second destination"
+    }
+  ]
+}

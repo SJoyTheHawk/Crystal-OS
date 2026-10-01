@@ -1,6 +1,6 @@
 # Tracked Slice 2 Code Guide — CTB Route Variants and Destinations
 
-**Status:** Ready for implementation, one gate at a time  
+**Status:** S2.5 lifecycle guards implemented; target-device acceptance remains
 **Plan:** [Tracked Slice 2 implementation plan](crystal-http-phase5-slice2-ctb-route-variants-plan.md)
 
 This guide is the executable companion to the Slice 2 plan. Do not implement
@@ -27,7 +27,7 @@ until the callback releases it exactly once.
 **Files:** documentation and a redacted fixture only.
 
 1. Identify the CTB route-variant URL already used or documented by the
-   provider. Do not assume `/route/ctb` supplies a direction association.
+   provider. Do not assume `/route/CTB` supplies a direction association.
 2. Capture one route with different inbound and outbound terminals.
 3. Record the exact JSON names and types for route, operator, bound, service
    type, origin, destination, and language fields.
@@ -69,7 +69,8 @@ Add a route-variant parser with these outcomes:
 - duplicate `route + bound + service_type` records collapse deterministically.
 
 Keep this parser independent of the transport and app. Extend the host checker
-or add a focused checker so every fixture can be run without an ESP32.
+or add a focused checker so every fixture can be run without an ESP32. The
+focused route-variant checker is `tools/ctb_route_variant_check.c`.
 
 **Gate:** Fixture output shows exact route, CTB operator, bound, service type,
 origin, destination, and language fields; every allocated output has one free.
@@ -108,6 +109,9 @@ fields visibly empty or use the existing placeholder; do not copy KMB text.
 show the selected CTB identity matching the route-stop URL and result identity.
 
 ## S2.5 — Exercise cancellation, stale identity, and reload
+
+The acceptance matrix and required log lines are tracked in
+[Slice 2 Step 2.5 lifecycle evidence](crystal-http-phase5-slice2-step2-5.md).
 
 Repeat these cases on the target device:
 

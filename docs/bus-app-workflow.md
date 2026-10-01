@@ -79,7 +79,7 @@ FUNCTION initialize_bus_data():
         
         // Download and normalize static data
         kmb_routes = fetch_and_parse("kmb/route")
-        ctb_routes = fetch_and_parse("ctb/route/ctb")
+        ctb_routes = fetch_and_parse("ctb/route/CTB")
         nwfb_routes = fetch_and_parse("ctb/route/nwfb")
         
         all_routes = normalize_routes(kmb_routes + ctb_routes + nwfb_routes)
