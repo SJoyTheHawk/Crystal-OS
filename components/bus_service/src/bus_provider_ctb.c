@@ -8,6 +8,7 @@
 #include <ctype.h>
 
 #include "cJSON.h"
+#include "bus_normalize.h"
 
 #ifdef CRYSTAL_CTB_PARSER_HOST
 static void *ctb_calloc(size_t count, size_t size)
@@ -169,62 +170,6 @@ static bool ctb_route_field(const cJSON *item, const char *name,
     return true;
 }
 
-static bool ctb_route_direction(const cJSON *value, char *bound, bool *present)
-{
-    if (bound == NULL || present == NULL) {
-        return false;
-    }
-    *present = value != NULL;
-    if (value == NULL) {
-        return true;
-    }
-    if (!cJSON_IsString(value) || value->valuestring == NULL) {
-        return false;
-    }
-    if (strcasecmp(value->valuestring, "I") == 0 ||
-        strcasecmp(value->valuestring, "inbound") == 0) {
-        *bound = BUS_DIR_INBOUND;
-        return true;
-    }
-    if (strcasecmp(value->valuestring, "O") == 0 ||
-        strcasecmp(value->valuestring, "outbound") == 0) {
-        *bound = BUS_DIR_OUTBOUND;
-        return true;
-    }
-    return false;
-}
-
-static bool ctb_route_service_type(const cJSON *value, uint8_t *service_type)
-{
-    if (service_type == NULL) {
-        return false;
-    }
-    if (value == NULL) {
-        *service_type = 1;
-        return true;
-    }
-    long parsed = 0;
-    if (cJSON_IsNumber(value)) {
-        if (value->valuedouble < 1.0 || value->valuedouble > UINT8_MAX ||
-            value->valuedouble != (double)(long)value->valuedouble) {
-            return false;
-        }
-        parsed = (long)value->valuedouble;
-    } else if (cJSON_IsString(value) && value->valuestring != NULL &&
-               value->valuestring[0] != '\0') {
-        char *end = NULL;
-        parsed = strtol(value->valuestring, &end, 10);
-        if (end == value->valuestring || *end != '\0' || parsed < 1 ||
-            parsed > UINT8_MAX) {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    *service_type = (uint8_t)parsed;
-    return true;
-}
-
 static bool ctb_variant_has_terminals(const bus_route_variant_t *variant)
 {
     return variant != NULL &&
@@ -264,17 +209,75 @@ static bool ctb_variant_append(bus_route_variant_t *variants, uint16_t *count,
     return true;
 }
 
-esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
-                                       size_t len,
-                                       const char *route_filter,
-                                       bus_route_variant_t **out,
-                                       uint16_t *count)
+static bool ctb_metadata_pair_has_text(const bus_route_terminal_pair_t *pair)
 {
-    if (body == NULL || len == 0 || out == NULL || count == NULL) {
+    return pair != NULL && (pair->orig_en[0] != '\0' || pair->dest_en[0] != '\0' ||
+                             pair->orig_tc[0] != '\0' || pair->dest_tc[0] != '\0');
+}
+
+static bool ctb_metadata_pair_equal(const bus_route_terminal_pair_t *left,
+                                    const bus_route_terminal_pair_t *right)
+{
+    return left != NULL && right != NULL &&
+           strcmp(left->orig_en, right->orig_en) == 0 &&
+           strcmp(left->dest_en, right->dest_en) == 0 &&
+           strcmp(left->orig_tc, right->orig_tc) == 0 &&
+           strcmp(left->dest_tc, right->dest_tc) == 0;
+}
+
+static void ctb_metadata_append(bus_route_metadata_t *metadata,
+                                uint16_t *count, uint16_t capacity,
+                                const char *route, uint8_t service_type,
+                                const bus_route_terminal_pair_t *pair)
+{
+    if (metadata == NULL || count == NULL || route == NULL || pair == NULL ||
+        !ctb_metadata_pair_has_text(pair) || service_type == 0) {
+        return;
+    }
+    for (uint16_t i = 0; i < *count; i++) {
+        bus_route_metadata_t *entry = &metadata[i];
+        if (strcmp(entry->route, route) != 0 || entry->op != BUS_OP_CTB ||
+            entry->service_type != service_type) {
+            continue;
+        }
+        for (uint8_t p = 0; p < entry->pair_count; p++) {
+            if (ctb_metadata_pair_equal(&entry->pairs[p], pair)) {
+                return;
+            }
+        }
+        if (entry->pair_count < BUS_ROUTE_METADATA_PAIR_CAPACITY) {
+            entry->pairs[entry->pair_count++] = *pair;
+        }
+        return;
+    }
+    if (*count >= capacity) {
+        return;
+    }
+    bus_route_metadata_t *entry = &metadata[(*count)++];
+    memset(entry, 0, sizeof(*entry));
+    ctb_copy(entry->route, sizeof(entry->route), route);
+    entry->op = BUS_OP_CTB;
+    entry->service_type = service_type;
+    entry->pair_count = 1;
+    entry->pairs[0] = *pair;
+}
+
+esp_err_t bus_ctb_parse_route_catalog(const uint8_t *body,
+                                      size_t len,
+                                      const char *route_filter,
+                                      bus_route_variant_t **out,
+                                      uint16_t *count,
+                                      bus_route_metadata_t **metadata_out,
+                                      uint16_t *metadata_count)
+{
+    if (body == NULL || len == 0 || out == NULL || count == NULL ||
+        metadata_out == NULL || metadata_count == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     *out = NULL;
     *count = 0;
+    *metadata_out = NULL;
+    *metadata_count = 0;
 
     cJSON *root = cJSON_ParseWithLength((const char *)body, len);
     if (root == NULL) {
@@ -301,17 +304,21 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
         cJSON_Delete(root);
         return ESP_ERR_NO_MEM;
     }
+    bus_route_metadata_t *metadata = ctb_calloc((size_t)item_count,
+                                                 sizeof(*metadata));
+    if (metadata == NULL) {
+        free(variants);
+        cJSON_Delete(root);
+        return ESP_ERR_NO_MEM;
+    }
 
     char normalized_filter[sizeof(variants[0].route)] = {0};
     if (route_filter != NULL && route_filter[0] != '\0') {
-        if (strlen(route_filter) >= sizeof(normalized_filter)) {
+        if (!bus_normalize_route_label(route_filter, normalized_filter)) {
             free(variants);
+            free(metadata);
             cJSON_Delete(root);
             return ESP_ERR_INVALID_ARG;
-        }
-        for (size_t i = 0; route_filter[i] != '\0'; i++) {
-            normalized_filter[i] =
-                (char)toupper((unsigned char)route_filter[i]);
         }
     }
 
@@ -325,16 +332,13 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
         cJSON *co = cJSON_GetObjectItem(item, "co");
         cJSON *route = cJSON_GetObjectItem(item, "route");
         if (!cJSON_IsString(co) || strcmp(co->valuestring, "CTB") != 0 ||
-            !cJSON_IsString(route) || route->valuestring == NULL ||
-            route->valuestring[0] == '\0' ||
-            strlen(route->valuestring) >= sizeof(variants[0].route)) {
+            !cJSON_IsString(route) || route->valuestring == NULL) {
             continue;
         }
 
         char normalized_route[sizeof(variants[0].route)] = {0};
-        for (size_t j = 0; route->valuestring[j] != '\0'; j++) {
-            normalized_route[j] =
-                (char)toupper((unsigned char)route->valuestring[j]);
+        if (!bus_normalize_route_label(route->valuestring, normalized_route)) {
+            continue;
         }
         if (normalized_filter[0] != '\0' &&
             strcmp(normalized_filter, normalized_route) != 0) {
@@ -343,16 +347,40 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
 
         char bound = 0;
         bool bound_present = false;
-        if (!ctb_route_direction(cJSON_GetObjectItem(item, "bound"),
-                                 &bound, &bound_present) ||
-            (!bound_present &&
-             !ctb_route_direction(cJSON_GetObjectItem(item, "dir"),
-                                  &bound, &bound_present))) {
+        cJSON *bound_value = cJSON_GetObjectItem(item, "bound");
+        if (bound_value == NULL) {
+            bound_value = cJSON_GetObjectItem(item, "dir");
+        }
+        if (bound_value != NULL && !cJSON_IsString(bound_value)) {
             continue;
         }
+        if (!bus_normalize_direction(
+                cJSON_IsString(bound_value) ? bound_value->valuestring : NULL,
+                &bound)) {
+            continue;
+        }
+        bound_present = bound != 0;
         uint8_t service_type = 1;
-        if (!ctb_route_service_type(cJSON_GetObjectItem(item, "service_type"),
-                                    &service_type)) {
+        cJSON *service_value = cJSON_GetObjectItem(item, "service_type");
+        char service_text[4] = {0};
+        if (service_value != NULL && cJSON_IsNumber(service_value)) {
+            if (service_value->valuedouble < 1.0 ||
+                service_value->valuedouble > UINT8_MAX ||
+                service_value->valuedouble != (double)service_value->valueint) {
+                continue;
+            }
+            snprintf(service_text, sizeof(service_text), "%u",
+                     (unsigned)service_value->valueint);
+        } else if (service_value != NULL && cJSON_IsString(service_value)) {
+            if (strlen(service_value->valuestring) >= sizeof(service_text)) {
+                continue;
+            }
+            ctb_copy(service_text, sizeof(service_text), service_value->valuestring);
+        } else if (service_value != NULL) {
+            continue;
+        }
+        if (!bus_normalize_service_type(service_text, service_value != NULL,
+                                         true, &service_type)) {
             continue;
         }
 
@@ -367,6 +395,16 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
             continue;
         }
 
+        bus_route_terminal_pair_t pair = {0};
+        if (!bus_normalize_text(orig_en, pair.orig_en, sizeof(pair.orig_en), true) ||
+            !bus_normalize_text(dest_en, pair.dest_en, sizeof(pair.dest_en), true) ||
+            !bus_normalize_text(orig_tc, pair.orig_tc, sizeof(pair.orig_tc), true) ||
+            !bus_normalize_text(dest_tc, pair.dest_tc, sizeof(pair.dest_tc), true)) {
+            continue;
+        }
+        ctb_metadata_append(metadata, metadata_count, (uint16_t)item_count,
+                            normalized_route, service_type, &pair);
+
         const char directions[2] = {BUS_DIR_INBOUND, BUS_DIR_OUTBOUND};
         const uint8_t direction_count = bound_present ? 1u : 2u;
         for (uint8_t direction_index = 0; direction_index < direction_count;
@@ -377,10 +415,16 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
             candidate.bound = bound_present ? bound : directions[direction_index];
             candidate.service_type = service_type;
             if (bound_present) {
-                ctb_copy(candidate.orig_en, sizeof(candidate.orig_en), orig_en);
-                ctb_copy(candidate.dest_en, sizeof(candidate.dest_en), dest_en);
-                ctb_copy(candidate.orig_tc, sizeof(candidate.orig_tc), orig_tc);
-                ctb_copy(candidate.dest_tc, sizeof(candidate.dest_tc), dest_tc);
+                if (!bus_normalize_text(orig_en, candidate.orig_en,
+                                        sizeof(candidate.orig_en), true) ||
+                    !bus_normalize_text(dest_en, candidate.dest_en,
+                                        sizeof(candidate.dest_en), true) ||
+                    !bus_normalize_text(orig_tc, candidate.orig_tc,
+                                        sizeof(candidate.orig_tc), true) ||
+                    !bus_normalize_text(dest_tc, candidate.dest_tc,
+                                        sizeof(candidate.dest_tc), true)) {
+                    continue;
+                }
             }
             (void)ctb_variant_append(variants, &valid_count, capacity,
                                      &candidate);
@@ -390,9 +434,31 @@ esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
     cJSON_Delete(root);
     if (valid_count == 0) {
         free(variants);
+        variants = NULL;
+    }
+    if (*metadata_count == 0) {
+        free(metadata);
+        metadata = NULL;
+    }
+    if (valid_count == 0 && metadata == NULL) {
         return ESP_ERR_INVALID_RESPONSE;
     }
     *out = variants;
     *count = valid_count;
+    *metadata_out = metadata;
     return ESP_OK;
+}
+
+esp_err_t bus_ctb_parse_route_variants(const uint8_t *body,
+                                       size_t len,
+                                       const char *route_filter,
+                                       bus_route_variant_t **out,
+                                       uint16_t *count)
+{
+    bus_route_metadata_t *metadata = NULL;
+    uint16_t metadata_count = 0;
+    const esp_err_t status = bus_ctb_parse_route_catalog(
+        body, len, route_filter, out, count, &metadata, &metadata_count);
+    free(metadata);
+    return status;
 }

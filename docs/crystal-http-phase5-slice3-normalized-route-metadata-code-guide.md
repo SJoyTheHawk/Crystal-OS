@@ -1,5 +1,11 @@
 # Tracked Slice 3 Code Guide — Normalized Route Metadata and Destination-First Search
 
+**Status:** Implementation complete; Slice 3 signed off on 2026-10-01. A
+transient TLS internal-memory allocation failure is documented as deferred
+transport follow-up after successful retry recovery.
+Repeated failures have since reopened this follow-up; see the
+[TLS AES memory fix](crystal-http-tls-aes-memory-fix.md), pending device testing.
+
 **Plan:** [Slice 3 implementation plan](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
 
 This guide is the implementation order for the next slice. Keep the existing

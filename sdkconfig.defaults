@@ -73,6 +73,10 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
 # set, which is what this option depends on.
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
+# TLS reliability: hardware AES stages PSRAM data in internal DMA buffers.
+# During bus stop requests those buffers can fail despite free PSRAM.
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
 # Keep TLS session tickets enabled so repeated HTTPS requests can resume a
 # connection without paying a full handshake each time.
 CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y

@@ -93,15 +93,6 @@ static bool invalid_variants(const bus_route_variant_t *variants, uint16_t count
         strcmp(variants[0].dest_en, "Causeway Bay") == 0;
 }
 
-static bool oversized_variants(const bus_route_variant_t *variants, uint16_t count)
-{
-    return count == 1 && variants[0].bound == BUS_DIR_OUTBOUND &&
-        strlen(variants[0].orig_en) == sizeof(variants[0].orig_en) - 1 &&
-        strlen(variants[0].orig_tc) == sizeof(variants[0].orig_tc) - 1 &&
-        strlen(variants[0].dest_en) == sizeof(variants[0].dest_en) - 1 &&
-        strlen(variants[0].dest_tc) == sizeof(variants[0].dest_tc) - 1;
-}
-
 static bool duplicate_variants(const bus_route_variant_t *variants, uint16_t count)
 {
     return count == 1 && strcmp(variants[0].orig_en, "First origin") == 0 &&
@@ -127,6 +118,37 @@ static bool check_route_filter(const char *directory)
     return ok;
 }
 
+static bool check_catalog_summary(const char *directory)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", directory,
+             "ctb_route_variants_schema.json");
+    size_t length = 0;
+    char *body = read_file(path, &length);
+    if (body == NULL) return false;
+    bus_route_variant_t *variants = NULL;
+    bus_route_metadata_t *metadata = NULL;
+    uint16_t variant_count = 0;
+    uint16_t metadata_count = 0;
+    const esp_err_t status = bus_ctb_parse_route_catalog(
+        (const uint8_t *)body, length, NULL, &variants, &variant_count,
+        &metadata, &metadata_count);
+    const bool ok = status == ESP_OK && variant_count == 2 && metadata_count == 1 &&
+        metadata != NULL && metadata[0].op == BUS_OP_CTB &&
+        metadata[0].service_type == 1 && metadata[0].pair_count == 2 &&
+        strcmp(metadata[0].pairs[0].dest_en, "<terminal-b-en>") == 0 &&
+        strcmp(metadata[0].pairs[1].dest_en, "<terminal-a-en>") == 0 &&
+        variants != NULL && variants[0].dest_en[0] == '\0' &&
+        variants[1].dest_en[0] == '\0';
+    if (!ok) {
+        fprintf(stderr, "catalog summary check failed: status=%d variants=%u summaries=%u\n",
+                status, variant_count, metadata_count);
+    }
+    free(variants);
+    free(metadata);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -142,7 +164,7 @@ int main(int argc, char **argv)
         {"ctb_route_variants_valid.json", ESP_OK, 2, valid_variants},
         {"ctb_route_variants_schema.json", ESP_OK, 2, schema_variants},
         {"ctb_route_variants_invalid_record.json", ESP_OK, 1, invalid_variants},
-        {"ctb_route_variants_oversized.json", ESP_OK, 1, oversized_variants},
+        {"ctb_route_variants_oversized.json", ESP_ERR_INVALID_RESPONSE, 0, NULL},
         {"ctb_route_variants_duplicate.json", ESP_OK, 1, duplicate_variants},
         {"ctb_route_variants_empty.json", ESP_OK, 0, NULL},
         {"ctb_route_variants_malformed.json", ESP_ERR_INVALID_RESPONSE, 0, NULL},
@@ -159,6 +181,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "route filter identity check failed\n");
         return 1;
     }
-    puts("CTB route variant parser fixtures: 10 passed");
+    if (!check_catalog_summary(argv[1])) {
+        return 1;
+    }
+    puts("CTB route variant parser fixtures: 11 passed");
     return 0;
 }

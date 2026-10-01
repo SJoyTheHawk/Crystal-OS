@@ -4,15 +4,16 @@
 **Status:** Working implementation plan  
 **Scope:** The first two tabs (Favorites and Search), route and stop drill-down, live ETA, and persistence. Nearby remains deferred.
 
-**Progress (2026-10-01):** HTTPS/TLS Phase 5 Slice 1 is implementation-signed
-off for handoff, with conditional device acceptance recorded in its evidence
-file. Slice 2 established provider-qualified CTB variants, cache identity,
-stop handoff, and lifecycle guards. The next slice is intentionally split out:
-route normalization and CTB route-level destination summaries land before the
-stop picker and stop-name resolution.
+**Progress (2026-10-01):** HTTPS/TLS Phase 5 Slices 1–3 are implementation
+signed off for handoff. Slice 2 established provider-qualified CTB variants,
+cache identity, stop handoff, and lifecycle guards. Slice 3 added normalized
+route metadata, CTB route-level destination summaries, and destination-first
+Search presentation. The next slice is stop picking and stop-name resolution.
 
 See [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
 and its [code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
+The next implementation slice is [Slice 4 — stop picker and stop names](crystal-http-phase5-slice4-stop-picker-plan.md)
+with its [code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md).
 
 This document compares the requested workflow in [`bus-app-workflow.md`](bus-app-workflow.md), [`bus-app-ui-design.md`](bus-app-ui-design.md), and [`bus-app-code-guide.md`](bus-app-code-guide.md) with the code that currently exists in `components/bus_service` and `components/bus_app`. Each implementation step should be completed and verified before starting the next one.
 
@@ -75,14 +76,14 @@ those responsibilities separate so a failed device gate remains localizable.
 | 2 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
 | 3 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()`, `rebuildSearchResults()` | Complete | Compact reference-style keypad, reset/backspace, loading lock, catalog-backed ascending route rows, adaptive key dimming, disabled-until-complete Go action, route selection, and page scrolling are implemented. Separate inbound/outbound rows and terminal destinations are intentionally handled by rows 5/9 after route variants are loaded. |
 | 4 | Route prefix validation | `bus_route_is_complete()`, `bus_route_next_mask()`, `bus_route_get_operators()` | Complete | Validation now reads the active runtime catalog (with the compiled fixture as a fallback), matches only the typed prefix, handles invalid/null input safely, and returns operator metadata for complete routes. |
-| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model and sorted deterministically. Directional destinations are shown only when authoritative; route-level CTB destination summaries are the next slice. |
+| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model and sorted deterministically. Directional destinations are shown only when authoritative; Slice 3 now supplies route-level CTB destination summaries. |
 | 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
 | 7 | CTB route variants | Step 3A provider-qualified choices | Implemented with deferred destination association | [Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) preserves CTB identity and direction. The public route list does not associate terminal pairs with direction; [Slice 3](crystal-http-phase5-slice3-normalized-route-metadata-plan.md) retains those pairs as route-level metadata for Search. |
 | 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
 | 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
-| 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |
-| 11 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Missing | Implement detail requests or a bounded cache/bulk loader, with EN/TC fields. |
-| 12 | Stop picker | Event only logs | Missing | Scrollable list, placeholder names, loading/error rows, and back navigation. |
+| 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Implemented | Slice 4 adds named-row loading and detail correlation on top of the existing provider-qualified list. |
+| 11 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Next slice | Implement provider detail adapters, bounded cache/loading, and EN/TC fallback states. |
+| 12 | Stop picker | Stop page renders sequence placeholders | Next slice | Build named scrollable rows, selection state, loading/error rows, and back navigation. |
 | 13 | ETA for one operator | `process_eta_request()` | Partial | Correct API parsing, direction filtering, clock-invalid behavior, and error/empty result semantics. |
 | 14 | ETA for co-operated route | None | Missing | Issue both requests, merge and sort predictions, deduplicate, and retain per-operator error state. |
 | 15 | ETA refresh cadence | 30-second app timer | Partial | Make visible-page scoped, prevent duplicate queueing, and preserve last good data on errors. |
@@ -192,7 +193,7 @@ The official public specification describes KMB's `/stop-eta/{stop_id}` response
 
 **Exit check:** The keypad and result list work with the fixture and with the full generated index, including reset, backspace, impossible-character dimming, and both directions.
 
-### Step 4A — Normalize route metadata and show destinations (next slice)
+### Step 4A — Normalize route metadata and show destinations (complete)
 
 This is the next implementation slice. It moves the useful part of the CTB
 route response into Search without weakening directional identity.
@@ -225,6 +226,11 @@ the route summaries and provider identities.
 - Retain the selected variant and stop sequence in page state; never infer them from a label.
 
 **Exit check:** Search → route variant → stop picker works for KMB, CTB, and a co-operated fixture route in both languages.
+
+The detailed implementation order for this step is tracked in [Slice 4 — stop
+picker and stop names](crystal-http-phase5-slice4-stop-picker-plan.md). It
+supersedes the short checklist above when endpoint confirmation, cache bounds,
+or cancellation behavior differ from the original integration outline.
 
 ### Step 5 — Implement ETA normalization and the ETA board
 

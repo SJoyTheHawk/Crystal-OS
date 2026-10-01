@@ -21,6 +21,25 @@ typedef enum {
     BUS_DIR_INBOUND = 'I'
 } bus_direction_t;
 
+#define BUS_ROUTE_METADATA_PAIR_CAPACITY 2
+
+typedef struct {
+    char orig_en[48];
+    char dest_en[48];
+    char orig_tc[48];
+    char dest_tc[48];
+} bus_route_terminal_pair_t;
+
+// Route-level provider metadata has no implicit direction. It is separate
+// from bus_route_variant_t so terminal pairs cannot alter stop-request identity.
+typedef struct {
+    char route[5];
+    uint8_t op;
+    uint8_t service_type;
+    uint8_t pair_count;
+    bus_route_terminal_pair_t pairs[BUS_ROUTE_METADATA_PAIR_CAPACITY];
+} bus_route_metadata_t;
+
 // Route variant (one company + direction)
 typedef struct {
     char route[5];              // "68X", NUL-terminated, max 4 chars
@@ -145,6 +164,12 @@ bool bus_service_route_catalog_ready(void);
 uint8_t bus_service_get_cached_route_variants(const char *route,
                                                bus_route_variant_t *out,
                                                uint8_t max_count);
+
+// Read a copied route-level summary. Returns false when no summary exists.
+bool bus_service_get_cached_route_metadata(const char *route,
+                                           uint8_t op,
+                                           uint8_t service_type,
+                                           bus_route_metadata_t *out);
 
 // Request stops for a route
 uint32_t bus_service_request_stops(const char *route,

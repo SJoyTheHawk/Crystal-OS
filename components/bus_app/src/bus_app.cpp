@@ -101,6 +101,24 @@ bool stopIdentityMatches(const bus_request_identity_t &identity,
            identity.service_type == route.service_type;
 }
 
+void formatRouteSummaryDestinations(const bus_route_metadata_t &metadata,
+                                    char *buf, size_t size)
+{
+    if (buf == nullptr || size == 0) {
+        return;
+    }
+    buf[0] = '\0';
+    for (uint8_t i = 0; i < metadata.pair_count; i++) {
+        const char *destination = metadata.pairs[i].dest_en;
+        if (destination[0] == '\0') {
+            continue;
+        }
+        const size_t used = strlen(buf);
+        snprintf(buf + used, size > used ? size - used : 0,
+                 used == 0 ? "%s" : " / %s", destination);
+    }
+}
+
 }  // namespace
 
 BusApp::BusApp() : CrystalApp("Bus", &bus_icon)
@@ -557,15 +575,30 @@ void BusApp::showStopPage(const bus_route_variant_t &variant)
     }
     const char *operator_name = variant.op == BUS_OP_CTB ? "CTB" :
                                 variant.op == BUS_OP_NWFB ? "NWFB" : "KMB";
-    const char *direction_name = variant.bound == BUS_DIR_OUTBOUND
-        ? "Outbound" : "Inbound";
     char title[128];
     if (variant.dest_en[0] != '\0') {
-        snprintf(title, sizeof(title), "%s  •  %s  •  %s  •  To %s",
-                 variant.route, operator_name, direction_name, variant.dest_en);
+        snprintf(title, sizeof(title), "%s  •  %s  •  To %s",
+                 variant.route, operator_name, variant.dest_en);
+    } else if (variant.op == BUS_OP_CTB) {
+        static bus_route_metadata_t metadata;
+        static char destinations[96];
+        memset(&metadata, 0, sizeof(metadata));
+        destinations[0] = '\0';
+        const bool has_summary = bus_service_get_cached_route_metadata(
+            variant.route, variant.op, variant.service_type, &metadata);
+        if (has_summary) {
+            formatRouteSummaryDestinations(metadata, destinations, sizeof(destinations));
+        }
+        if (has_summary && destinations[0] != '\0') {
+            snprintf(title, sizeof(title), "%s  •  %s  •  To %s",
+                     variant.route, operator_name, destinations);
+        } else {
+            snprintf(title, sizeof(title), "%s  •  %s",
+                     variant.route, operator_name);
+        }
     } else {
-        snprintf(title, sizeof(title), "%s  •  %s  •  %s",
-                 variant.route, operator_name, direction_name);
+        snprintf(title, sizeof(title), "%s  •  %s",
+                 variant.route, operator_name);
     }
     lv_label_set_text(stop_title_, title);
     lv_obj_clean(stop_list_);
@@ -967,19 +1000,32 @@ void BusApp::rebuildSearchResults()
         }
 
         const char *operator_name = display_rows[i].op == BUS_OP_CTB ? "CTB" : "KMB";
-        const char *direction_name = display_rows[i].bound == BUS_DIR_OUTBOUND
-            ? "Outbound" : "Inbound";
-        char details[96];
+        char details[128];
         if (selected_variant != nullptr && selected_variant->orig_en[0] != '\0' &&
             selected_variant->dest_en[0] != '\0') {
-            snprintf(details, sizeof(details), "%s  •  %s  •  To %s  •  From %s",
-                     operator_name, direction_name, selected_variant->dest_en,
-                     selected_variant->orig_en);
+            snprintf(details, sizeof(details), "%s  •  To %s",
+                     operator_name, selected_variant->dest_en);
         } else if (selected_variant != nullptr && selected_variant->dest_en[0] != '\0') {
-            snprintf(details, sizeof(details), "%s  •  %s  •  To %s",
-                     operator_name, direction_name, selected_variant->dest_en);
+            snprintf(details, sizeof(details), "%s  •  To %s",
+                     operator_name, selected_variant->dest_en);
+        } else if (selected_variant != nullptr && selected_variant->op == BUS_OP_CTB) {
+            static bus_route_metadata_t metadata;
+            static char destinations[96];
+            memset(&metadata, 0, sizeof(metadata));
+            destinations[0] = '\0';
+            const bool has_summary = bus_service_get_cached_route_metadata(
+                route, selected_variant->op, selected_variant->service_type, &metadata);
+            if (has_summary) {
+                formatRouteSummaryDestinations(metadata, destinations, sizeof(destinations));
+            }
+            if (has_summary && destinations[0] != '\0') {
+                snprintf(details, sizeof(details), "%s  •  To %s",
+                         operator_name, destinations);
+            } else {
+                snprintf(details, sizeof(details), "%s", operator_name);
+            }
         } else {
-            snprintf(details, sizeof(details), "%s  •  %s", operator_name, direction_name);
+            snprintf(details, sizeof(details), "%s", operator_name);
         }
         lv_obj_t *detail_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
         lv_label_set_text(detail_label, details);
@@ -1054,12 +1100,31 @@ void BusApp::rebuildRouteVariantResults()
         lv_label_set_text(route_label, variant.route);
         lv_obj_align(route_label, LV_ALIGN_TOP_LEFT, 10, 5);
 
-        const char *direction = variant.bound == BUS_DIR_INBOUND ? "Inbound" : "Outbound";
         const char *operator_name = variant.op == BUS_OP_KMB ? "KMB" :
                                     variant.op == BUS_OP_CTB ? "CTB" : "NWFB";
-        char detail[96];
-        snprintf(detail, sizeof(detail), "%s  •  %s  •  To %s",
-                 direction, operator_name, variant.dest_en);
+        char detail[128];
+        if (variant.op == BUS_OP_CTB && variant.dest_en[0] == '\0') {
+            static bus_route_metadata_t metadata;
+            static char destinations[96];
+            memset(&metadata, 0, sizeof(metadata));
+            destinations[0] = '\0';
+            const bool has_summary = bus_service_get_cached_route_metadata(
+                variant.route, variant.op, variant.service_type, &metadata);
+            if (has_summary) {
+                formatRouteSummaryDestinations(metadata, destinations, sizeof(destinations));
+            }
+            if (has_summary && destinations[0] != '\0') {
+                snprintf(detail, sizeof(detail), "%s  •  To %s",
+                         operator_name, destinations);
+            } else {
+                snprintf(detail, sizeof(detail), "%s", operator_name);
+            }
+        } else if (variant.dest_en[0] != '\0') {
+            snprintf(detail, sizeof(detail), "%s  •  To %s",
+                     operator_name, variant.dest_en);
+        } else {
+            snprintf(detail, sizeof(detail), "%s", operator_name);
+        }
         lv_obj_t *detail_label = makeLabel(row, &lv_font_montserrat_14, kTextSecondary);
         lv_label_set_text(detail_label, detail);
         lv_label_set_long_mode(detail_label, LV_LABEL_LONG_DOT);
@@ -1571,6 +1636,20 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
              static_cast<unsigned>(app->current_route_.service_type),
              app->current_route_.dest_en,
              static_cast<unsigned long>(app->stop_request_id_));
+
+    if (operator_id == BUS_OP_CTB && selected_variant->dest_en[0] == '\0') {
+        static bus_route_metadata_t metadata;
+        static char destinations[96];
+        memset(&metadata, 0, sizeof(metadata));
+        destinations[0] = '\0';
+        if (bus_service_get_cached_route_metadata(
+                route, operator_id, service_type, &metadata)) {
+            formatRouteSummaryDestinations(metadata, destinations, sizeof(destinations));
+            ESP_LOGI(TAG, "Route row summary: route=%s op=%u pairs=%u destinations=%s",
+                     route, static_cast<unsigned>(operator_id),
+                     static_cast<unsigned>(metadata.pair_count), destinations);
+        }
+    }
 }
 
 void BusApp::onRefreshTimer(lv_timer_t *timer)

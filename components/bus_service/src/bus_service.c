@@ -1,6 +1,7 @@
 #include "bus_service.h"
 #include "bus_routes.h"
 #include "bus_provider_ctb.h"
+#include "bus_normalize.h"
 #include "crystal_network.h"
 #include "crystal_http.h"
 #include "lvgl.h"
@@ -51,12 +52,13 @@ static const char *TAG = "bus_service";
 #define ROUTE_CACHE_PATH "/spiffs/bus_route_catalog.bin"
 #define ROUTE_CACHE_TEMP_PATH "/spiffs/bus_route_catalog.tmp"
 #define ROUTE_CACHE_MAGIC 0x42524331u
-#define ROUTE_CACHE_VERSION 7u
+#define ROUTE_CACHE_VERSION 8u
 #define ROUTE_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define BUS_HTTP_TIMEOUT_MS 15000
 #define BUS_ROUTE_FETCH_ATTEMPTS 10
 #define BUS_STOP_FETCH_ATTEMPTS BUS_ROUTE_FETCH_ATTEMPTS
 #define ROUTE_VARIANT_CAPACITY 4096
+#define ROUTE_METADATA_CAPACITY 2048
 #define KMB_CATALOG_OWNER_ID 0x4B4D4243u // "KMBC"
 #define KMB_STOPS_OWNER_ID 0x4B4D5354u // "KMST"
 #define CTB_ROUTE_VARIANTS_OWNER_ID 0x43545256u // "CTRV"
@@ -80,6 +82,11 @@ static const char *TAG = "bus_service";
 #define CTB_STOP_HANDOFF_WAIT_MS (CTB_STOP_TIMEOUT_MS * CTB_STOP_MAX_ATTEMPTS + 5000u)
 #define CTB_ROUTE_VARIANT_HANDOFF_WAIT_MS \
     (BUS_HTTP_TIMEOUT_MS * BUS_ROUTE_FETCH_ATTEMPTS + 10000u)
+
+_Static_assert(BUS_ROUTE_METADATA_PAIR_CAPACITY == 2,
+               "route summaries must remain bounded to two terminal pairs");
+_Static_assert(sizeof(((bus_route_metadata_t *)0)->route) == 5,
+               "route metadata keys must remain four characters plus NUL");
 
 // Request types
 typedef enum {
@@ -196,6 +203,15 @@ static uint8_t s_route_cache_provider_mask = 0;
 // provider-neutral. Identity is route + operator + bound + service type.
 static bus_route_variant_t *s_route_variants = NULL;
 static uint16_t s_route_variant_count = 0;
+static bus_route_metadata_t *s_route_metadata = NULL;
+static uint16_t s_route_metadata_count = 0;
+
+static void reset_route_metadata_store(void)
+{
+    free(s_route_metadata);
+    s_route_metadata = NULL;
+    s_route_metadata_count = 0;
+}
 
 // Forward declarations
 static void bus_worker_task(void *arg);
@@ -246,6 +262,7 @@ static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
                                             uint8_t op, uint32_t request_id);
 static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op);
 static bool append_normalized_route_variant(const bus_route_variant_t *candidate);
+static bool append_route_metadata(const bus_route_metadata_t *candidate);
 static uint16_t resolve_ctb_route_provider_body(const char *label,
                                                 const uint8_t *body,
                                                 size_t body_len,
@@ -920,6 +937,28 @@ uint8_t bus_service_get_cached_route_variants(const char *route,
     return copied;
 }
 
+bool bus_service_get_cached_route_metadata(const char *route,
+                                           uint8_t op,
+                                           uint8_t service_type,
+                                           bus_route_metadata_t *out)
+{
+    char normalized_route[5] = {0};
+    if (route == NULL || out == NULL || service_type == 0 ||
+        !bus_normalize_route_label(route, normalized_route)) {
+        return false;
+    }
+    for (uint16_t i = 0; s_route_metadata != NULL &&
+                          i < s_route_metadata_count; i++) {
+        const bus_route_metadata_t *entry = &s_route_metadata[i];
+        if (strcmp(entry->route, normalized_route) == 0 && entry->op == op &&
+            entry->service_type == service_type) {
+            *out = *entry;
+            return true;
+        }
+    }
+    return false;
+}
+
 uint32_t bus_service_request_stops(const char *route,
                                      uint8_t op,
                                      char bound,
@@ -1212,8 +1251,11 @@ typedef struct {
     uint8_t reserved[3];
     int64_t fetched_at;
     uint16_t variant_count;
-    uint16_t reserved2;
+    uint16_t metadata_count;
 } route_cache_header_t;
+
+static bool route_metadata_pair_equal(const bus_route_terminal_pair_t *left,
+                                      const bus_route_terminal_pair_t *right);
 
 static bool route_variant_record_valid(const bus_route_variant_t *variant)
 {
@@ -1238,32 +1280,82 @@ static bool route_variant_identity_equal(const bus_route_variant_t *left,
            left->service_type == right->service_type;
 }
 
-static bool parse_route_service_type(const cJSON *value, uint8_t *out)
+static bool route_metadata_record_valid(const bus_route_metadata_t *metadata)
 {
-    if (out == NULL) return false;
-    if (value == NULL) {
-        *out = 1;
-        return true;
-    }
-    long parsed = 0;
-    if (cJSON_IsNumber(value)) {
-        if (value->valuedouble < 1.0 || value->valuedouble > UINT8_MAX ||
-            value->valuedouble != (double)(long)value->valuedouble) {
-            return false;
-        }
-        parsed = (long)value->valuedouble;
-    } else if (cJSON_IsString(value) && value->valuestring != NULL &&
-               value->valuestring[0] != '\0') {
-        char *end = NULL;
-        parsed = strtol(value->valuestring, &end, 10);
-        if (end == value->valuestring || *end != '\0' || parsed < 1 ||
-            parsed > UINT8_MAX) {
-            return false;
-        }
-    } else {
+    if (metadata == NULL || memchr(metadata->route, '\0', sizeof(metadata->route)) == NULL ||
+        metadata->route[0] == '\0' || metadata->op > BUS_OP_NWFB ||
+        metadata->service_type == 0 || metadata->pair_count == 0 ||
+        metadata->pair_count > BUS_ROUTE_METADATA_PAIR_CAPACITY) {
         return false;
     }
-    *out = (uint8_t)parsed;
+    char normalized_route[sizeof(metadata->route)] = {0};
+    if (!bus_normalize_route_label(metadata->route, normalized_route) ||
+        strcmp(normalized_route, metadata->route) != 0) {
+        return false;
+    }
+    for (uint8_t i = 0; i < metadata->pair_count; i++) {
+        const bus_route_terminal_pair_t *pair = &metadata->pairs[i];
+        if (memchr(pair->orig_en, '\0', sizeof(pair->orig_en)) == NULL ||
+            memchr(pair->dest_en, '\0', sizeof(pair->dest_en)) == NULL ||
+            memchr(pair->orig_tc, '\0', sizeof(pair->orig_tc)) == NULL ||
+            memchr(pair->dest_tc, '\0', sizeof(pair->dest_tc)) == NULL) {
+            return false;
+        }
+        for (uint8_t previous = 0; previous < i; previous++) {
+            if (route_metadata_pair_equal(&metadata->pairs[previous], pair)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool route_metadata_identity_equal(const bus_route_metadata_t *left,
+                                          const bus_route_metadata_t *right)
+{
+    return left != NULL && right != NULL && strcmp(left->route, right->route) == 0 &&
+           left->op == right->op && left->service_type == right->service_type;
+}
+
+static bool route_metadata_pair_equal(const bus_route_terminal_pair_t *left,
+                                      const bus_route_terminal_pair_t *right)
+{
+    return left != NULL && right != NULL && strcmp(left->orig_en, right->orig_en) == 0 &&
+           strcmp(left->dest_en, right->dest_en) == 0 &&
+           strcmp(left->orig_tc, right->orig_tc) == 0 &&
+           strcmp(left->dest_tc, right->dest_tc) == 0;
+}
+
+static bool append_route_metadata(const bus_route_metadata_t *candidate)
+{
+    if (!route_metadata_record_valid(candidate) || s_route_metadata == NULL) {
+        return false;
+    }
+    for (uint16_t i = 0; i < s_route_metadata_count; i++) {
+        bus_route_metadata_t *existing = &s_route_metadata[i];
+        if (!route_metadata_identity_equal(existing, candidate)) {
+            continue;
+        }
+        for (uint8_t p = 0; p < candidate->pair_count; p++) {
+            bool duplicate = false;
+            for (uint8_t e = 0; e < existing->pair_count; e++) {
+                if (route_metadata_pair_equal(&existing->pairs[e], &candidate->pairs[p])) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate && existing->pair_count < BUS_ROUTE_METADATA_PAIR_CAPACITY) {
+                existing->pairs[existing->pair_count++] = candidate->pairs[p];
+            }
+        }
+        return false;
+    }
+    if (s_route_metadata_count >= ROUTE_METADATA_CAPACITY) {
+        ESP_LOGW(TAG, "Route metadata capacity reached; dropping route=%s op=%u service_type=%u",
+                 candidate->route, candidate->op, candidate->service_type);
+        return false;
+    }
+    s_route_metadata[s_route_metadata_count++] = *candidate;
     return true;
 }
 
@@ -1291,6 +1383,7 @@ static bool load_route_catalog_cache(void)
     free(s_route_variants);
     s_route_variants = NULL;
     s_route_variant_count = 0;
+    reset_route_metadata_store();
     bus_route_name_t entry;
     for (uint16_t i = 0; i < header.count; i++) {
         if (fread(&entry, sizeof(entry), 1, file) != 1 ||
@@ -1347,18 +1440,73 @@ static bool load_route_catalog_cache(void)
         }
     }
     s_route_variant_count = header.variant_count;
+    if (header.metadata_count > ROUTE_METADATA_CAPACITY) {
+        bus_route_catalog_reset();
+        free(s_route_variants);
+        s_route_variants = NULL;
+        s_route_variant_count = 0;
+        fclose(file);
+        ESP_LOGW(TAG, "Route catalog cache: invalid metadata count");
+        return false;
+    }
+    if (header.metadata_count > 0) {
+        s_route_metadata = heap_caps_calloc(header.metadata_count,
+                                            sizeof(*s_route_metadata),
+                                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (header.metadata_count > 0 && s_route_metadata == NULL) {
+        bus_route_catalog_reset();
+        free(s_route_variants);
+        s_route_variants = NULL;
+        s_route_variant_count = 0;
+        fclose(file);
+        ESP_LOGW(TAG, "Route catalog cache: no memory for metadata");
+        return false;
+    }
+    for (uint16_t i = 0; i < header.metadata_count; i++) {
+        if (fread(&s_route_metadata[i], sizeof(*s_route_metadata), 1, file) != 1 ||
+            !route_metadata_record_valid(&s_route_metadata[i])) {
+            bus_route_catalog_reset();
+            free(s_route_variants);
+            s_route_variants = NULL;
+            s_route_variant_count = 0;
+            reset_route_metadata_store();
+            fclose(file);
+            ESP_LOGW(TAG, "Route catalog cache: truncated metadata data");
+            return false;
+        }
+        for (uint16_t previous = 0; previous < i; previous++) {
+            if (route_metadata_identity_equal(&s_route_metadata[previous],
+                                              &s_route_metadata[i])) {
+                bus_route_catalog_reset();
+                free(s_route_variants);
+                s_route_variants = NULL;
+                s_route_variant_count = 0;
+                reset_route_metadata_store();
+                fclose(file);
+                ESP_LOGW(TAG, "Route catalog cache: duplicate metadata identity");
+                return false;
+            }
+        }
+        if ((i & 0x3Fu) == 0x3Fu) {
+            vTaskDelay(1);
+        }
+    }
+    s_route_metadata_count = header.metadata_count;
     s_route_cache_fetched_at = (time_t)header.fetched_at;
     s_route_cache_provider_mask = header.provider_mask;
     fclose(file);
     const time_t now = time(NULL);
     if (s_route_cache_fetched_at > 0 && now > s_route_cache_fetched_at) {
-        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants mask=0x%02x (%ld days old)",
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants, %u summaries mask=0x%02x (%ld days old)",
                  bus_route_catalog_count(), (unsigned)s_route_variant_count,
+                 (unsigned)s_route_metadata_count,
                  (unsigned)s_route_cache_provider_mask,
                  (long)((now - s_route_cache_fetched_at) / 86400));
     } else {
-        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants mask=0x%02x (clock unavailable)",
+        ESP_LOGI(TAG, "Route catalog cache: loaded %u routes, %u provider variants, %u summaries mask=0x%02x (clock unavailable)",
                  bus_route_catalog_count(), (unsigned)s_route_variant_count,
+                 (unsigned)s_route_metadata_count,
                  (unsigned)s_route_cache_provider_mask);
     }
     return true;
@@ -1386,6 +1534,26 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
             vTaskDelay(1);
         }
     }
+    if (s_route_metadata_count > 0 && s_route_metadata == NULL) {
+        ESP_LOGE(TAG, "Route catalog cache: missing metadata store");
+        return false;
+    }
+    for (uint16_t i = 0; i < s_route_metadata_count; i++) {
+        if (!route_metadata_record_valid(&s_route_metadata[i])) {
+            ESP_LOGE(TAG, "Route catalog cache: invalid metadata at %u", i);
+            return false;
+        }
+        for (uint16_t previous = 0; previous < i; previous++) {
+            if (route_metadata_identity_equal(&s_route_metadata[previous],
+                                              &s_route_metadata[i])) {
+                ESP_LOGE(TAG, "Route catalog cache: duplicate metadata at %u", i);
+                return false;
+            }
+        }
+        if ((i & 0x3Fu) == 0x3Fu) {
+            vTaskDelay(1);
+        }
+    }
     FILE *file = fopen(ROUTE_CACHE_TEMP_PATH, "wb");
     if (file == NULL) {
         ESP_LOGE(TAG, "Route catalog cache: cannot open temporary file (errno=%d)", errno);
@@ -1399,6 +1567,7 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
         .provider_mask = provider_mask,
         .fetched_at = (int64_t)time(NULL),
         .variant_count = s_route_variant_count,
+        .metadata_count = s_route_metadata_count,
     };
     bool ok = header.count > 0 && fwrite(&header, sizeof(header), 1, file) == 1;
     if (!ok) {
@@ -1415,6 +1584,12 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
         ok = fwrite(&s_route_variants[i], sizeof(*s_route_variants), 1, file) == 1;
         if (!ok) {
             ESP_LOGE(TAG, "Route catalog cache: variant write failed at %u (errno=%d)", i, errno);
+        }
+    }
+    for (uint16_t i = 0; ok && i < header.metadata_count; i++) {
+        ok = fwrite(&s_route_metadata[i], sizeof(*s_route_metadata), 1, file) == 1;
+        if (!ok) {
+            ESP_LOGE(TAG, "Route catalog cache: metadata write failed at %u (errno=%d)", i, errno);
         }
     }
     if (fclose(file) != 0) {
@@ -1435,8 +1610,8 @@ static bool save_route_catalog_cache(uint8_t provider_mask)
     } else {
         s_route_cache_fetched_at = (time_t)header.fetched_at;
         s_route_cache_provider_mask = provider_mask;
-        ESP_LOGI(TAG, "Route catalog: saved data in filesystem (%u routes, %u provider variants)",
-                 header.count, header.variant_count);
+        ESP_LOGI(TAG, "Route catalog: saved data in filesystem (%u routes, %u provider variants, %u summaries)",
+                 header.count, header.variant_count, header.metadata_count);
     }
     return ok;
 }
@@ -1486,13 +1661,10 @@ static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
     }
 
     cJSON *route = cJSON_GetObjectItem(item, "route");
-    if (!cJSON_IsString(route) || route->valuestring[0] == '\0' ||
-        strlen(route->valuestring) >= sizeof(s_route_variants[0].route)) {
-        return 0;
-    }
     char normalized_route[sizeof(s_route_variants[0].route)] = {0};
-    for (size_t i = 0; route->valuestring[i] != '\0'; i++) {
-        normalized_route[i] = (char)toupper((unsigned char)route->valuestring[i]);
+    if (!cJSON_IsString(route) ||
+        !bus_normalize_route_label(route->valuestring, normalized_route)) {
+        return 0;
     }
 
     cJSON *bound = cJSON_GetObjectItem(item, "bound");
@@ -1501,11 +1673,38 @@ static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
     cJSON *dest_en = cJSON_GetObjectItem(item, "dest_en");
     cJSON *orig_tc = cJSON_GetObjectItem(item, "orig_tc");
     cJSON *dest_tc = cJSON_GetObjectItem(item, "dest_tc");
-    const bool has_bound = cJSON_IsString(bound) &&
-                           (bound->valuestring[0] == BUS_DIR_INBOUND ||
-                            bound->valuestring[0] == BUS_DIR_OUTBOUND);
+    char normalized_bound = 0;
+    if (bound != NULL && !cJSON_IsString(bound)) {
+        return 0;
+    }
+    if (!bus_normalize_direction(cJSON_IsString(bound) ? bound->valuestring : NULL,
+                                 &normalized_bound)) {
+        return 0;
+    }
+    const bool has_bound = normalized_bound != 0;
     uint8_t variant_service_type = 1;
-    if (!parse_route_service_type(service_type, &variant_service_type)) {
+    char service_type_text[4] = {0};
+    bool service_type_present = service_type != NULL;
+    if (service_type_present && cJSON_IsNumber(service_type)) {
+        if (service_type->valuedouble < 1.0 ||
+            service_type->valuedouble > UINT8_MAX ||
+            service_type->valuedouble != (double)service_type->valueint) {
+            return 0;
+        }
+        snprintf(service_type_text, sizeof(service_type_text), "%u",
+                 (unsigned)service_type->valueint);
+    } else if (service_type_present && cJSON_IsString(service_type)) {
+        if (service_type->valuestring == NULL ||
+            strlen(service_type->valuestring) >= sizeof(service_type_text)) {
+            return 0;
+        }
+        strlcpy(service_type_text, service_type->valuestring,
+                sizeof(service_type_text));
+    } else if (service_type_present) {
+        return 0;
+    }
+    if (!bus_normalize_service_type(service_type_text, service_type_present,
+                                    true, &variant_service_type)) {
         return 0;
     }
     if (op == BUS_OP_KMB && !has_bound) {
@@ -1516,6 +1715,24 @@ static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
     strlcpy(candidate.route, normalized_route, sizeof(candidate.route));
     candidate.op = op;
     candidate.service_type = variant_service_type;
+    bus_route_metadata_t metadata = {0};
+    strlcpy(metadata.route, normalized_route, sizeof(metadata.route));
+    metadata.op = op;
+    metadata.service_type = variant_service_type;
+    if (bus_normalize_text(cJSON_IsString(orig_en) ? orig_en->valuestring : NULL,
+                           metadata.pairs[0].orig_en, sizeof(metadata.pairs[0].orig_en), true) &&
+        bus_normalize_text(cJSON_IsString(dest_en) ? dest_en->valuestring : NULL,
+                           metadata.pairs[0].dest_en, sizeof(metadata.pairs[0].dest_en), true) &&
+        bus_normalize_text(cJSON_IsString(orig_tc) ? orig_tc->valuestring : NULL,
+                           metadata.pairs[0].orig_tc, sizeof(metadata.pairs[0].orig_tc), true) &&
+        bus_normalize_text(cJSON_IsString(dest_tc) ? dest_tc->valuestring : NULL,
+                           metadata.pairs[0].dest_tc, sizeof(metadata.pairs[0].dest_tc), true)) {
+        if (metadata.pairs[0].orig_en[0] != '\0' || metadata.pairs[0].dest_en[0] != '\0' ||
+            metadata.pairs[0].orig_tc[0] != '\0' || metadata.pairs[0].dest_tc[0] != '\0') {
+            metadata.pair_count = 1;
+            (void)append_route_metadata(&metadata);
+        }
+    }
     const char directions[2] = {BUS_DIR_INBOUND, BUS_DIR_OUTBOUND};
     const uint8_t direction_count = has_bound ? 1u : 2u;
     uint16_t appended = 0;
@@ -1525,21 +1742,19 @@ static uint16_t append_route_variants_from_item(cJSON *item, bus_operator_t op)
         memset(candidate.dest_en, 0, sizeof(candidate.dest_en));
         memset(candidate.orig_tc, 0, sizeof(candidate.orig_tc));
         memset(candidate.dest_tc, 0, sizeof(candidate.dest_tc));
-        candidate.bound = has_bound ? bound->valuestring[0]
+        candidate.bound = has_bound ? normalized_bound
                                     : directions[direction_index];
         if (has_bound || op == BUS_OP_KMB) {
-            strlcpy(candidate.orig_en,
-                    cJSON_IsString(orig_en) ? orig_en->valuestring : "",
-                    sizeof(candidate.orig_en));
-            strlcpy(candidate.dest_en,
-                    cJSON_IsString(dest_en) ? dest_en->valuestring : "",
-                    sizeof(candidate.dest_en));
-            strlcpy(candidate.orig_tc,
-                    cJSON_IsString(orig_tc) ? orig_tc->valuestring : "",
-                    sizeof(candidate.orig_tc));
-            strlcpy(candidate.dest_tc,
-                    cJSON_IsString(dest_tc) ? dest_tc->valuestring : "",
-                    sizeof(candidate.dest_tc));
+            if (!bus_normalize_text(cJSON_IsString(orig_en) ? orig_en->valuestring : NULL,
+                                    candidate.orig_en, sizeof(candidate.orig_en), true) ||
+                !bus_normalize_text(cJSON_IsString(dest_en) ? dest_en->valuestring : NULL,
+                                    candidate.dest_en, sizeof(candidate.dest_en), true) ||
+                !bus_normalize_text(cJSON_IsString(orig_tc) ? orig_tc->valuestring : NULL,
+                                    candidate.orig_tc, sizeof(candidate.orig_tc), true) ||
+                !bus_normalize_text(cJSON_IsString(dest_tc) ? dest_tc->valuestring : NULL,
+                                    candidate.dest_tc, sizeof(candidate.dest_tc), true)) {
+                continue;
+            }
         }
         if (append_normalized_route_variant(&candidate)) {
             appended++;
@@ -1567,12 +1782,19 @@ static uint16_t resolve_route_provider_json(const char *label, cJSON *root,
         for (int i = 0; i < count; i++) {
             cJSON *item = cJSON_GetArrayItem(data, i);
             cJSON *route = item != NULL ? cJSON_GetObjectItem(item, "route") : NULL;
+            char normalized_route[5] = {0};
             if (route != NULL && cJSON_IsString(route) &&
-                bus_route_catalog_add(route->valuestring, strlen(route->valuestring), op)) {
+                bus_normalize_route_label(route->valuestring, normalized_route) &&
+                bus_route_catalog_add(normalized_route, strlen(normalized_route), op)) {
                 fetched++;
             }
             (void)append_route_variants_from_item(
                 item, op == (1u << BUS_OP_KMB) ? BUS_OP_KMB : BUS_OP_CTB);
+            // Catalog insertion scans the existing route index. Yield during
+            // large provider payloads so IDLE can service the task watchdog.
+            if ((i & 0x1Fu) == 0x1Fu) {
+                vTaskDelay(1);
+            }
         }
     }
     cJSON_Delete(root);
@@ -1591,9 +1813,12 @@ static uint16_t resolve_ctb_route_provider_body(const char *label,
                                                 uint32_t request_id)
 {
     bus_route_variant_t *variants = NULL;
+    bus_route_metadata_t *metadata = NULL;
     uint16_t variant_count = 0;
-    const esp_err_t parse_status = bus_ctb_parse_route_variants(
-        body, body_len, NULL, &variants, &variant_count);
+    uint16_t metadata_count = 0;
+    const esp_err_t parse_status = bus_ctb_parse_route_catalog(
+        body, body_len, NULL, &variants, &variant_count,
+        &metadata, &metadata_count);
     if (parse_status != ESP_OK) {
         ESP_LOGW(TAG, "Route catalog: %s variant parse failed status=%s",
                  label, esp_err_to_name(parse_status));
@@ -1616,11 +1841,27 @@ static uint16_t resolve_ctb_route_provider_body(const char *label,
             fetched++;
         }
         (void)append_normalized_route_variant(&variants[i]);
+        if ((i & 0x1Fu) == 0x1Fu) {
+            vTaskDelay(1);
+        }
+    }
+    for (uint16_t i = 0; i < metadata_count; i++) {
+        (void)append_route_metadata(&metadata[i]);
+        if ((i & 0x1Fu) == 0x1Fu) {
+            vTaskDelay(1);
+        }
     }
     free(variants);
+    free(metadata);
     ESP_LOGI(TAG,
              "Route catalog: resolved %u %s route records (%u provider variants)",
              fetched, label, s_route_variant_count);
+    uint16_t terminal_pair_count = 0;
+    for (uint16_t i = 0; i < metadata_count; i++) {
+        terminal_pair_count = (uint16_t)(terminal_pair_count + metadata[i].pair_count);
+    }
+    ESP_LOGI(TAG, "Route metadata: resolved %s summaries=%u terminal_pairs=%u",
+             label, (unsigned)metadata_count, (unsigned)terminal_pair_count);
     return fetched;
 }
 
@@ -1703,6 +1944,10 @@ static void process_route_catalog_request(const bus_request_t *req)
                                         sizeof(*s_route_variants),
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_route_variant_count = 0;
+    reset_route_metadata_store();
+    s_route_metadata = heap_caps_calloc(ROUTE_METADATA_CAPACITY,
+                                        sizeof(*s_route_metadata),
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_route_variants == NULL) {
         ESP_LOGE(TAG, "Route catalog: no memory for provider route variants");
     }

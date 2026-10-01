@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "src/bus_service.c"
+         "src/bus_normalize.c"
          "src/bus_provider_ctb.c"
          "src/bus_routes.c"
          "src/bus_index_data.c"

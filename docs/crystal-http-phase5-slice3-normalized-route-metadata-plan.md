@@ -1,6 +1,11 @@
 # Tracked Slice 3 — Normalized Route Metadata and Destination-First Search
 
-**Status:** Planned
+**Status:** Slice 3 signed off on 2026-10-01; normalized metadata, cache
+reload, Search summaries, route selection, cancellation, and device acceptance
+verified. One transient TLS internal-memory allocation failure is recorded as
+deferred follow-up because the existing retry path recovered successfully.
+Repeated failures have since reopened this follow-up; see the
+[TLS AES memory fix](crystal-http-tls-aes-memory-fix.md), pending device testing.
 
 **Previous slice:** [Slice 2 — CTB route variants](crystal-http-phase5-slice2-ctb-route-variants-plan.md)
 
@@ -190,3 +195,25 @@ cpu/offline search=<observation>
 result=<pass|fail|deferred>
 known follow-up=<...>
 ```
+
+## Acceptance and sign-off (2026-10-01)
+
+```text
+slice=3
+firmware commit=working tree build; no commit hash recorded
+route=10 operator=CTB service_type=1
+summary_pairs=1 destinations=North Point Ferry Pier
+directional_variants=2 (inbound/outbound identities retained)
+cache version=8 reload=pass
+selected route=10 operator=1 bound=I/O service_type=1
+stop URL identity=route-stop/CTB/10/inbound and route-stop/CTB/10/outbound
+cpu/offline search=previous offline-search reduction verified; no watchdog in acceptance run
+result=pass
+known follow-up=one transient esp-aes TLS allocation failure; retry recovered; investigate only if repeatable
+```
+
+The route summary survived reboot from the cache, and the device logs retained
+the exact CTB bound and stop URL identity. The transient TLS allocation failure
+returned `ESP_FAIL` after retries on one run, without a watchdog or stale UI
+state; a subsequent retry completed normally. It is deferred to transport
+reliability work and does not block Slice 3 sign-off.
