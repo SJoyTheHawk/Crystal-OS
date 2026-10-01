@@ -140,7 +140,8 @@ uint32_t bus_service_request_route_catalog(void);
 // True only when a complete KMB + CTB catalog is loaded in memory.
 bool bus_service_route_catalog_ready(void);
 
-// Read cached KMB route variants for a route. Returns the number copied.
+// Read cached provider-qualified route variants for a route. The route label
+// may be shared by operators; callers must retain the returned op field.
 uint8_t bus_service_get_cached_route_variants(const char *route,
                                                bus_route_variant_t *out,
                                                uint8_t max_count);
@@ -166,7 +167,7 @@ uint32_t bus_service_request_eta(const char *stop_id,
 
 // Cancel all pending requests
 void bus_service_cancel_all(void);
-// Cancel the active KMB stop request when leaving the stop page.
+// Cancel active KMB and CTB stop requests when leaving or replacing the stop page.
 void bus_service_cancel_stops(void);
 // Abort active HTTP work when the network lease is lost. A later connected
 // event may start a fresh catalog operation.

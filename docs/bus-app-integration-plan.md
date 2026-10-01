@@ -4,6 +4,11 @@
 **Status:** Working implementation plan  
 **Scope:** The first two tabs (Favorites and Search), route and stop drill-down, live ETA, and persistence. Nearby remains deferred.
 
+**Progress (2026-10-01):** HTTPS/TLS Phase 5 Slice 1 is implementation-signed
+off for handoff, with conditional device acceptance recorded in its evidence
+file. CTB route variants and destinations are now tracked as Slice 2 with a
+separate implementation plan and code guide.
+
 This document compares the requested workflow in [`bus-app-workflow.md`](bus-app-workflow.md), [`bus-app-ui-design.md`](bus-app-ui-design.md), and [`bus-app-code-guide.md`](bus-app-code-guide.md) with the code that currently exists in `components/bus_service` and `components/bus_app`. Each implementation step should be completed and verified before starting the next one.
 
 ## Current conclusion
@@ -67,7 +72,7 @@ those responsibilities separate so a failed device gate remains localizable.
 | 4 | Route prefix validation | `bus_route_is_complete()`, `bus_route_next_mask()`, `bus_route_get_operators()` | Complete | Validation now reads the active runtime catalog (with the compiled fixture as a fallback), matches only the typed prefix, handles invalid/null input safely, and returns operator metadata for complete routes. |
 | 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model, sorted deterministically, and displayed as separate inbound/outbound rows with operator and origin/destination metadata. Provider-specific discovery remains covered by rows 6–8. |
 | 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
-| 7 | CTB route variants | None | Missing | Add CTB request and normalization. |
+| 7 | CTB route variants | Step 3A provider-qualified choices | Planned | Implement [Tracked Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) and its [code guide](crystal-http-phase5-slice2-ctb-route-variants-code-guide.md) so inbound/outbound destinations are authoritative. |
 | 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
 | 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
 | 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Partial | Add request correlation, operator-specific paths, empty results, and display state. |

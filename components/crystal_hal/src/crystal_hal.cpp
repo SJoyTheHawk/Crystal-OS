@@ -43,6 +43,11 @@ constexpr uint8_t kRtcAddress = 0x51;
 constexpr uint8_t kAxp2101Address = 0x34;
 constexpr uint32_t kAlarmSampleRate = 22050;
 constexpr float kPi = 3.14159265358979323846f;
+// The board BSP allocates I2S DMA buffers from internal memory and asserts on
+// failure. Leave enough contiguous internal heap for TLS and LVGL callers
+// before attempting lazy audio initialization.
+constexpr size_t kAudioInitMinInternalFree = 20U * 1024U;
+constexpr size_t kAudioInitMinInternalBlock = 12U * 1024U;
 static const char *TAG = "crystal_hal";
 constexpr size_t kWifiMaxNetworks = 20;
 // The board's only free tactile button. Wired active-low; also the ESP32-S3
@@ -843,10 +848,21 @@ public:
 DeviceBrightness s_brightness;
 Pcf85063Rtc s_rtc;
 esp_codec_dev_handle_t s_speaker = nullptr;
+int s_volume = 85;
 
 bool ensure_speaker()
 {
     if (s_speaker != nullptr) return true;
+
+    const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (internal_free < kAudioInitMinInternalFree ||
+            largest_internal < kAudioInitMinInternalBlock) {
+        ESP_LOGW(TAG, "speaker initialization deferred: internal=%u largest=%u",
+                 (unsigned)internal_free, (unsigned)largest_internal);
+        return false;
+    }
+
     s_speaker = bsp_audio_codec_speaker_init();
     if (s_speaker == nullptr) return false;
     esp_codec_dev_sample_info_t format = {};
@@ -964,15 +980,18 @@ bool crystal_hal_set_volume(int volume)
     if (volume > kVolumeMax) volume = kVolumeMax;
     if (!ensure_speaker()) return false;
     // Same operation as reference bsp_extra_codec_volume_set().
-    return esp_codec_dev_set_out_vol(s_speaker, volume) == ESP_CODEC_DEV_OK;
+    if (esp_codec_dev_set_out_vol(s_speaker, volume) != ESP_CODEC_DEV_OK) {
+        return false;
+    }
+    s_volume = volume;
+    return true;
 }
 
 int crystal_hal_get_volume()
 {
-    if (!ensure_speaker()) return 85;
-    int volume = 85;
-    (void)esp_codec_dev_get_out_vol(s_speaker, &volume);
-    return volume;
+    // Reading the cached value must not initialize I2S while another service
+    // is using scarce internal heap for TLS or other DMA-capable buffers.
+    return s_volume;
 }
 
 void crystal_hal_init()
@@ -993,6 +1012,7 @@ void crystal_hal_init()
     size_t volume_len = sizeof(volume);
     if (s_storage.get("volume", &volume, &volume_len) &&
         volume_len == sizeof(volume)) {
+        s_volume = volume;
         (void)crystal_hal_set_volume(volume);
     }
 

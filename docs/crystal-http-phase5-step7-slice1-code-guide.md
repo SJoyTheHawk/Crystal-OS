@@ -1,6 +1,6 @@
 # HTTPS/TLS Phase 5, Slice 1 — Bus Service Contracts and CTB Normalization
 
-**Status:** Ready for implementation
+**Status:** Implementation complete; Slice 1 signed off for handoff
 **Phase:** HTTPS/TLS Phase 5, first implementation slice
 **Parent plans:**
 
@@ -16,6 +16,13 @@ paths are later slices.
 The implementation is divided into independent gates. Finish and record one
 step before starting the next. If a validation fails, stop at that step and
 keep the last passing state available for review.
+
+**Progress and sign-off (2026-10-01):** Steps 0 through 7 are recorded in the
+[Slice 1 evidence record](crystal-http-phase5-step7-slice1.md). The source
+boundary, build checks, CTB stop transport, cancellation, stale-result, and
+memory observations are signed off for handoff. Formal device acceptance stays
+conditional until the flashed firmware commit and the missing Step 0 route
+catalog capture are added to that record.
 
 ## Rules for every step
 
@@ -327,7 +334,9 @@ one outbound, one cancellation, and one stale-selection run.
 **Pass condition:** CTB stops still work through `crystal_http`, the direct
 client is absent from that branch, and all earlier device checks still pass.
 
-## Step 7 — Record the slice and hand off to the next Phase 5 slice
+## Step 7 — Record the slice and hand off to Tracked Slice 2
+
+Implementation record: [Phase 5 Slice 1 CTB stops record](crystal-http-phase5-step7-slice1.md).
 
 **Purpose:** Make the result reviewable before migrating another operation.
 
@@ -347,10 +356,14 @@ known follow-up=<...>
 ```
 
 The slice is ready to hand off when Steps 0 through 6 pass and the normal test
-switches are disabled. The next Phase 5 slice can migrate KMB route variants
-or the CTB catalog, using the same provider contract and handoff. Return to
-the deferred KMB Phase 4 failure/lifetime matrix after CTB and weather clients
-are available.
+switches are disabled. The tracked follow-on work is defined in:
+
+- [Tracked Slice 2 implementation plan](crystal-http-phase5-slice2-ctb-route-variants-plan.md)
+- [Tracked Slice 2 code guide](crystal-http-phase5-slice2-ctb-route-variants-code-guide.md)
+
+Slice 2 must explicitly cover CTB direction-specific route variants and
+destinations before the UI claims a CTB destination. Return to the deferred
+KMB Phase 4 failure/lifetime matrix after CTB and weather clients are available.
 
 ## Common build commands
 
