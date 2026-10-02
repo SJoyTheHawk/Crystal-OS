@@ -30,7 +30,7 @@
     "KMB": {
       "artifact": "kmb-stops.bsc",
       "artifact_bytes": 685020,
-      "artifact_sha256": "f57987f95733a2c6deb6e5e96185b7c68bcde3249de8ef9d4bcb5453f2acb540",
+      "artifact_sha256": "6fa8f9e3896d1464f3ecb646b732e8095c78e8168c78749055cbaa5f638d10b4",
       "attribution": "Kowloon Motor Bus Company (1933) Limited; data.gov.hk",
       "index_bytes": 243108,
       "max_utf8_bytes": {
