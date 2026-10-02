@@ -54,6 +54,18 @@ and free PSRAM stayed above 3,548,576 bytes. This supports the retry and
 cleanup fix under repeated browsing. It does not test 4R.2 catalog transfer;
 the manifest URL was still unset.
 
+The subsequent hosted run confirms the raw GitHub URL is usable: the 2,232-byte
+manifest returned HTTP 200 twice, and the KMB transfer allocated 685,021 bytes
+(the 685,020-byte artifact plus its body terminator). The user selected a route
+while that transfer was reading, which triggered the catalog-owner cancellation;
+the transfer ended with `ESP_ERR_INVALID_STATE`, body length zero, and
+`validated=0`. This is foreground cancellation evidence, not a successful
+catalog synchronization. No Wi-Fi disconnect event appears in the trace. The
+route request then encountered a timeout and two TLS handshake failures while
+the cancelled transfer was being drained. Repeat the test by staying on the
+route list until both providers validate, then separately test route selection
+during transfer.
+
 Follow [the device test procedure](crystal-http-phase5-slice4r2-device-test.md)
 for the route retry check and the subsequent hosted 4R.2 catalog tests.
 
@@ -208,3 +220,14 @@ No artifact hosting URL, scheduled generator, owner, or refresh cadence is
 configured in this repository. Pinned local full-size artifacts validate the
 converter and host budget; online update support is unresolved until a
 publication location and scheduled source-pinning job are selected and verified.
+
+An idle hosted run then completed the full transfer on the earlier 4R.2
+firmware: KMB received 685,020 bytes and CTB received 258,706 bytes, both with
+`validated=1`. The measured SPIFFS partition reported 3,848,081 bytes total;
+free space fell from 2,786,602 to 2,095,599 bytes after the KMB candidate and
+from 2,095,599 to 1,834,559 bytes after the CTB candidate. The lowest TLS
+internal free value was 5,783 bytes and the lowest largest internal block was
+1,280 bytes; free PSRAM stayed above 3,608,260 bytes. This establishes the
+full-size transfer and candidate-save baseline. It does not cover unchanged
+manifests, one-provider changes, Wi-Fi recovery, or the latest retry diagnostic
+edit.
