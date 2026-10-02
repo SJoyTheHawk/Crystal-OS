@@ -1,9 +1,12 @@
 #include "bus_service.h"
 #include "bus_routes.h"
 #include "bus_provider_ctb.h"
+#include "bus_provider_kmb.h"
+#include "bus_provider_ctb_stop.h"
 #include "bus_normalize.h"
 #include "crystal_network.h"
 #include "crystal_http.h"
+#include "bus_catalog_sync.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 
@@ -63,6 +66,7 @@ static const char *TAG = "bus_service";
 #define KMB_STOPS_OWNER_ID 0x4B4D5354u // "KMST"
 #define CTB_ROUTE_VARIANTS_OWNER_ID 0x43545256u // "CTRV"
 #define CTB_STOPS_OWNER_ID 0x43544253u // "CTBS"
+#define STOP_CATALOG_OWNER_ID 0x53544D44u // "STMD"
 #define KMB_STOP_TIMEOUT_MS 8000
 #define KMB_STOP_MAX_ATTEMPTS 3
 #define CTB_STOP_TIMEOUT_MS 8000
@@ -95,6 +99,7 @@ typedef enum {
     REQ_TYPE_STOP_DETAIL,
     REQ_TYPE_ETA,
     REQ_TYPE_ROUTE_CATALOG,
+    REQ_TYPE_STOP_CATALOG,
 } req_type_t;
 
 // Request structure
@@ -219,6 +224,7 @@ static void process_route_request(const bus_request_t *req);
 static void process_stops_request(const bus_request_t *req);
 static void process_eta_request(const bus_request_t *req);
 static void process_route_catalog_request(const bus_request_t *req);
+static void process_stop_catalog_request(const bus_request_t *req);
 static void post_event(const bus_event_t *event);
 static void deliver_event_async(void *user_data);
 static void free_event_payload(bus_event_t *event);
@@ -267,6 +273,78 @@ static uint16_t resolve_ctb_route_provider_body(const char *label,
                                                 const uint8_t *body,
                                                 size_t body_len,
                                                 uint32_t request_id);
+void bus_stop_catalog_schedule(void);
+void bus_stop_catalog_sync_pass(uint32_t request_id);
+void bus_stop_catalog_retry_now(void);
+bool bus_stop_catalog_load(void);
+esp_err_t bus_stop_catalog_lookup(bus_operator_t op, const char *stop_id,
+                                  bus_stop_metadata_t *out);
+bool bus_stop_catalog_ready(void);
+bool bus_stop_catalog_fresh(void);
+void bus_stop_catalog_run_diagnostic(void);
+
+static bus_stop_catalog_progress_t s_stop_catalog_progress;
+
+void bus_stop_catalog_report_progress(uint16_t discovered,
+                                      uint16_t resolved,
+                                      uint16_t pending,
+                                      uint16_t failed,
+                                      const char *message)
+{
+    bus_event_t event = {0};
+    s_stop_catalog_progress.discovered = discovered;
+    s_stop_catalog_progress.resolved = resolved;
+    s_stop_catalog_progress.pending = pending;
+    s_stop_catalog_progress.failed = failed;
+    strlcpy(s_stop_catalog_progress.last_error,
+            failed > 0 || pending > 0 ? (message != NULL ? message : "") : "",
+            sizeof(s_stop_catalog_progress.last_error));
+    event.type = BUS_EVT_STOP_CATALOG_PROGRESS;
+    event.status = ESP_OK;
+    event.data.stop_catalog_progress.discovered = discovered;
+    event.data.stop_catalog_progress.resolved = resolved;
+    event.data.stop_catalog_progress.pending = pending;
+    event.data.stop_catalog_progress.failed = failed;
+    strlcpy(event.data.stop_catalog_progress.message,
+            message != NULL ? message : "Stop catalog progress",
+            sizeof(event.data.stop_catalog_progress.message));
+    post_event(&event);
+}
+
+bool bus_service_stop_catalog_get_progress(bus_stop_catalog_progress_t *out)
+{
+    if (out == NULL) {
+        return false;
+    }
+    *out = s_stop_catalog_progress;
+    return true;
+}
+
+esp_err_t bus_service_lookup_stop_metadata(bus_operator_t op,
+                                            const char *stop_id,
+                                            bus_stop_metadata_t *out)
+{
+    return bus_stop_catalog_lookup(op, stop_id, out);
+}
+
+esp_err_t bus_service_lookup_route_stop(const bus_stop_t *route_stop,
+                                        bus_stop_metadata_t *out)
+{
+    if (route_stop == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return bus_stop_catalog_lookup(route_stop->op, route_stop->stop_id, out);
+}
+
+bool bus_service_stop_catalog_ready(void)
+{
+    return bus_stop_catalog_ready();
+}
+
+bool bus_service_stop_catalog_fresh(void)
+{
+    return bus_stop_catalog_fresh();
+}
 
 static kmb_catalog_handoff_t *kmb_catalog_handoff_create(uint32_t bus_request_id,
                                                           const char *kmb_url)
@@ -840,6 +918,14 @@ void bus_service_init(void)
     }
 
     load_route_catalog_cache();
+    if (bus_stop_catalog_load()) {
+        bus_stop_catalog_report_progress(
+            (uint16_t)(bus_service_stop_catalog_resolved() +
+                       bus_service_stop_catalog_failed()),
+            bus_service_stop_catalog_resolved(),
+            bus_service_stop_catalog_failed(),
+            bus_service_stop_catalog_failed(), "Loaded stop catalog");
+    }
 
     // Leave room for catalog bootstrap alongside favorite ETA refreshes.
     s_request_queue = xQueueCreate(16, sizeof(bus_request_t));
@@ -862,6 +948,10 @@ void bus_service_init(void)
         ESP_LOGE(TAG, "Failed to create worker task");
         vQueueDelete(s_request_queue);
         s_request_queue = NULL;
+    } else if (!bus_catalog_sync_init()) {
+        ESP_LOGE(TAG, "Failed to start stop catalog sync worker");
+    } else {
+        bus_catalog_sync_request(false);
     }
 }
 
@@ -882,7 +972,9 @@ uint32_t bus_service_request_route(const char *route_name)
     req.id = s_next_request_id++;
     strlcpy(req.route, route_name, sizeof(req.route));
 
+    bus_catalog_sync_foreground_begin();
     if (xQueueSend(s_request_queue, &req, 0) != pdTRUE) {
+        bus_catalog_sync_foreground_end();
         ESP_LOGW(TAG, "Request queue full");
         return 0;
     }
@@ -976,12 +1068,37 @@ uint32_t bus_service_request_stops(const char *route,
     req.bound = bound;
     req.service_type = service_type;
 
+    bus_catalog_sync_foreground_begin();
     if (xQueueSend(s_request_queue, &req, 0) != pdTRUE) {
+        bus_catalog_sync_foreground_end();
         ESP_LOGW(TAG, "Request queue full");
         return 0;
     }
 
     return req.id;
+}
+
+void bus_stop_catalog_schedule(void)
+{
+    ESP_LOGI(TAG, "Legacy per-stop catalog scheduling disabled; prepared catalogs are required");
+}
+
+static void process_stop_catalog_request(const bus_request_t *req)
+{
+    (void)req;
+    ESP_LOGW(TAG, "Ignoring deprecated per-stop catalog request; no detail HTTP is scheduled");
+}
+
+uint32_t bus_service_request_stop_catalog_sync(void)
+{
+    if (s_request_queue == NULL) {
+        bus_service_init();
+    }
+    if (s_worker_task == NULL) {
+        return 0;
+    }
+    if (!bus_catalog_sync_request(true)) return 0;
+    return s_next_request_id++;
 }
 
 uint32_t bus_service_request_stop_detail(const char *stop_id,
@@ -1039,13 +1156,15 @@ uint32_t bus_service_request_eta(const char *stop_id,
 void bus_service_cancel_all(void)
 {
     s_cancel_all = true;
+    bus_catalog_sync_cancel_all();
     const size_t kmb_catalog = crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
     const size_t ctb_route = crystal_http_cancel_owner(CTB_ROUTE_VARIANTS_OWNER_ID);
     const size_t kmb_stops = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
     const size_t ctb_stops = crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
-    ESP_LOGI(TAG, "All bus cancellation requested kmb_catalog=%u ctb_route=%u kmb_stops=%u ctb_stops=%u",
+    const size_t stop_catalog = crystal_http_cancel_owner(STOP_CATALOG_OWNER_ID);
+    ESP_LOGI(TAG, "All bus cancellation requested kmb_catalog=%u ctb_route=%u kmb_stops=%u ctb_stops=%u stop_catalog=%u",
              (unsigned)kmb_catalog, (unsigned)ctb_route,
-             (unsigned)kmb_stops, (unsigned)ctb_stops);
+             (unsigned)kmb_stops, (unsigned)ctb_stops, (unsigned)stop_catalog);
     // Clear queue
     if (s_request_queue != NULL) {
         xQueueReset(s_request_queue);
@@ -1063,15 +1182,17 @@ void bus_service_cancel_stops(void)
 void bus_service_network_disconnected(void)
 {
     s_network_lost = true;
+    bus_catalog_sync_network_lost();
     (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
     const size_t ctb_route_cancelled =
         crystal_http_cancel_owner(CTB_ROUTE_VARIANTS_OWNER_ID);
     const size_t kmb_cancelled = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
     const size_t ctb_cancelled = crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
+    const size_t catalog_cancelled = crystal_http_cancel_owner(STOP_CATALOG_OWNER_ID);
     ESP_LOGW(TAG,
-             "Network disconnected; bus HTTP cancellation ctb_route=%u kmb_stops=%u ctb_stops=%u",
+             "Network disconnected; bus HTTP cancellation ctb_route=%u kmb_stops=%u ctb_stops=%u stop_catalog=%u",
              (unsigned)ctb_route_cancelled, (unsigned)kmb_cancelled,
-             (unsigned)ctb_cancelled);
+             (unsigned)ctb_cancelled, (unsigned)catalog_cancelled);
     esp_http_client_handle_t client = s_active_direct_client;
     if (client != NULL) {
         ESP_LOGW(TAG, "Network disconnected; cancelling active direct HTTP request");
@@ -1089,6 +1210,7 @@ void bus_service_network_connected(void)
         ESP_LOGI(TAG, "Network lease restored; bus HTTP requests enabled");
     }
     s_network_lost = false;
+    bus_catalog_sync_request(false);
 }
 
 // Worker task
@@ -1102,6 +1224,9 @@ static void bus_worker_task(void *arg)
         if (xQueueReceive(s_request_queue, &req, portMAX_DELAY) == pdTRUE) {
             if (s_cancel_all) {
                 s_cancel_all = false;
+                if (req.type == REQ_TYPE_ROUTE || req.type == REQ_TYPE_STOPS) {
+                    bus_catalog_sync_foreground_end();
+                }
                 continue;
             }
 
@@ -1110,9 +1235,11 @@ static void bus_worker_task(void *arg)
             switch (req.type) {
                 case REQ_TYPE_ROUTE:
                     process_route_request(&req);
+                    bus_catalog_sync_foreground_end();
                     break;
                 case REQ_TYPE_STOPS:
                     process_stops_request(&req);
+                    bus_catalog_sync_foreground_end();
                     break;
                 case REQ_TYPE_STOP_DETAIL:
                     // TODO: implement
@@ -1122,6 +1249,9 @@ static void bus_worker_task(void *arg)
                     break;
                 case REQ_TYPE_ROUTE_CATALOG:
                     process_route_catalog_request(&req);
+                    break;
+                case REQ_TYPE_STOP_CATALOG:
+                    process_stop_catalog_request(&req);
                     break;
             }
         }

@@ -1,181 +1,142 @@
-# Tracked Slice 4 Code Guide — Stop Picker and Stop Names
+# Tracked Slice 4 Code Guide — Prepared Stop Catalogs
 
-**Status:** Planned; implement in order and keep ETA/favorites outside this
-slice.
+**Status (2026-10-02):** Revision 4R replaces original S4.0–S4.4 acquisition.
+This is an implementation guide, not a statement that the new code exists.
 
-**Plan:** [Slice 4 implementation plan](crystal-http-phase5-slice4-stop-picker-plan.md)
+**Plan:** [Slice 4 plan](crystal-http-phase5-slice4-stop-picker-plan.md)
 
-The selected route variant remains the only source of route-stop identity. The
-stop picker adds source IDs, sequence, names, and optional coordinates around
-that identity. Provider adapters own provider JSON and URL details; the app
-owns copied page state and rendering.
+## Invariants
 
-## Non-negotiable rules
+- Identity remains `(operator, source_stop_id)`; sequence belongs to route-stop data.
+- Route selection fetches an ordered mapping and performs local name lookups.
+- Neither UI callbacks nor service discovery may enqueue stop-detail HTTP.
+- All on-device HTTPS uses `crystal_http`; LVGL owns UI rendering.
+- Keep active records available during refresh. Callers receive copied values.
+- One provider's missing/failed catalog cannot invalidate the other provider.
 
-- Use `route + op + bound + service_type + stop_id` as the stop identity.
-- Preserve provider source IDs exactly, including case and punctuation.
-- Keep route sequence as an integer and sort numerically.
-- Never match or merge stops by name alone.
-- Never infer CTB direction from terminal text or array order.
-- Never update LVGL from the bus worker task.
-- Every request and event is correlated with a request ID and selected-route
-  identity.
-- A detail failure leaves the route-stop list usable with a sequence fallback.
-- All strings and arrays have fixed bounds and one owner.
+## 4R.0 — Selective retirement
 
-## S4.0 — Fixtures and endpoint confirmation
+Take a recovery snapshot including untracked modules and fixtures first.
+In `bus_service.c`, remove discovery/sync calls from both successful
+`process_stops_request()` branches. Replace the old catalog reconnect and
+per-key retry path. Retire `bus_stop_discovery.c` and its CMake registration
+when unused; do not leave a hidden detail-fetch fallback.
 
-Files:
+Retain `bus_stop_metadata_t`, provider keys, and lookup entry points as useful
+contracts, adjusting them deliberately where needed. Replace the transport
+loop in `bus_stop_catalog.c`; do not carry `fetch_one()`, four-record batches,
+or `BUS_STOP_DISCOVERY_CAPACITY` into the full-directory design. Preserve
+Slice 3 route-stop request/cancellation identity and route cache format.
 
-- `docs/crystal-http-phase5-slice4-stop-picker-plan.md`
-- `components/bus_service/src/bus_provider_kmb.*`
-- `components/bus_service/src/bus_provider_ctb.*`
-- `tools/`
-- `components/bus_service/fixtures/` if present
+## 4R.1 — Host converter and format
 
-Capture the exact response bodies before coding parsers. Name fixture files by
-provider and operation, direction, and language. A fixture must preserve the
-fields needed to prove source ID, sequence, EN, TC, latitude, longitude, and
-null/empty cases. If a provider has no single-stop endpoint, document the
-confirmed bulk endpoint and adapt the bounded loader to it; do not silently
-turn one route into an unbounded request fan-out.
+Proposed tool: `tools/bus_catalog/build_stop_catalogs.py`. It accepts saved
+source files for deterministic tests and supports explicitly downloading inputs.
+KMB input is `/v1/transport/kmb/stop` bulk JSON. CTB input is a pinned HK Bus
+Crawling snapshot: collect exact IDs under each route's CTB stops, deduplicate,
+and look them up in `stopList`. Validate the observed upstream schema before
+coding extraction. Never infer membership from six-digit IDs or shared names.
+Reject missing required source records; publish no silently partial replacement.
+Record raw-source hashes, generation time, upstream timestamp when available,
+source URLs, coverage counts, and attribution. Do not substitute generation
+time for upstream freshness evidence. Do not copy upstream crawler code just
+to implement an independent format converter.
 
-## S4.1 — Data and event contracts
+Use separate provider files with explicit little-endian serialization, not raw
+C-struct dumps. Recommended layout: versioned header, sorted fixed-size ID/index
+entries, and a UTF-8 string pool. Index entries contain string offsets/lengths,
+coordinate validity and values. Validate offsets and multiplication overflow.
+Measure maximum field lengths; preserve full strings in storage. Bounded UI
+copies must truncate only at UTF-8 boundaries. Sort and search with the same
+byte-order comparator; preserve leading zeroes and original IDs.
 
-Files:
+The manifest describes each provider's schema, immutable artifact location,
+byte length, record count, source revision/time, and SHA-256. Freeze exact field
+widths and limits after measuring real inputs. Write fixtures for malformed
+manifest, wrong provider, duplicate IDs, missing names, invalid coordinates,
+long UTF-8 text, broken offsets and checksum mismatch.
 
-- `components/bus_service/include/bus_service.h`
-- `components/bus_service/src/bus_service.c`
-- provider headers
-- `components/bus_app/include/bus_app.hpp`
+Document the measured peak budget: existing app/route memory + TLS headroom +
+HTTP response capacity + handoff copy + active index + replacement working set.
+`crystal_http` currently buffers the entire response; it has no file-streaming
+API. Compact artifacts must fit that model with an explicit body cap. If they
+do not, add a separately tested bounded streaming/file-sink transport step
+before 4R.2. Never assume streaming already exists or fall back to internal RAM
+for a large body. Budget active KMB + active CTB + one candidate + route cache
+and filesystem overhead within the existing 4-MiB partition.
 
-Add or refine a detail type with bounded fields:
+## 4R.2 — Snapshot synchronization
 
-```c
-typedef struct {
-    char stop_id[20];
-    char name_en[60];
-    char name_tc[60];
-    float lat;
-    float lon;
-    bool has_coordinates;
-    bool resolved;
-} bus_stop_detail_t;
-```
+Use a catalog state machine with dedicated HTTP ownership and one pending
+refresh per provider. Bootstrap/age/manual refresh are the triggers. Provider
+manifest and artifact requests have bounded timeouts, retries, and backoff.
+A callback transfers completion to the worker, which validates/stores data;
+release each framework response exactly once and avoid unnecessary body copies.
 
-Keep `bus_stop_t` as the route-stop row object. If detail fields are copied
-into it, define that the successful `BUS_EVT_STOPS_LIST` array owns the row
-storage and the app frees it after copying. A separate detail event carries a
-copied value and no internal pointer.
+Do not wait for a multi-request catalog batch inside the foreground bus worker.
+Return control while transfer is pending. On a route selection, cancel/defer a
+background transfer if necessary, then admit the selected route's request.
+Keep callbacks safe after cancellation using request/generation tokens.
+Network restoration retries a provider update, not thousands of stop keys.
+Coalesce progress events and yield during long parsing/index work.
 
-Add an explicit detail request identity if the existing event identity cannot
-carry `stop_id`. Preserve `bound` and `service_type` even though the detail
-URL may not use them; they protect against stale page results.
+Start with daily source-age checks when time is valid; unchanged revisions skip
+artifact downloads. An already stale source does not become fresh by redownload.
+Offline/unknown-clock states keep valid cached values usable. Missing source
+metadata must not trigger busy retries. Hosting and scheduled artifact generation
+must be configured for online acceptance; a local file test is not equivalent.
 
-## S4.2 — Provider parsers and transport
+Log provider, source revision, phase, HTTP status, actual transport error,
+body bytes, attempts, validation result, and active generation. A failed HTTP
+request must not be reported merely as a JSON parse failure.
 
-Files:
+## 4R.3 — Durable generations
 
-- `components/bus_service/src/bus_provider_kmb.c/.h`
-- `components/bus_service/src/bus_provider_ctb.c/.h`
-- `components/bus_service/src/bus_service.c`
+Use version-2 provider catalogs in recoverable A/B slots. Serialize and validate
+explicitly; generation selection must use a documented commit/validation rule.
+Keep the current slot while writing the inactive one. On boot select a complete,
+checksum-valid committed generation; interrupted files must not win selection.
+Test actual SPIFFS behavior. Never implement replacement by deleting the sole
+valid active file after a failed rename. Reclaim obsolete slots only while a
+valid active generation remains, and update providers sequentially to bound space.
 
-Implement one parser per provider. Each parser must:
+Treat the legacy `/spiffs/bus_stop_catalog.bin` v1 partial format as obsolete.
+Ignore it safely, log once, and fetch a new catalog. Any eventual targeted cleanup
+must not erase the route cache or other filesystem contents.
 
-1. reject non-object JSON and missing required source IDs;
-2. preserve sequence from the route-stop response;
-3. accept missing localized fields as empty;
-4. validate finite coordinates and discard invalid coordinates only;
-5. truncate or reject overlong text according to the documented bounds;
-6. return `ESP_ERR_NOT_FOUND` for a valid response with no matching stop;
-7. avoid allocating a JSON-sized copy after the HTTP body is released.
+## 4R.4 — Lookup and status
 
-Implement `REQ_TYPE_STOP_DETAIL` using the existing handoff pattern. Log the
-provider, route/stop identity, URL operation, status, body size, attempts, and
-final error. Use PSRAM for response bodies and free them exactly once after
-parsing. Do not call a parser while holding a UI object or event callback.
+Keep caller-owned output APIs such as `bus_service_lookup_stop_metadata()` and
+`bus_service_lookup_route_stop()`. Use a sorted index and bounded local reads;
+no linear scan over the entire catalog per row. Synchronize generation swaps,
+reads, and status copies so no reader references freed storage. Do not perform
+large filesystem scans under the LVGL lock; compose row copies in the worker.
 
-Cancellation must terminate both queued and in-flight detail work. A late
-success after cancellation is released and ignored by request ID.
+Return found/missing/invalid explicitly; report stale as separate status or keep
+the existing documented stale return with copied output. Clear output on misses
+so diagnostics cannot print an earlier CTB record as a KMB result.
 
-## S4.3 — Cache and bounded loading
+Expose per-provider status: usable, freshness enum, updating, generation,
+record count, source time, last successful update, last transport/validation
+error. Unknown clock is not fresh. `usable` means a complete validated provider
+artifact is active; it does not guarantee that a newer official route contains
+no unknown IDs. Global readiness must not be `record_count > 0`.
 
-Files:
+## 4R.5 — Directional destination follow-up
 
-- `components/bus_service/src/bus_service.c`
-- `components/bus_service/include/bus_service.h`
-- `components/bus_app/src/bus_app.cpp`
+Keep source evidence and official-app comparison as a separate optional gate.
+No automatic origin/destination swap or final-stop substitution without a
+validated rule. Do not change route identity or enable provisional UI text.
 
-Use a small service-owned cache keyed by operator, stop ID, and language
-generation. The cache may be a fixed array or bounded LRU; establish a hard
-capacity and log evictions. Do not persist the full stop database in this
-slice. Persisting favorite names belongs to the favorites slice.
+## 4R.6 — Verification and handoff
 
-When the route-stop response arrives:
-
-1. show rows immediately in route sequence order;
-2. copy cached details into matching rows;
-3. request only uncached visible rows or a bounded batch;
-4. update rows on the LVGL task as detail events arrive;
-5. retain fallback text for failed or offline rows.
-
-Deduplicate a detail request already pending for the same composite identity.
-Cancel pending detail work when leaving the page or replacing the route.
-
-## S4.4 — Stop-picker UI and selection
-
-Files:
-
-- `components/bus_app/src/bus_app.cpp`
-- `components/bus_app/include/bus_app.hpp`
-
-Add page state for:
-
-- the stop-list request ID;
-- a detail-generation or page-generation counter;
-- copied selected variant;
-- route-stop array ownership;
-- selected stop identity and copied display name.
-
-Render rows with a stable layout such as `01  <name>` and a secondary
-coordinate or source label only when useful. Keep labels bounded and use LVGL
-ellipsis for long names. Center `Loading bus stops...`, `Waiting for network`,
-and terminal error text in the list area. Do not expose request IDs in normal
-user-facing text.
-
-On row activation, copy the full `bus_stop_t` into selected-stop state and log:
-
-```text
-Stop selected route=<...> op=<...> bound=<I|O> service_type=<...> stop_id=<...> seq=<...>
-```
-
-Do not queue ETA yet. Back from the picker cancels detail work and returns to
-the prior Search or route page according to the current navigation contract.
-
-## S4.5 — Tests and device checks
-
-Host checks should cover:
-
-- valid KMB and CTB detail payloads;
-- missing EN or TC text;
-- invalid coordinates;
-- duplicate and overlong IDs/text;
-- empty and malformed payloads;
-- cache hit/miss and provider-qualified key collisions;
-- stale event rejection after direction replacement.
-
-Device checks should cover:
-
-1. cold route-stop load for KMB and CTB in both directions;
-2. named rows appearing after placeholder rows;
-3. warm cache reload after revisiting the route;
-4. Back and immediate selection of the other direction;
-5. Wi-Fi loss during route-stop and detail requests;
-6. reboot and route catalog cache reload;
-7. ten repeated selections with no watchdog and no stale names;
-8. heap, TLS retry, AES allocation, and CPU observations.
-
-Required commands:
+Host tests: deterministic conversion; CTB membership; provider isolation;
+round-trip encoding; full-size limits; corrupt/truncated files; generation
+recovery; stale/unknown clock; copied lookup during replacement.
+Device tests: both providers, cold/warm start, full catalog sizes, navigation
+during update, Wi-Fi loss/recovery, HTTP failures, disk-full, rapid route switch,
+watchdog/heap, and no detail requests caused by browsing. Existing KMB transport
+failure must be reproduced or cleared with device evidence, not assumed fixed.
 
 ```text
 source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
@@ -183,6 +144,5 @@ idf.py build
 git diff --check
 ```
 
-Record the result with the plan's evidence template. A transport timeout,
-provider parse failure, and stale UI event are separate failures and should be
-reported separately.
+Handoff must identify completed **4R.x** steps and remaining source/hosting/device
+gates. Do not resume old S4.5 merely because original S4.4 diagnostics ran.

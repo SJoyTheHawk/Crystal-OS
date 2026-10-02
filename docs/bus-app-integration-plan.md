@@ -8,38 +8,42 @@
 signed off for handoff. Slice 2 established provider-qualified CTB variants,
 cache identity, stop handoff, and lifecycle guards. Slice 3 added normalized
 route metadata, CTB route-level destination summaries, and destination-first
-Search presentation. The next slice is stop picking and stop-name resolution.
+Search presentation. Slice 4 is being revised from per-stop acquisition to prepared stop catalogs;
+Slice 5 owns named stop picking and selection.
 
 See [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
 and its [code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
-The next implementation slice is [Slice 4 — stop picker and stop names](crystal-http-phase5-slice4-stop-picker-plan.md)
+The next implementation slice is [Slice 4 — stop metadata catalog](crystal-http-phase5-slice4-stop-picker-plan.md)
 with its [code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md).
+The picker and selection boundary move to [Slice 5](crystal-http-phase5-slice5-stop-picker-plan.md).
 
 This document compares the requested workflow in [`bus-app-workflow.md`](bus-app-workflow.md), [`bus-app-ui-design.md`](bus-app-ui-design.md), and [`bus-app-code-guide.md`](bus-app-code-guide.md) with the code that currently exists in `components/bus_service` and `components/bus_app`. Each implementation step should be completed and verified before starting the next one.
 
-## Current conclusion
+## Current conclusion (2026-10-02)
 
-The current code is a UI and service skeleton. It can create the two tab containers, accept a route string, queue a route request, queue stop and ETA requests, render persisted favorite records, and start a 30-second timer. It cannot yet complete the requested user flow.
+Slices 1–3 provide runtime KMB/CTB route catalogs, provider-qualified variants,
+normalized route summaries, ordered route-stop IDs, and cancellation/network
+lifecycle handling. The old skeleton-only assessment is superseded; the detailed
+capability matrix below includes historical rows that still require verification
+before being used as evidence of current code behaviour.
 
-The largest blockers are:
+Original Slice 4 reached local lookup diagnostics, but acquired names through
+individual stop requests triggered by route discovery. KMB requests are failing
+on the device; that transport cause remains unproven. The acquisition design
+also conflicts with the intended preloaded stop directory experience.
 
-1. The route index is a seven-entry test fixture, not the documented full index. It is in [`bus_index_data.c`](../components/bus_service/src/bus_index_data.c).
-2. Route discovery only queries KMB. CTB/NWFB variants are not aggregated.
-3. Stop names and coordinates are never resolved. `REQ_TYPE_STOP_DETAIL` is queued but intentionally discarded by the worker.
-4. The service listener is called directly from the worker task, although the design requires delivery on the LVGL task. LVGL objects must not be updated from the worker.
-5. The app has no direction chooser, stop picker, ETA detail page, favorite add/remove action, or edit/delete mode.
-6. ETA requests do not carry a direction. A favorite can therefore receive the opposite direction, and co-operated routes cannot be merged.
-7. The planned language and seven-day cache system does not exist. The repository currently has a 4 MB SPIFFS partition, while the documents describe LittleFS.
+The revised [Slice 4 plan](crystal-http-phase5-slice4-stop-picker-plan.md) uses
+compact provider snapshots built off-device: KMB from its official bulk API,
+CTB from HK Bus Crawling's prepared dataset. The device independently updates
+and persists these catalogs. Selected routes continue using official route-stop
+requests and resolve names locally. Artifact hosting and scheduled preparation
+are explicit delivery dependencies; they are not implemented yet.
 
-The existing code also contains correctness issues that must be handled before adding screens:
-
-- `bus_route_next_mask()` can enable characters from unrelated routes because its second comparison does not require the typed prefix to match.
-- `onFavoriteClicked()` receives an index as event user data but casts that value to `BusApp *`.
-- `updateFavoriteCard()` and `showError()` are stubs, so successful background responses are not reflected in the UI.
-- Route and stop request failures are emitted as `BUS_EVT_ROUTE_VARIANTS` or `BUS_EVT_STOPS_LIST` with an error status, while the app only reports `BUS_EVT_ERROR`.
-- The request queue has depth four, but one refresh can enqueue up to eight favorites. Requests can be dropped without an app-visible result.
-- `Favorite::op` stores one operator, but a co-operated route needs an operator set or separate normalized ETA requests.
-- The current favorite ETA match uses only `stop_id`; the same stop can have multiple route, direction, service type, or operator records.
+Use a selective refactor from the current worktree. `e79d24a` is the Slice 3
+baseline and remains HEAD at this review; no full revert is recommended. Keep
+copied metadata/key contracts, replace the per-stop queue and partial-catalog
+state, and preserve unrelated work. Revision steps are named **4R.0–4R.6** so a
+new session cannot mistake original S4.4 completion for acceptance of this plan.
 
 ## HTTPS/TLS migration dependency and sequencing
 
@@ -81,8 +85,8 @@ those responsibilities separate so a failed device gate remains localizable.
 | 7 | CTB route variants | Step 3A provider-qualified choices | Implemented with deferred destination association | [Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) preserves CTB identity and direction. The public route list does not associate terminal pairs with direction; [Slice 3](crystal-http-phase5-slice3-normalized-route-metadata-plan.md) retains those pairs as route-level metadata for Search. |
 | 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
 | 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
-| 10 | Route-stop list | `process_stops_request()` returns IDs and sequence | Implemented | Slice 4 adds named-row loading and detail correlation on top of the existing provider-qualified list. |
-| 11 | Stop names and coordinates | `BUS_EVT_STOP_DETAIL` declared; worker does nothing | Next slice | Implement provider detail adapters, bounded cache/loading, and EN/TC fallback states. |
+| 10 | Route-stop list | Official selected-route requests return IDs and sequence | Implemented | Preserve route identity; Slice 5 joins names locally from revised Slice 4 catalogs. |
+| 11 | Stop names and coordinates | Original Slice 4 partial cache and copied lookup APIs | Revision required | Replace per-stop acquisition with 4R prepared provider catalogs and independent status. |
 | 12 | Stop picker | Stop page renders sequence placeholders | Next slice | Build named scrollable rows, selection state, loading/error rows, and back navigation. |
 | 13 | ETA for one operator | `process_eta_request()` | Partial | Correct API parsing, direction filtering, clock-invalid behavior, and error/empty result semantics. |
 | 14 | ETA for co-operated route | None | Missing | Issue both requests, merge and sort predictions, deduplicate, and retain per-operator error state. |
@@ -195,7 +199,7 @@ The official public specification describes KMB's `/stop-eta/{stop_id}` response
 
 ### Step 4A — Normalize route metadata and show destinations (complete)
 
-This is the next implementation slice. It moves the useful part of the CTB
+Slice 3 moved the useful part of the CTB
 route response into Search without weakening directional identity.
 
 - Define a provider-neutral route summary beside `bus_route_variant_t`.
@@ -213,24 +217,36 @@ and [Slice 3 code guide](crystal-http-phase5-slice3-normalized-route-metadata-co
 inbound/outbound row still produces the same stop URL, and cache reload keeps
 the route summaries and provider identities.
 
-### Step 4B — Add the stop picker
+### Step 4B — Prepare and synchronize stop catalogs (revision 4R)
 
-**Goal:** Let a user choose a direction and a stop.
+**Goal:** Resolve stop names locally without browsing-triggered detail requests.
 
-- Consume the normalized route summaries and variants from Step 4A.
-- Implement route discovery for every supported operator and merge variants by normalized route/bound/service type.
-- Use the Search result rows as the direction chooser. If only one variant exists, it may be selected automatically; otherwise each row shows the operator, direction, and destination.
-- Implement route-stop requests for the selected variant and return sequence plus source stop IDs.
-- Implement stop-detail resolution with active language. Use a bounded in-memory cache and lazy loading as rows enter the viewport, or a validated route-scoped cache.
-- Build the scrollable stop picker with placeholder rows, loading/error states, and a back button.
-- Retain the selected variant and stop sequence in page state; never infer them from a label.
+- Preserve the Slice 3 route catalog and on-demand ordered route-stop responses.
+- Convert official KMB bulk stops and prepared HK Bus Crawling CTB data into
+  separate compact, provider-qualified artifacts on a host machine.
+- Establish artifact provenance, scheduled generation and HTTPS hosting.
+- Budget full catalogs and replacement space for the 4-MiB SPIFFS partition,
+  plus PSRAM and internal TLS memory. Do not reuse the old 512-key limit.
+- Synchronize manifests/artifacts through `crystal_http`, independently of route
+  selection, with cancellation/deferment for foreground route requests.
+- Persist recoverable provider generations; retain usable stale data on failure.
+- Expose copied local lookups and truthful per-provider status. Unknown IDs do
+  not start individual HTTP requests.
 
-**Exit check:** Search → route variant → stop picker works for KMB, CTB, and a co-operated fixture route in both languages.
+**Exit check:** Both provider snapshots survive reboot and safe replacement,
+resolve names locally, and show zero detail requests caused by browsing. KMB
+transport and CTB artifact delivery must each pass their own device gate.
 
-The detailed implementation order for this step is tracked in [Slice 4 — stop
-picker and stop names](crystal-http-phase5-slice4-stop-picker-plan.md). It
-supersedes the short checklist above when endpoint confirmation, cache bounds,
-or cancellation behavior differ from the original integration outline.
+See the [4R implementation plan](crystal-http-phase5-slice4-stop-picker-plan.md)
+and [code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md). Full route
+mapping preloading and live ETA remain outside this slice.
+
+### Step 4C — Add the stop picker and selection boundary
+
+The picker consumes the local prepared catalogs and selected-route stop mapping. It renders fallback
+sequence labels for unresolved records, supports both providers and directions,
+and emits a complete selected-stop identity without issuing detail HTTPS
+requests. See [Slice 5](crystal-http-phase5-slice5-stop-picker-plan.md).
 
 ### Step 5 — Implement ETA normalization and the ETA board
 

@@ -10,6 +10,7 @@
 #include "esp_http_client.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "mbedtls/ssl.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -83,11 +84,37 @@ static void sample_memory(memory_trace_t *trace, bool tls_stage)
 
 static void log_heap(const char *stage, uint32_t request_id)
 {
-    ESP_LOGI(TAG, "heap %s id=%lu internal=%u largest_internal=%u psram=%u",
+    ESP_LOGI(TAG, "heap %s id=%lu internal=%u largest_internal=%u psram=%u largest_psram=%u",
              stage, (unsigned long)request_id,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+}
+
+static void capture_transport_failure(esp_http_client_handle_t client,
+                                      crystal_http_response_t *response)
+{
+    int tls_code = 0;
+    int tls_flags = 0;
+    const int socket_errno = esp_http_client_get_errno(client);
+    const esp_err_t tls_error = esp_http_client_get_and_clear_last_tls_error(
+        client, &tls_code, &tls_flags);
+    // esp_http_client_open wraps TLS allocation failures in HTTP_CONNECT.
+    // Preserve the resource classification so the existing no-memory policy
+    // does not retry an identical allocation under the same heap pressure.
+    // esp-tls stores the Mbed TLS code as a positive value in IDF 6.1,
+    // although the Mbed TLS macro itself is negative on older releases.
+    if (tls_code == MBEDTLS_ERR_SSL_ALLOC_FAILED ||
+        tls_code == -MBEDTLS_ERR_SSL_ALLOC_FAILED ||
+        tls_error == ESP_ERR_NO_MEM) {
+        response->transport_error = ESP_ERR_NO_MEM;
+    }
+    ESP_LOGW(TAG, "transport diagnostic id=%lu error=%s tls_error=%s tls_code=%d tls_flags=0x%x socket_errno=%d",
+             (unsigned long)response->request_id,
+             esp_err_to_name(response->transport_error), esp_err_to_name(tls_error),
+             tls_code, (unsigned)tls_flags, socket_errno);
+    log_heap("failure", response->request_id);
 }
 
 static request_slot_t *slot_for(uint8_t index)
@@ -115,8 +142,10 @@ static void perform_request_once(request_slot_t *slot,
             .timeout_ms = slot->timeout_ms != 0 ? slot->timeout_ms : 15000,
             .keep_alive_enable = slot->keep_alive,
             .crt_bundle_attach = esp_crt_bundle_attach,
-            .buffer_size = 4096,
-            .buffer_size_tx = 2048,
+            // These IDF buffers use ordinary malloc, which prefers internal
+            // RAM for small allocations. Bodies still accumulate in PSRAM.
+            .buffer_size = 1024,
+            .buffer_size_tx = 1024,
         };
         esp_http_client_handle_t client = esp_http_client_init(&config);
         sample_memory(&memory, true);
@@ -212,8 +241,12 @@ static void perform_request_once(request_slot_t *slot,
                         }
                     }
                 }
-                esp_http_client_close(client);
             }
+            // Capture TLS details before close/cleanup destroys the handle.
+            if (response->transport_error != ESP_OK && !slot->cancelled) {
+                capture_transport_failure(client, response);
+            }
+            esp_http_client_close(client);
             esp_http_client_cleanup(client);
             log_heap("after", slot->request_id);
         }
@@ -265,6 +298,14 @@ static void deliver_request(request_slot_t *slot)
                  (unsigned long)slot->request_id, (unsigned)attempt, (unsigned)attempts);
         perform_request_once(slot, &response, started);
         response.attempts = attempt;
+        // Include failed attempts in the resource evidence, even when a later
+        // attempt succeeds with a less demanding handshake.
+        if (response.tls_internal_free_min < s_stats.min_tls_internal_free)
+            s_stats.min_tls_internal_free = response.tls_internal_free_min;
+        if (response.tls_largest_internal_min < s_stats.min_tls_largest_internal)
+            s_stats.min_tls_largest_internal = response.tls_largest_internal_min;
+        if (response.tls_psram_free_min < s_stats.min_tls_psram_free)
+            s_stats.min_tls_psram_free = response.tls_psram_free_min;
         if (!is_retryable_response(&response) || attempt == attempts || slot->cancelled) break;
 
         if (response.body != NULL) {
@@ -305,12 +346,6 @@ static void deliver_request(request_slot_t *slot)
         s_stats.transport_failures++;
     }
     if (response.body_len > s_stats.peak_body_bytes) s_stats.peak_body_bytes = response.body_len;
-    if (response.tls_internal_free_min < s_stats.min_tls_internal_free)
-        s_stats.min_tls_internal_free = response.tls_internal_free_min;
-    if (response.tls_largest_internal_min < s_stats.min_tls_largest_internal)
-        s_stats.min_tls_largest_internal = response.tls_largest_internal_min;
-    if (response.tls_psram_free_min < s_stats.min_tls_psram_free)
-        s_stats.min_tls_psram_free = response.tls_psram_free_min;
     s_stats.completed++;
 
     if (slot->callback != NULL) {
@@ -382,6 +417,16 @@ bool crystal_http_init(void)
     s_stats.min_tls_largest_internal = UINT32_MAX;
     s_stats.min_tls_psram_free = UINT32_MAX;
     ESP_LOGI(TAG, "component initialized");
+#if CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC
+    ESP_LOGI(TAG, "TLS allocator=PSRAM");
+#else
+    ESP_LOGI(TAG, "TLS allocator is not forced to PSRAM");
+#endif
+#if CONFIG_MBEDTLS_HARDWARE_AES
+    ESP_LOGI(TAG, "TLS hardware AES=enabled");
+#else
+    ESP_LOGI(TAG, "TLS hardware AES=disabled");
+#endif
     ESP_LOGI(TAG, "queue depth=%d", CRYSTAL_HTTP_QUEUE_DEPTH);
     return true;
 }

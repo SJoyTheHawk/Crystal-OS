@@ -1,220 +1,199 @@
-# HTTPS Phase 5 — Slice 4: Stop Picker and Stop Names
+# HTTPS Phase 5 — Slice 4: Prepared Stop Catalogs
 
-**Status:** Planned; Slice 3 route metadata and destination presentation are
-complete. The TLS AES memory follow-up is implemented separately and must be
-included in the device baseline for this slice.
+**Status (2026-10-02):** Acquisition design revised during original S4.4.
+Original S4.0–S4.4 implementation exists but is not accepted under this revision.
+The on-device discovery/per-stop download workflow is superseded. No code was
+reverted as part of this documentation change.
 
-**Previous slice:** [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+**Previous:** [Slice 3](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+**Guide:** [Slice 4 code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md)
+**Next:** [Slice 5](crystal-http-phase5-slice5-stop-picker-plan.md)
 
-**Code guide:** [Slice 4 code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md)
+## Decision and user flow
 
-## Decision
-
-The next slice completes the first useful drill-down flow:
-
-```text
-Search → provider/direction row → route-stop list → named stop row
-```
-
-The selected `bus_route_variant_t` remains the request identity. Stop names,
-coordinates, and localized labels enrich a stop row; they never determine the
-route, provider, direction, service type, or stop URL.
-
-The slice ends when a user can select a named stop from a selected KMB or CTB
-route in both directions. ETA requests, favorite persistence, and nearby
-search remain later slices.
-
-## Scope
-
-This slice includes:
-
-1. A complete stop-list contract with provider source ID and route sequence.
-2. Provider-specific stop-detail adapters for KMB and CTB, after endpoint
-   shapes are confirmed against live responses and fixtures.
-3. Bounded stop-name and coordinate caching with active-language selection.
-4. A scrollable stop-picker page with loading, partial, empty, failure,
-   offline, cancellation, and retry states.
-5. Request correlation and cancellation for route-stop and stop-detail work.
-6. Host fixtures and device acceptance for KMB, CTB, shared route labels,
-   both directions, reboot, and Wi-Fi loss.
-
-This slice does not include:
-
-- ETA parsing, refresh timers, or an ETA board;
-- saving, editing, or deleting favorites;
-- assigning CTB route-level terminal pairs to a direction;
-- inferring a stop identity from its display name or sequence;
-- language switching UI, although the service stores EN/TC values and uses a
-  single active-language selector;
-- nearby search or bulk geolocation discovery.
-
-## Current baseline
-
-The route-stop requests already work through `crystal_http` for KMB and CTB.
-They return ordered source stop IDs and sequence numbers in `bus_stop_t`, but
-the app currently renders `Stop N` placeholders. `REQ_TYPE_STOP_DETAIL` is
-declared and queued, while the worker still discards it. The app has one stop
-page and request identity guards, but it does not yet retain a selected stop
-or display resolved names.
-
-The baseline also includes the software-AES TLS configuration from
-`crystal-http-tls-aes-memory-fix.md`. Record its successful device result
-before diagnosing stop-detail failures; transport allocation and provider
-parsing must remain distinguishable.
-
-## Contracts
-
-### Stop identity
-
-Every stop row is identified by:
+Keep the established KMB/CTB route catalog. Download prepared stop catalogs
+independently of route browsing. Selecting a route still fetches that variant's
+ordered stop IDs from the official route-stop API, then resolves names locally.
+Opening or revisiting routes must never schedule individual stop-detail HTTP
+requests, including indirectly through a service discovery queue.
 
 ```text
-route + operator + bound + service_type + provider_stop_id
+Off-device preparation:
+  KMB official bulk stop JSON → compact KMB catalog
+  HK Bus Crawling snapshot → CTB stop extraction → compact CTB catalog
+
+Device initialization / scheduled refresh:
+  manifest + provider catalog → validate → persistent active catalog
+
+Route selection:
+  official route-stop response → ordered IDs → local names → stop rows
+
+Later ETA slice:
+  selected provider/route/direction/stop → live ETA request
 ```
 
-`seq` controls display order only. A stop name is never an identity key.
-KMB and CTB IDs remain provider-qualified, even when their text happens to
-match.
+The recommended initial CTB source is HK Bus Crawling's published database.
+This introduces a third-party data dependency. The host tool extracts only IDs
+referenced under CTB in that snapshot's route records and preserves their exact
+source IDs. It must not infer operators from ID length or names. Snapshot
+coverage can lag official route changes; unknown IDs stay visibly unresolved.
 
-### Stop detail
+Both provider inputs are converted off-device to one compact format. This
+avoids parsing a large multi-operator JSON database on the ESP32 and makes
+transport, storage, and lookup shared. KMB's official bulk API remains the KMB
+source; we are changing where JSON conversion runs. Full route-stop database
+preloading, as hkbus does, is outside this revision.
 
-The service owns resolved details and returns copied values:
+A supported HTTPS publication location for the generated artifacts must be
+chosen and recorded in 4R.1. No working URL or automated publishing service
+exists merely because this plan names it. Locally provisioned artifacts can
+validate storage and lookup first, but do not satisfy online update acceptance.
 
-```c
-typedef struct {
-    char stop_id[20];
-    char name_en[60];
-    char name_tc[60];
-    float lat;
-    float lon;
-    bool has_coordinates;
-    bool resolved;
-} bus_stop_detail_t;
-```
+## Evidence and correction
 
-The existing `bus_stop_t` may carry these fields if that keeps ownership clear.
-Do not expose mutable cache pointers to LVGL. Missing localized text is valid;
-the UI uses the other language or a bounded `Stop <sequence>` fallback.
+- [KMB bulk stop API documentation](https://data.gov.hk/en-data/dataset/hk-td-tis_21-etakmb/resource/3d6ded6c-ee36-40a0-a6fe-8f40966dff67)
+  explicitly documents `/v1/transport/kmb/stop` returning all stops.
+- [HK Bus Crawling KMB adapter](https://github.com/hkbus/hk-bus-crawling/blob/master/crawling/kmb.py)
+  uses bulk stop and route-stop endpoints.
+- [CTB adapter](https://github.com/hkbus/hk-bus-crawling/blob/master/crawling/ctb.py)
+  builds stop metadata through individual requests in its separate crawler.
+- [Published database](https://hkbus.github.io/hk-bus-crawling/routeFareList.min.json)
+  is described in the [crawler README](https://github.com/hkbus/hk-bus-crawling).
+- The app loads and caches the prepared database in
+  [db.ts](https://github.com/hkbus/hk-independent-bus-eta/blob/140999f0497397ea1ef0e181fb3a6e558e51ad70/src/db.ts)
+  and renders names through local `stopList[stopId]` lookups.
 
-### Request lifetime
+The previous fixture document's claim that neither provider has bulk stop data
+was incorrect for KMB. Moving individual requests to a background worker did
+not implement the intended preloaded directory experience. A source change
+also does not prove that existing KMB TLS failures are fixed; transport retains
+its own acceptance gate.
 
-Every route-stop and stop-detail event carries the request ID and full route
-identity. The app accepts a result only when the page generation and selected
-variant still match. Leaving the page, selecting another direction, Wi-Fi
-loss, pause, and destroy cancel active work. Late successful arrays and detail
-events are freed or ignored according to the existing Slice 2 ownership rule.
+## Recovery decision
 
-## Work packages
+**Use a selective refactor; do not reset the repository to Slice 3.**
+At review, `HEAD` is `e79d24a` (Slice 3). Slice 4 has uncommitted changes in
+three tracked bus-service files plus new modules/fixtures. The app and shared
+HTTP implementation have no tracked Slice 4 diffs. Preserve unrelated dirty
+`reference/ESP32-S3-Touch-LCD-4B` content.
 
-### S4.0 — Freeze stop contracts and capture provider fixtures
+| Existing work | Treatment |
+| --- | --- |
+| Provider-qualified keys, copied metadata, field validation | Keep and adapt to measured catalog limits |
+| Local lookup API shape | Keep; revise per-provider state and synchronization |
+| Individual detail parsers/fixtures | Useful input-validation evidence; not the runtime acquisition path |
+| Discovery queue and scheduling after route selection | Retire |
+| Per-key retries and four-stop HTTP batches | Replace with provider snapshot updates |
+| v1 partial catalog and pending-key persistence | Replace with versioned complete provider generations |
+| Global ready/fresh counters and diagnostics | Replace with per-provider usable/fresh/update state |
+| Slices 1–3 route identity and lifecycle work | Preserve |
 
-Record one successful KMB and CTB route-stop response in both directions,
-plus the corresponding detail responses. Confirm the exact detail URL,
-localized field names, coordinate representation, empty-name behavior, and
-HTTP status semantics from live data before writing provider code. Add fixtures
-for a normal stop, missing TC/EN text, invalid coordinates, duplicate IDs,
-and an empty route-stop response.
+Before code refactoring, preserve tracked diffs AND untracked source/fixtures
+in a local recovery snapshot or explicit checkpoint. `git diff` alone misses
+new files. A blanket `git restore` would discard reusable work and is not the
+recommended next action.
 
-**Exit:** fixture fields and URL templates are documented; no provider detail
-endpoint is guessed from a route-stop response.
+## Revised work packages
 
-### S4.1 — Complete the stop-list and detail service contracts
+Use **4R.x** identifiers to distinguish this sequence from original S4.0–S4.4.
+Old device tests remain evidence only for the paths they exercised.
 
-Extend `bus_service.h` and the provider headers with explicit stop-detail
-events and bounded status values. Keep `bus_stop_t` source IDs and sequence
-numbers intact. Add a provider-neutral detail parser interface while keeping
-JSON field names inside KMB and CTB adapters.
+### 4R.0 — Retire per-stop acquisition and preserve contracts
 
-**Exit:** host fixtures can parse route-stop and detail payloads into copied
-records without LVGL or network dependencies.
+Snapshot the current work. Disconnect discovery-triggered detail requests,
+per-key retry scheduling, and reconnect restarts of that queue. Preserve route
+catalogs, route-stop fetching, cancellation, and copied record contracts.
+Legacy partial records may be ignored; do not erase other SPIFFS data.
 
-### S4.2 — Implement bounded detail transport and cache
+**Exit:** build passes; opening both providers' routes and reconnecting produces
+no stop-detail requests. Sequence fallback remains functional.
 
-Implement the worker branch for `REQ_TYPE_STOP_DETAIL` through
-`crystal_http`, using the same handoff, retry, timeout, cancellation, and
-PSRAM ownership rules as route-stop requests. Add a bounded in-memory cache
-keyed by provider-qualified stop identity and language-independent fields.
+### 4R.1 — Prepare sources, artifacts, and resource budget
 
-Resolve visible rows lazily or in a small bounded batch. Do not enqueue one
-request for every stop immediately; a route can contain many stops and the
-request queue is finite. Deduplicate pending detail requests and retain a
-successful cached value across page rebuilds. A failed detail request must
-leave the route-stop list usable.
+Implement a reproducible host converter for KMB bulk JSON and a pinned HK Bus
+Crawling snapshot. Validate CTB membership using CTB route stop references;
+record missing references and source provenance. Generate separate sorted KMB
+and CTB catalogs plus a manifest with schema, source revision/time, byte count,
+record count, and SHA-256. Keep EN/TC and optional coordinates.
 
-**Exit:** repeated visits reuse cached names, cancellation releases all
-buffers, and offline requests terminate with `Waiting for network`.
+Measure input/output sizes, longest UTF-8 names, counts, index RAM, HTTP body
+peak, and update disk space. The current 512-key/64-KiB limits are not valid
+full-catalog budgets. Fit catalogs alongside routes in the existing 4-MiB
+SPIFFS partition, including one replacement generation. Do not silently
+truncate records or change partitions. Choose and verify the artifact hosting
+URL and update owner/cadence; include source attribution with generated files.
+A scheduled host build is the intended update mechanism; generating once is
+only a development milestone.
 
-### S4.3 — Build the stop-picker presentation
+**Exit:** deterministic full-provider artifacts and round-trip tests pass;
+resource budget and delivery configuration are documented. If no host is
+configured, report that dependency explicitly and continue local fixture work.
 
-Replace placeholder rows with sequence, active-language name, and a compact
-secondary provider/source indicator where needed. Preserve route title and
-destination formatting from Slice 3. Keep rows deterministic in route
-sequence order and make the entire row selectable.
+### 4R.2 — Synchronize provider catalogs through crystal_http
 
-Required states:
+Fetch the small manifest and only changed provider artifacts, one at a time.
+Refresh on bootstrap when missing/stale, or explicit refresh; route navigation
+never starts synchronization. Coalesce duplicate work. A selected route can
+cancel/defer background transfer and take the next HTTP slot; bulk download
+must not block the bus worker from handling that selection. Wi-Fi loss retains
+the active generation; retry the bounded transfer after recovery. Byte-range
+resume is not required.
 
-- route-stop loading;
-- route-stop success with names still resolving;
-- individual name pending;
-- partial detail failure with fallback text;
-- empty route-stop result;
-- provider/network failure;
-- Wi-Fi loss while either request is active;
-- Back/cancellation followed immediately by another direction.
+**Exit:** missing/unchanged/changed paths, cancellation, foreground priority,
+provider isolation, and low-heap transport pass. No per-stop fan-out exists.
 
-Network-loss and loading messages are centered in the list area. A stale
-detail event must never replace a newly selected direction's rows.
+### 4R.3 — Persist complete provider generations safely
 
-**Exit:** KMB and CTB route 10 (or an equivalent fixture) show ordered named
-stops in both directions, with no stale rows after rapid replacement.
+Stage and validate a replacement before publishing it. Verify schema, provider,
+counts, bounds, ordering, length, and checksum. Keep the active catalog until
+its replacement is durable. Use recoverable A/B provider slots and boot
+validation; do not remove the only valid file when rename fails. Update one
+provider at a time; failure of KMB must not invalidate CTB. Reject v1 partial
+files as complete catalogs without affecting route caches.
 
-### S4.4 — Stop selection boundary
+**Exit:** power-loss/interrupted-write, corruption, no-space, provider failure,
+and warm-boot tests recover a valid generation when one previously existed.
 
-Add a selected-stop state containing the full composite identity and copied
-display data. Tapping a row should produce a service-ready identity for the
-next ETA slice, but must not submit an ETA request yet. Back returns to the
-route-stop page and preserves its loaded data when safe.
+### 4R.4 — Local lookup and truthful provider status
 
-**Exit:** logs show the selected provider stop ID, route, bound, and service
-type; the displayed name is informational and cannot alter that identity.
+Reuse copied direct and route-stop lookups with a bounded index. Expose usable,
+fresh, updating, active generation/count, last success, and last error per
+provider. A complete validated snapshot is usable even if stale; freshness
+must reflect source age and successful validation, never a failed save/retry.
+An unknown stop is a local miss and never launches a detail request. Unknown
+clock means unknown freshness. Report CTB snapshot coverage separately from
+claims of completeness of the live operator network.
 
-### S4.5 — Acceptance and handoff
+**Exit:** both provider catalogs resolve names locally after reboot, one
+provider's failure does not imply the other's failure, and misses are safe.
 
-Run host fixtures, build checks, and device tests for cache cold start,
-reboot, both providers, both directions, shared route numbers, detail cache
-reuse, Wi-Fi loss, cancellation, rapid replacement, and low-memory TLS
-requests. Record heap before/after transport and confirm no AES allocation
-errors or watchdog resets.
+### 4R.5 — Optional directional destination evidence
 
-## Exit criteria
+Keep the prior CTB terminal proposal deferred until catalogs pass. Recheck
+provider direction semantics and the official app before selecting a rule.
+Explicit supported directional destination takes precedence; final-stop names
+are only a provisional display fallback. No guessed destination becomes route
+identity, and no provisional rule is enabled in the UI without validation.
+This work may be deferred explicitly without blocking catalog handoff.
 
-The slice is complete when:
+### 4R.6 — Acceptance and Slice 5 handoff
 
-- route-stop arrays retain source IDs and route order;
-- KMB and CTB detail adapters produce bounded EN/TC names and optional
-  coordinates;
-- stop-detail requests use `crystal_http` and honor cancellation/network loss;
-- the stop picker renders named rows and safe fallback states;
-- selected-stop identity includes route, provider, bound, service type, and
-  source stop ID;
-- stale results cannot replace a newer direction or page;
-- cache reuse reduces repeat detail requests without serving another
-  provider's stop;
-- host fixtures, `idf.py build`, `git diff --check`, and device acceptance
-  pass.
+Verify cold bootstrap, warm boot, unchanged manifest, provider update/failure,
+interruption, corrupt files, full disk, stale/missing names, Wi-Fi recovery,
+and rapid route replacement. Record HTTP request counts: metadata requests
+must depend on catalog updates, not the number of stops/routes browsed.
+Run host checks, `idf.py build`, `git diff --check`, and device tests.
 
-## Evidence template
+## Acceptance record
 
 ```text
-slice=4
-firmware commit=<sha>
-route=<route> operator=<KMB|CTB> bound=<I|O> service_type=<n>
-route_stops=<n> named=<n> fallback=<n>
-detail_cache=<cold|warm> language=<en|tc>
-selected stop identity=<provider stop id + route + bound + service type>
-wifi loss/cancellation=<pass|fail>
-tls aes allocation errors=<count>
-watchdog=<none|observed>
-result=<pass|fail|deferred>
-known follow-up=<...>
+revision=4R firmware=<sha> source_snapshot=<revision/hash/time>
+provider=<KMB|CTB> records=<n> bytes=<n> generation=<id>
+usable=<yes/no> freshness=<fresh/stale/unknown> coverage=<definition>
+bootstrap=<pass/fail> update=<pass/fail> recovery=<pass/fail>
+route browsing detail requests=0
+route-stop requests=<n> catalog requests=<n> retries=<n>
+peak internal/largest block/PSRAM=<bytes> filesystem headroom=<bytes>
+watchdog=<none/observed> KMB transport gate=<pass/fail>
+artifact hosting/refresh=<configured/local-only> terminal evidence=<pass/deferred>
 ```

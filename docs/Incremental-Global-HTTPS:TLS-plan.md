@@ -5,8 +5,11 @@
 **Sequencing note (2026-10-01):** Phases 0–2 and the core `crystal_http`
 framework are established. The old Phase 3/4 detailed records are historical
 and live under `docs/archive/`. Bus-service work is now tracked as Phase 5
-slices; [Slice 4 — stop picker and stop names](crystal-http-phase5-slice4-stop-picker-plan.md)
-is the next bus slice. Phases 6–8 remain active follow-up work.
+slices; [Slice 4 — prepared stop catalogs, revision 4R](crystal-http-phase5-slice4-stop-picker-plan.md)
+replaces the original per-stop acquisition work. Slice 5 owns the picker.
+Catalog manifest/artifact downloads must use `crystal_http`; its current API
+buffers complete bodies, so full-catalog memory budgets are a required gate.
+The existing KMB transport failure remains a separate device acceptance item. Phases 6–8 remain active follow-up work.
 
 Each phase ends with a separate commit and a device test. A phase is accepted only when its visible output matches the expected result.
 

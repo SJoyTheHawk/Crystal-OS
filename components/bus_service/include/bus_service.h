@@ -66,6 +66,30 @@ typedef struct {
     bool resolved;              // Name fetched flag
 } bus_stop_t;
 
+#define BUS_STOP_ID_MAX 20
+#define BUS_STOP_NAME_MAX 60
+
+// Provider-neutral stop metadata. Identity is (op, stop_id); route sequence
+// remains in bus_stop_t and is never folded into this record.
+typedef struct {
+    bus_operator_t op;
+    char stop_id[BUS_STOP_ID_MAX];
+    char name_en[BUS_STOP_NAME_MAX];
+    char name_tc[BUS_STOP_NAME_MAX];
+    float lat;
+    float lon;
+    bool has_coordinates;
+    bool resolved;
+    uint32_t revision;
+} bus_stop_metadata_t;
+
+typedef struct {
+    bus_operator_t op;
+    char stop_id[BUS_STOP_ID_MAX];
+} bus_stop_key_t;
+
+#define BUS_STOP_DISCOVERY_CAPACITY 512
+
 // Provider-neutral request identity. The route and direction identify the
 // selected variant; stop_id remains the provider's source identifier.
 typedef struct {
@@ -98,6 +122,7 @@ typedef enum {
     BUS_EVT_ETA,
     BUS_EVT_ROUTE_CATALOG_PROGRESS,
     BUS_EVT_ROUTE_CATALOG,
+    BUS_EVT_STOP_CATALOG_PROGRESS,
     BUS_EVT_ERROR
 } bus_event_type_t;
 
@@ -132,6 +157,13 @@ typedef struct {
         struct {
             char message[64];
         } route_catalog_progress;
+        struct {
+            uint16_t discovered;
+            uint16_t resolved;
+            uint16_t pending;
+            uint16_t failed;
+            char message[64];
+        } stop_catalog_progress;
         struct {
             char message[64];
         } error;
@@ -199,6 +231,43 @@ void bus_service_cancel_stops(void);
 void bus_service_network_disconnected(void);
 // Clear the network-loss gate after a new IP lease is available.
 void bus_service_network_connected(void);
+
+// Start one bounded service-owned stop metadata synchronization pass.
+uint32_t bus_service_request_stop_catalog_sync(void);
+uint16_t bus_service_stop_catalog_resolved(void);
+uint16_t bus_service_stop_catalog_failed(void);
+
+typedef struct {
+    uint16_t discovered;
+    uint16_t resolved;
+    uint16_t pending;
+    uint16_t failed;
+    char last_error[64];
+} bus_stop_catalog_progress_t;
+
+// These APIs return copied service-owned data and never expose JSON or cache
+// storage. ESP_ERR_NOT_FOUND means the key is unresolved; ESP_ERR_INVALID_STATE
+// means a matching record exists but the catalog is stale.
+esp_err_t bus_service_lookup_stop_metadata(bus_operator_t op,
+                                            const char *stop_id,
+                                            bus_stop_metadata_t *out);
+esp_err_t bus_service_lookup_route_stop(const bus_stop_t *route_stop,
+                                        bus_stop_metadata_t *out);
+bool bus_service_stop_catalog_ready(void);
+bool bus_service_stop_catalog_fresh(void);
+bool bus_service_stop_catalog_get_progress(bus_stop_catalog_progress_t *out);
+
+// Slice 4.1 discovery. The service owns the bounded queue; callers retain
+// route order in their bus_stop_t arrays and never transfer those arrays.
+void bus_service_stop_discovery_reset(void);
+esp_err_t bus_service_discover_route_stops(const bus_stop_t *stops,
+                                           uint16_t count);
+uint16_t bus_service_stop_discovery_pending(void);
+uint16_t bus_service_stop_discovery_copy(bus_stop_key_t *out,
+                                         uint16_t max_count);
+
+bool bus_stop_key_equal(const bus_stop_key_t *left,
+                        const bus_stop_key_t *right);
 
 #ifdef __cplusplus
 }
