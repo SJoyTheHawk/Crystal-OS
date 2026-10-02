@@ -1210,7 +1210,10 @@ void bus_service_network_connected(void)
         ESP_LOGI(TAG, "Network lease restored; bus HTTP requests enabled");
     }
     s_network_lost = false;
-    bus_catalog_sync_request(false);
+    // A recovered lease must re-check the hosted manifest immediately.  The
+    // periodic worker deadline may still be many hours away after a previous
+    // successful sync, so an ordinary bootstrap request would do nothing.
+    bus_catalog_sync_request(true);
 }
 
 // Worker task

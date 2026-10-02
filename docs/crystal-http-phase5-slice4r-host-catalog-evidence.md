@@ -231,3 +231,15 @@ internal free value was 5,783 bytes and the lowest largest internal block was
 full-size transfer and candidate-save baseline. It does not cover unchanged
 manifests, one-provider changes, Wi-Fi recovery, or the latest retry diagnostic
 edit.
+
+## 4R.2 completion trace: reconnect unchanged path
+
+The final hosted device trace completed the remaining synchronization check. The
+initial bootstrap downloaded the changed KMB artifact (`6fa8f9e3...d10b4`) and
+validated both KMB and CTB. After Wi-Fi was disabled and restored without a
+reboot, the worker immediately fetched the manifest and logged `KMB catalog
+unchanged` and `CTB catalog unchanged`; no provider artifact request followed.
+The later route browsing requests are excluded from this catalog result. This
+closes the 4R.2 device acceptance set together with the earlier cancellation,
+retry, foreground-priority, and low-heap traces. Production hosting ownership
+and refresh cadence remain a handoff dependency.

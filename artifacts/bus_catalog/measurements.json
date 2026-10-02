@@ -28,7 +28,10 @@
     "https_smoke_requests": 1,
     "route_stop_requests": 2,
     "stop_detail_requests_observed": 0,
-    "route_stop_counts": [40, 37],
+    "route_stop_counts": [
+      40,
+      37
+    ],
     "min_tls_internal_free_bytes": 6915,
     "min_tls_largest_internal_block_bytes": 2048,
     "min_tls_psram_free_bytes": 3527796,
@@ -147,5 +150,21 @@
     "network_disconnect_observed": false,
     "firmware_note": "4R.2 transfer firmware; predates latest retry diagnostic edit"
   },
-  "status": "full pinned-source and hosted idle transfer measurements pass; unchanged/changed/cancellation recovery, hosting owner, and scheduled refresh pending"
+  "status": "4R.2 complete: full transfer, changed KMB artifact, unchanged KMB/CTB after Wi-Fi recovery, cancellation/foreground priority, retry, and low-heap evidence pass; production hosting owner/cadence remains documented dependency",
+  "device_trace_2026_10_03_hosted_reconnect_unchanged": {
+    "manifest_requests_successful": 2,
+    "prepared_catalog_requests_initial": 2,
+    "prepared_catalog_requests_after_reconnect": 0,
+    "kmb_artifact_validated_initial": true,
+    "ctb_artifact_validated_initial": true,
+    "kmb_unchanged_after_reconnect": true,
+    "ctb_unchanged_after_reconnect": true,
+    "wifi_disconnect_reconnect_observed": true,
+    "route_requests_after_reconnect_excluded_from_catalog_evidence": true,
+    "min_tls_internal_free_bytes": 13511,
+    "min_tls_largest_internal_block_bytes": 5376,
+    "min_tls_psram_free_bytes": 3610240,
+    "manifest_url_commit": "92fd21a",
+    "four_r_two_status": "pass"
+  }
 }
