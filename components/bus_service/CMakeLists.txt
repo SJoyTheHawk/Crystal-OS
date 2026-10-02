@@ -14,7 +14,7 @@ idf_component_register(
     REQUIRES crystal_hal crystal_http esp_http_client nvs_flash heap esp-tls esp_timer mbedtls spiffs espressif__cjson lvgl__lvgl espressif__esp_lvgl_port
 )
 
-set(CRYSTAL_BUS_CATALOG_MANIFEST_URL "" CACHE STRING
+set(CRYSTAL_BUS_CATALOG_MANIFEST_URL "https://raw.githubusercontent.com/SJoyTheHawk/Crystal-OS/92fd21a/artifacts/bus_catalog/full/manifest.json" CACHE STRING
     "HTTPS URL of the published stop catalog manifest.json")
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     "CRYSTAL_BUS_CATALOG_MANIFEST_URL=\"${CRYSTAL_BUS_CATALOG_MANIFEST_URL}\"")

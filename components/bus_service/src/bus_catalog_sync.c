@@ -25,7 +25,14 @@
 #define CATALOG_OWNER_ID 0x53544D44u
 #define MANIFEST_MAX_BYTES (16u * 1024u)
 #define ARTIFACT_MAX_BYTES (768u * 1024u)
-#define HTTP_TIMEOUT_MS 15000u
+/*
+ * Catalog transfers are background work.  Keep the socket inactivity window
+ * short so a foreground route request or a Wi-Fi loss can release the HTTP
+ * worker promptly instead of waiting behind a stalled large-body read.
+ * KMB/CTB artifacts arrive in many chunks, so this is an inactivity timeout,
+ * not a total transfer limit.
+ */
+#define HTTP_TIMEOUT_MS 5000u
 #define HTTP_ATTEMPTS 2u
 #define RESULT_WAIT_MS 45000u
 #define RETRY_DELAY_US (5LL * 60LL * 1000000LL)
