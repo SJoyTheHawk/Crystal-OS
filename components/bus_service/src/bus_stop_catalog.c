@@ -797,7 +797,16 @@ esp_err_t bus_stop_catalog_lookup(bus_operator_t op, const char *stop_id,
 
 bool bus_stop_catalog_ready(void)
 {
-    return s_record_count > 0;
+    // The active Slice 4 catalogs are BSC2 provider snapshots.  Keep the
+    // legacy record cache in this predicate for compatibility, but do not
+    // report "not ready" when only the BSC2 snapshot is loaded.
+    if (s_record_count > 0) return true;
+    if (s_bsc2_lock == NULL) return false;
+    xSemaphoreTake(s_bsc2_lock, portMAX_DELAY);
+    load_bsc2_catalogs_locked();
+    const bool ready = s_bsc2[0].loaded || s_bsc2[1].loaded;
+    xSemaphoreGive(s_bsc2_lock);
+    return ready;
 }
 
 bool bus_stop_catalog_fresh(void)

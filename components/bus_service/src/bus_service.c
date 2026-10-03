@@ -107,6 +107,7 @@ typedef enum {
 typedef struct {
     req_type_t type;
     uint32_t id;
+    uint32_t stop_generation;
     char route[5];
     char stop_id[20];
     uint8_t op;
@@ -202,6 +203,10 @@ static void *s_listener_user_data = NULL;
 static uint32_t s_next_request_id = 1;
 static volatile bool s_cancel_all = false;
 static volatile bool s_network_lost = false;
+// Incremented whenever the picker leaves or replaces a route.  Queued stop
+// requests carry the generation they were created in and are discarded by
+// the worker when that generation is no longer current.
+static volatile uint32_t s_stop_generation = 1;
 static volatile esp_http_client_handle_t s_active_direct_client = NULL;
 static time_t s_route_cache_fetched_at = 0;
 static uint8_t s_route_cache_provider_mask = 0;
@@ -1070,6 +1075,7 @@ uint32_t bus_service_request_stops(const char *route,
     bus_request_t req = {0};
     req.type = REQ_TYPE_STOPS;
     req.id = s_next_request_id++;
+    req.stop_generation = s_stop_generation;
     strlcpy(req.route, route, sizeof(req.route));
     req.op = op;
     req.bound = bound;
@@ -1180,6 +1186,8 @@ void bus_service_cancel_all(void)
 
 void bus_service_cancel_stops(void)
 {
+    s_stop_generation++;
+    if (s_stop_generation == 0) s_stop_generation = 1;
     const size_t kmb_cancelled = crystal_http_cancel_owner(KMB_STOPS_OWNER_ID);
     const size_t ctb_cancelled = crystal_http_cancel_owner(CTB_STOPS_OWNER_ID);
     ESP_LOGI(TAG, "Stop cancellation requested kmb=%u ctb=%u",
@@ -1189,6 +1197,8 @@ void bus_service_cancel_stops(void)
 void bus_service_network_disconnected(void)
 {
     s_network_lost = true;
+    s_stop_generation++;
+    if (s_stop_generation == 0) s_stop_generation = 1;
     bus_catalog_sync_network_lost();
     (void)crystal_http_cancel_owner(KMB_CATALOG_OWNER_ID);
     const size_t ctb_route_cancelled =
@@ -1237,6 +1247,15 @@ static void bus_worker_task(void *arg)
                 if (req.type == REQ_TYPE_ROUTE || req.type == REQ_TYPE_STOPS) {
                     bus_catalog_sync_foreground_end();
                 }
+                continue;
+            }
+
+            if (req.type == REQ_TYPE_STOPS &&
+                req.stop_generation != s_stop_generation) {
+                ESP_LOGI(TAG, "Discarding stale queued stops request id=%lu generation=%lu current=%lu",
+                         (unsigned long)req.id,
+                         (unsigned long)req.stop_generation,
+                         (unsigned long)s_stop_generation);
                 continue;
             }
 

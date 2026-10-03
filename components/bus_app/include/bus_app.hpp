@@ -67,7 +67,23 @@ private:
     uint32_t current_request_id_ = 0;
     uint32_t stop_request_id_ = 0;
     bus_route_variant_t current_route_;
-    bus_stop_t selected_stop_ = {};
+
+    // Slice 5 selection boundary.  This is an app-owned copy of the route
+    // stop and remains valid after the service releases its event buffer.
+    struct SelectedStop {
+        char route[5];
+        bus_operator_t op;
+        char bound;
+        uint8_t service_type;
+        char stop_id[BUS_STOP_ID_MAX];
+        char name_en[BUS_STOP_NAME_MAX];
+        char name_tc[BUS_STOP_NAME_MAX];
+        float lat;
+        float lon;
+        uint16_t sequence;
+        bool resolved;
+    };
+    SelectedStop selected_stop_ = {};
     bool selected_stop_valid_ = false;
     lv_obj_t *selected_stop_row_ = nullptr;
     bus_route_variant_t route_variants_[32] = {};
@@ -107,6 +123,7 @@ private:
     void rebuildSearchResults();
     void rebuildRouteVariantResults();
     void showStopPage(const bus_route_variant_t &variant);
+    void requestStopsForCurrentRoute();
     void showStopList(const bus_stop_t *stops, uint16_t count);
     void loadFavoritesFromNVS();
     void saveFavoritesToNVS();

@@ -29,6 +29,7 @@ constexpr uint32_t kAccent = 0x38BDF8;
 
 constexpr lv_coord_t kPad = 16;
 constexpr lv_coord_t kGap = 12;
+constexpr uint16_t kMaxRenderedStops = 128;
 
 struct StopRowContext {
     bus_stop_t stop;
@@ -618,12 +619,43 @@ void BusApp::showStopPage(const bus_route_variant_t &variant)
     memset(&selected_stop_, 0, sizeof(selected_stop_));
     selected_stop_row_ = nullptr;
     lv_obj_clean(stop_list_);
+    const char *state_text = "Loading bus stops...";
+    if (!crystal_network_has_ip()) {
+        state_text = "Waiting for network...";
+    } else if (!bus_stop_catalog_ready()) {
+        state_text = "Updating stop names...";
+    }
     lv_obj_t *loading = makeLabel(stop_list_, &lv_font_montserrat_16, kTextSecondary);
-    lv_label_set_text(loading, "Loading bus stops...");
+    lv_label_set_text(loading, state_text);
     lv_obj_set_width(loading, LV_PCT(100));
     lv_obj_set_style_text_align(loading, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_flag(search_tab_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(stop_page_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void BusApp::requestStopsForCurrentRoute()
+{
+    if (current_route_.route[0] == '\0') {
+        return;
+    }
+    stop_request_id_ = bus_service_request_stops(
+        current_route_.route,
+        current_route_.op,
+        current_route_.bound,
+        current_route_.service_type);
+    if (stop_request_id_ == 0) {
+        showStopList(nullptr, 0);
+        lv_obj_t *message = lv_obj_get_child(stop_list_, 0);
+        if (message != nullptr) {
+            lv_label_set_text(message, "Unable to request bus stops");
+        }
+    }
+    ESP_LOGI(TAG, "Stops request started: route=%s op=%u bound=%c service_type=%u request=%lu",
+             current_route_.route,
+             static_cast<unsigned>(current_route_.op),
+             current_route_.bound,
+             static_cast<unsigned>(current_route_.service_type),
+             static_cast<unsigned long>(stop_request_id_));
 }
 
 void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
@@ -639,7 +671,12 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
         return;
     }
-    for (uint16_t i = 0; i < count; i++) {
+    const uint16_t render_count = count > kMaxRenderedStops ? kMaxRenderedStops : count;
+    if (count > render_count) {
+        ESP_LOGW(TAG, "Stop list capped at %u rows (received %u)",
+                 static_cast<unsigned>(render_count), static_cast<unsigned>(count));
+    }
+    for (uint16_t i = 0; i < render_count; i++) {
         lv_obj_t *row = lv_btn_create(stop_list_);
         lv_obj_remove_style_all(row);
         lv_obj_set_size(row, LV_PCT(96), 44);
@@ -667,11 +704,18 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
                 }
             }, LV_EVENT_DELETE, context);
             lv_obj_set_user_data(row, context);
+        } else {
+            // Keep the row visible if a transient allocation fails, but do not
+            // leave a clickable row that cannot produce a valid selection.
+            lv_obj_add_state(row, LV_STATE_DISABLED);
         }
         char label_text[96];
         const unsigned sequence = static_cast<unsigned>(
             stops[i].seq != 0 ? stops[i].seq : i + 1);
-        if (stops[i].name_en[0] != '\0') {
+        if (!stops[i].resolved && stops[i].stop_id[0] != '\0') {
+            snprintf(label_text, sizeof(label_text), "%u. Stop %s (name unavailable)",
+                     sequence, stops[i].stop_id);
+        } else if (stops[i].name_en[0] != '\0') {
             snprintf(label_text, sizeof(label_text), "%u. %s", sequence,
                      stops[i].name_en);
         } else if (stops[i].stop_id[0] != '\0') {
@@ -682,6 +726,11 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
         }
         lv_obj_t *label = makeLabel(row, &lv_font_montserrat_16, kTextPrimary);
         lv_label_set_text(label, label_text);
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        if (!stops[i].resolved) {
+            lv_obj_set_style_text_color(label, lv_color_hex(kTextWarning), 0);
+        }
         lv_obj_align(label, LV_ALIGN_LEFT_MID, 10, 0);
     }
 }
@@ -693,7 +742,26 @@ void BusApp::onStopClicked(lv_event_t *event)
     if (app == nullptr || row == nullptr) return;
     StopRowContext *context = static_cast<StopRowContext *>(lv_obj_get_user_data(row));
     if (context == nullptr) return;
-    app->selected_stop_ = context->stop;
+    // Copy every field needed by the next slice before the row or service
+    // event can be released.  In particular, keep provider and direction in
+    // the identity; names are display metadata only.
+    const bus_stop_t &stop = context->stop;
+    memset(&app->selected_stop_, 0, sizeof(app->selected_stop_));
+    strlcpy(app->selected_stop_.route, stop.route,
+            sizeof(app->selected_stop_.route));
+    app->selected_stop_.op = stop.op;
+    app->selected_stop_.bound = static_cast<char>(stop.bound);
+    app->selected_stop_.service_type = stop.service_type;
+    strlcpy(app->selected_stop_.stop_id, stop.stop_id,
+            sizeof(app->selected_stop_.stop_id));
+    strlcpy(app->selected_stop_.name_en, stop.name_en,
+            sizeof(app->selected_stop_.name_en));
+    strlcpy(app->selected_stop_.name_tc, stop.name_tc,
+            sizeof(app->selected_stop_.name_tc));
+    app->selected_stop_.lat = stop.lat;
+    app->selected_stop_.lon = stop.lon;
+    app->selected_stop_.sequence = stop.seq;
+    app->selected_stop_.resolved = stop.resolved;
     app->selected_stop_valid_ = true;
     if (app->selected_stop_row_ != nullptr &&
         lv_obj_is_valid(app->selected_stop_row_)) {
@@ -703,12 +771,13 @@ void BusApp::onStopClicked(lv_event_t *event)
     lv_obj_set_style_border_width(row, 2, 0);
     lv_obj_set_style_border_color(row, lv_color_hex(kAccent), 0);
     app->selected_stop_row_ = row;
-    ESP_LOGI(TAG, "Stop selected route=%s op=%u bound=%c seq=%u id=%s name=%s",
+    ESP_LOGI(TAG, "Stop selected route=%s op=%u bound=%c service_type=%u stop_id=%s seq=%u name=%s",
              app->selected_stop_.route,
              static_cast<unsigned>(app->selected_stop_.op),
              static_cast<char>(app->selected_stop_.bound),
-             static_cast<unsigned>(app->selected_stop_.seq),
+             static_cast<unsigned>(app->selected_stop_.service_type),
              app->selected_stop_.stop_id,
+             static_cast<unsigned>(app->selected_stop_.sequence),
              app->selected_stop_.name_en);
 }
 
@@ -1475,6 +1544,20 @@ void BusApp::onNetworkEvent(void *arg, esp_event_base_t base, int32_t id, void *
     // the LVGL timer queues a fresh KMB+CTB fetch.
     app->catalog_bootstrap_checked_ = false;
     ESP_LOGI(TAG, "Wi-Fi connected; catalog bootstrap will be evaluated on the LVGL task");
+
+    // A route selected while offline ends with a terminal "Waiting for
+    // network" event. Re-submit it when the lease returns if the picker is
+    // still visible; this keeps reconnect recovery local to the active page.
+    if (app->stop_page_ != nullptr &&
+        !lv_obj_has_flag(app->stop_page_, LV_OBJ_FLAG_HIDDEN) &&
+        app->current_route_.route[0] != '\0') {
+        if (app->stop_request_id_ != 0) {
+            app->stop_request_id_ = 0;
+            bus_service_cancel_stops();
+        }
+        app->showStopPage(app->current_route_);
+        app->requestStopsForCurrentRoute();
+    }
 }
 
 void BusApp::onCatalogBootstrapTimer(lv_timer_t *timer)
@@ -1689,18 +1772,7 @@ void BusApp::onRouteVariantClicked(lv_event_t *e)
     app->current_route_ = *selected_variant;
 
     app->showStopPage(app->current_route_);
-    app->stop_request_id_ = bus_service_request_stops(
-        app->current_route_.route,
-        app->current_route_.op,
-        app->current_route_.bound,
-        app->current_route_.service_type);
-    if (app->stop_request_id_ == 0) {
-        app->showStopList(nullptr, 0);
-        lv_obj_t *message = lv_obj_get_child(app->stop_list_, 0);
-        if (message != nullptr) {
-            lv_label_set_text(message, "Unable to request bus stops");
-        }
-    }
+    app->requestStopsForCurrentRoute();
     ESP_LOGI(TAG, "Route variant selected: route=%s op=%u bound=%c service_type=%u destination=%s -> stops request=%lu",
              app->current_route_.route,
              static_cast<unsigned>(app->current_route_.op),
