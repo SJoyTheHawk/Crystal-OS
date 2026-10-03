@@ -924,21 +924,6 @@ void bus_service_init(void)
         return;  // Already initialized
     }
 
-    load_route_catalog_cache();
-    const esp_err_t stop_catalog_status = bus_stop_catalog_init();
-    if (stop_catalog_status != ESP_OK && stop_catalog_status != ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "Stop catalog lookup initialization failed: %s",
-                 esp_err_to_name(stop_catalog_status));
-    }
-    if (bus_stop_catalog_load()) {
-        bus_stop_catalog_report_progress(
-            (uint16_t)(bus_service_stop_catalog_resolved() +
-                       bus_service_stop_catalog_failed()),
-            bus_service_stop_catalog_resolved(),
-            bus_service_stop_catalog_failed(),
-            bus_service_stop_catalog_failed(), "Loaded stop catalog");
-    }
-
     // Leave room for catalog bootstrap alongside favorite ETA refreshes.
     s_request_queue = xQueueCreate(16, sizeof(bus_request_t));
     if (s_request_queue == NULL) {
@@ -1237,6 +1222,24 @@ void bus_service_network_connected(void)
 static void bus_worker_task(void *arg)
 {
     bus_request_t req;
+
+    // Cache validation and BSC2 loading can scan thousands of records. Keep
+    // this work off the LVGL task so opening Bus after another app cannot
+    // starve IDLE0 and trip the task watchdog.
+    load_route_catalog_cache();
+    const esp_err_t stop_catalog_status = bus_stop_catalog_init();
+    if (stop_catalog_status != ESP_OK && stop_catalog_status != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Stop catalog lookup initialization failed: %s",
+                 esp_err_to_name(stop_catalog_status));
+    }
+    if (bus_stop_catalog_load()) {
+        bus_stop_catalog_report_progress(
+            (uint16_t)(bus_service_stop_catalog_resolved() +
+                       bus_service_stop_catalog_failed()),
+            bus_service_stop_catalog_resolved(),
+            bus_service_stop_catalog_failed(),
+            bus_service_stop_catalog_failed(), "Loaded stop catalog");
+    }
 
     ESP_LOGI(TAG, "Worker task started");
 
