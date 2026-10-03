@@ -69,6 +69,7 @@ private:
     bus_route_variant_t current_route_;
     bus_stop_t selected_stop_ = {};
     bool selected_stop_valid_ = false;
+    lv_obj_t *selected_stop_row_ = nullptr;
     bus_route_variant_t route_variants_[32] = {};
     uint8_t route_variant_count_ = 0;
     char search_buffer_[5] = {0};

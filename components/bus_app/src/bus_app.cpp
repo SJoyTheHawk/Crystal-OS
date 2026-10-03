@@ -18,6 +18,7 @@ constexpr const char *KEY_FAV_DATA = "fav_dat";
 // Colors
 constexpr uint32_t kBgColor = 0x0F172A;
 constexpr uint32_t kCardBg = 0x1E293B;
+constexpr uint32_t kCardBgHover = 0x2D3E50;
 constexpr uint32_t kTextPrimary = 0xF8FAFC;
 constexpr uint32_t kTextSecondary = 0x94A3B8;
 constexpr uint32_t kTextWarning = 0xFBBF24;
@@ -608,6 +609,7 @@ void BusApp::showStopPage(const bus_route_variant_t &variant)
     lv_label_set_text(stop_title_, title);
     selected_stop_valid_ = false;
     memset(&selected_stop_, 0, sizeof(selected_stop_));
+    selected_stop_row_ = nullptr;
     lv_obj_clean(stop_list_);
     lv_obj_t *loading = makeLabel(stop_list_, &lv_font_montserrat_16, kTextSecondary);
     lv_label_set_text(loading, "Loading bus stops...");
@@ -631,8 +633,10 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
         return;
     }
     for (uint16_t i = 0; i < count; i++) {
-        lv_obj_t *row = lv_obj_create(stop_list_);
-        lv_obj_set_size(row, LV_PCT(100), 44);
+        lv_obj_t *row = lv_btn_create(stop_list_);
+        lv_obj_remove_style_all(row);
+        lv_obj_set_size(row, LV_PCT(96), 44);
+        lv_obj_set_style_translate_x(row, 6, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(row, 6, 0);
@@ -640,6 +644,12 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBgHover), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, lv_color_hex(kAccent), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, LV_STATE_PRESSED);
         StopRowContext *context = static_cast<StopRowContext *>(calloc(1, sizeof(*context)));
         if (context != nullptr) {
             context->stop = stops[i];
@@ -650,7 +660,6 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
                 }
             }, LV_EVENT_DELETE, context);
             lv_obj_set_user_data(row, context);
-            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         }
         char label_text[96];
         const unsigned sequence = static_cast<unsigned>(
@@ -679,7 +688,14 @@ void BusApp::onStopClicked(lv_event_t *event)
     if (context == nullptr) return;
     app->selected_stop_ = context->stop;
     app->selected_stop_valid_ = true;
-    lv_obj_set_style_bg_color(row, lv_color_hex(kAccent), 0);
+    if (app->selected_stop_row_ != nullptr &&
+        lv_obj_is_valid(app->selected_stop_row_)) {
+        lv_obj_set_style_border_width(app->selected_stop_row_, 1, 0);
+        lv_obj_set_style_border_color(app->selected_stop_row_, lv_color_hex(kBorder), 0);
+    }
+    lv_obj_set_style_border_width(row, 2, 0);
+    lv_obj_set_style_border_color(row, lv_color_hex(kAccent), 0);
+    app->selected_stop_row_ = row;
     ESP_LOGI(TAG, "Stop selected route=%s op=%u bound=%c seq=%u id=%s name=%s",
              app->selected_stop_.route,
              static_cast<unsigned>(app->selected_stop_.op),
@@ -1003,21 +1019,20 @@ void BusApp::rebuildSearchResults()
         }
 
         lv_obj_t *row = lv_btn_create(search_results_);
+        lv_obj_remove_style_all(row);
         lv_obj_set_size(row, LV_PCT(100), row_height);
         lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
         lv_obj_set_style_radius(row, 6, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        // Keep the button's touch feedback on the dark palette. The default
-        // theme pressed style is light and briefly flashes while a route row
-        // is tapped or selected.
-        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
-        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), LV_STATE_PRESSED);
         lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBgHover), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, lv_color_hex(kAccent), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(row, 0, LV_STATE_PRESSED);
         // Store the complete provider-qualified identity for the click
         // handler. The route label remains display text only.
         const intptr_t row_data = (static_cast<intptr_t>(display_rows[i].op) << 16) |
@@ -1131,18 +1146,20 @@ void BusApp::rebuildRouteVariantResults()
     for (uint8_t i = 0; i < route_variant_count_; i++) {
         const bus_route_variant_t &variant = route_variants_[i];
         lv_obj_t *row = lv_btn_create(search_results_);
+        lv_obj_remove_style_all(row);
         lv_obj_set_size(row, LV_PCT(100), row_height);
         lv_obj_set_pos(row, 0, 6 + i * (row_height + row_gap));
         lv_obj_set_style_radius(row, 6, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBg), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
-        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(row, lv_color_hex(kBorder), LV_STATE_PRESSED);
         lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(kCardBgHover), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(row, lv_color_hex(kAccent), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(row, 0, LV_STATE_PRESSED);
 
         lv_obj_t *route_label = makeLabel(row, &lv_font_montserrat_20, kTextPrimary);
         lv_label_set_text(route_label, variant.route);
