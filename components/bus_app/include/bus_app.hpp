@@ -67,6 +67,8 @@ private:
     uint32_t current_request_id_ = 0;
     uint32_t stop_request_id_ = 0;
     bus_route_variant_t current_route_;
+    bus_stop_t selected_stop_ = {};
+    bool selected_stop_valid_ = false;
     bus_route_variant_t route_variants_[32] = {};
     uint8_t route_variant_count_ = 0;
     char search_buffer_[5] = {0};
@@ -96,6 +98,7 @@ private:
     static void onReset(lv_event_t *e);
     static void onRouteResultClicked(lv_event_t *e);
     static void onRouteVariantClicked(lv_event_t *e);
+    static void onStopClicked(lv_event_t *e);
     static void onRefreshTimer(lv_timer_t *timer);
 
     // Helpers

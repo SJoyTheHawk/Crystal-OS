@@ -3,6 +3,7 @@
 #include "bus_provider_ctb.h"
 #include "bus_provider_kmb.h"
 #include "bus_provider_ctb_stop.h"
+#include "bus_stop_catalog.h"
 #include "bus_normalize.h"
 #include "crystal_network.h"
 #include "crystal_http.h"
@@ -222,6 +223,7 @@ static void reset_route_metadata_store(void)
 static void bus_worker_task(void *arg);
 static void process_route_request(const bus_request_t *req);
 static void process_stops_request(const bus_request_t *req);
+static void enrich_route_stops_from_catalog(bus_stop_t *stops, uint16_t count);
 static void process_eta_request(const bus_request_t *req);
 static void process_route_catalog_request(const bus_request_t *req);
 static void process_stop_catalog_request(const bus_request_t *req);
@@ -918,6 +920,11 @@ void bus_service_init(void)
     }
 
     load_route_catalog_cache();
+    const esp_err_t stop_catalog_status = bus_stop_catalog_init();
+    if (stop_catalog_status != ESP_OK && stop_catalog_status != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Stop catalog lookup initialization failed: %s",
+                 esp_err_to_name(stop_catalog_status));
+    }
     if (bus_stop_catalog_load()) {
         bus_stop_catalog_report_progress(
             (uint16_t)(bus_service_stop_catalog_resolved() +
@@ -2189,6 +2196,33 @@ static void process_route_request(const bus_request_t *req)
 }
 
 // Process stops request
+static void enrich_route_stops_from_catalog(bus_stop_t *stops, uint16_t count)
+{
+    if (stops == NULL) return;
+    for (uint16_t i = 0; i < count; ++i) {
+        bus_stop_metadata_t metadata = {0};
+        const esp_err_t status = bus_stop_catalog_lookup(
+            stops[i].op, stops[i].stop_id, &metadata);
+        if (status == ESP_OK) {
+            strlcpy(stops[i].name_en, metadata.name_en,
+                    sizeof(stops[i].name_en));
+            strlcpy(stops[i].name_tc, metadata.name_tc,
+                    sizeof(stops[i].name_tc));
+            if (metadata.has_coordinates) {
+                stops[i].lat = metadata.lat;
+                stops[i].lon = metadata.lon;
+            }
+            stops[i].resolved = true;
+        } else {
+            snprintf(stops[i].name_en, sizeof(stops[i].name_en),
+                     "Stop %s", stops[i].stop_id);
+            strlcpy(stops[i].name_tc, stops[i].name_en,
+                    sizeof(stops[i].name_tc));
+            stops[i].resolved = false;
+        }
+    }
+}
+
 static void process_stops_request(const bus_request_t *req)
 {
     char url[256];
@@ -2334,6 +2368,7 @@ static void process_stops_request(const bus_request_t *req)
             return;
         }
 
+        enrich_route_stops_from_catalog(stops, stop_count);
         event.data.stops_list.stops = stops;
         event.data.stops_list.count = stop_count;
         event.status = ESP_OK;
@@ -2381,6 +2416,7 @@ static void process_stops_request(const bus_request_t *req)
                     }
 
                     if (valid_count > 0) {
+                        enrich_route_stops_from_catalog(stops, (uint16_t)valid_count);
                         event.data.stops_list.stops = stops;
                         event.data.stops_list.count = valid_count;
                         event.status = ESP_OK;

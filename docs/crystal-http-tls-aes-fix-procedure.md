@@ -231,3 +231,18 @@ After this fix is verified:
 1. Commit the config change
 2. Proceed to simplified Slice 4R.4-4R.6 (local lookup)
 3. Then Slice 5-7 (picker, ETA, favorites)
+
+## Verification Complete
+
+**Date:** 2026-10-03  
+**Build commit:** `0c2054d504ad976b5155ff61cc5c2ec25e68a87b`  
+**Device:** ESP32-S3 on `/dev/cu.usbmodem1201`
+
+- `CONFIG_MBEDTLS_HARDWARE_AES=n` confirmed in `sdkconfig.defaults` and generated `sdkconfig`
+- `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` confirmed
+- ESP-IDF reconfigure and build passed
+- Application flashed successfully
+- 10 local build/config verification passes passed
+- Device rebooted 10 times with the current codebase; no TLS or `esp-aes` allocation errors observed
+
+**Result:** TLS hardware AES allocation fix verified and complete. Proceed to simplified Slice 4R.4-4R.6.

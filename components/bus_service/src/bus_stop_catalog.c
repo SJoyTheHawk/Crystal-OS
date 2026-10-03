@@ -1,4 +1,4 @@
-#include "bus_service.h"
+#include "bus_stop_catalog.h"
 #include "bus_provider_kmb.h"
 #include "bus_provider_ctb_stop.h"
 #include "crystal_http.h"
@@ -71,6 +71,171 @@ static stop_catalog_failure_t *s_failures;
 static uint16_t s_failure_count;
 static uint32_t s_saved_at;
 static bool s_diagnostic_done;
+
+/* Published BSC2 catalogs are provider-wide, sorted binary indexes.  Keep
+ * their compact representation separate from the legacy per-stop cache above
+ * so an upgrade can read either format during migration. */
+typedef struct __attribute__((packed)) {
+    char magic[4];
+    uint16_t version;
+    uint8_t provider;
+    uint8_t reserved;
+    uint32_t record_count;
+    uint32_t pool_size;
+} bsc2_header_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t id_offset;
+    uint32_t id_length;
+    uint32_t name_en_offset;
+    uint32_t name_en_length;
+    uint32_t name_tc_offset;
+    uint32_t name_tc_length;
+    float lat;
+    float lon;
+    uint8_t has_coords;
+    uint8_t reserved[3];
+} bsc2_entry_t;
+
+typedef struct {
+    bool loaded;
+    uint32_t record_count;
+    uint32_t pool_size;
+    bsc2_entry_t *index;
+    uint8_t *pool;
+} bsc2_catalog_t;
+
+static bsc2_catalog_t s_bsc2[2];
+static SemaphoreHandle_t s_bsc2_lock;
+static bool s_bsc2_attempted;
+
+static void free_bsc2_catalog(bsc2_catalog_t *catalog)
+{
+    if (catalog == NULL) return;
+    heap_caps_free(catalog->index);
+    heap_caps_free(catalog->pool);
+    memset(catalog, 0, sizeof(*catalog));
+}
+
+static bool read_bsc2_file(const char *path, uint8_t provider,
+                           bsc2_catalog_t *catalog)
+{
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return false;
+    bsc2_header_t header = {0};
+    bool ok = fread(&header, sizeof(header), 1, file) == 1 &&
+              memcmp(header.magic, "BSC2", 4) == 0 && header.version == 2 &&
+              header.provider == provider && header.record_count > 0 &&
+              header.record_count <= 20000 && header.pool_size <= 1024u * 1024u;
+    const uint64_t index_bytes = (uint64_t)header.record_count * sizeof(bsc2_entry_t);
+    if (ok) {
+        struct stat info = {0};
+        ok = fstat(fileno(file), &info) == 0 &&
+             (uint64_t)info.st_size == sizeof(header) + index_bytes + header.pool_size;
+    }
+    if (ok) {
+        catalog->index = heap_caps_malloc((size_t)index_bytes,
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        catalog->pool = heap_caps_malloc(header.pool_size,
+                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        ok = catalog->index != NULL && catalog->pool != NULL &&
+             fread(catalog->index, sizeof(bsc2_entry_t), header.record_count, file) ==
+                 header.record_count &&
+             fread(catalog->pool, 1, header.pool_size, file) == header.pool_size;
+    }
+    fclose(file);
+    if (!ok) {
+        free_bsc2_catalog(catalog);
+        return false;
+    }
+    catalog->record_count = header.record_count;
+    catalog->pool_size = header.pool_size;
+    catalog->loaded = true;
+    return true;
+}
+
+static void load_bsc2_catalogs_locked(void)
+{
+    if (s_bsc2_attempted) return;
+    s_bsc2_attempted = true;
+    const char *paths[2][2] = {
+        {"/spiffs/kmb-stops.a", "/spiffs/kmb-stops.b"},
+        {"/spiffs/ctb-stops.a", "/spiffs/ctb-stops.b"},
+    };
+    for (uint8_t provider = 1; provider <= 2; provider++) {
+        for (size_t slot = 0; slot < 2; slot++) {
+            bsc2_catalog_t candidate = {0};
+            if (read_bsc2_file(paths[provider - 1][slot], provider, &candidate)) {
+                free_bsc2_catalog(&s_bsc2[provider - 1]);
+                s_bsc2[provider - 1] = candidate;
+                break;
+            }
+        }
+        if (s_bsc2[provider - 1].loaded) {
+            ESP_LOGI(TAG, "loaded BSC2 catalog provider=%u records=%lu",
+                     (unsigned)provider,
+                     (unsigned long)s_bsc2[provider - 1].record_count);
+        }
+    }
+}
+
+esp_err_t bus_stop_catalog_init(void)
+{
+    if (s_bsc2_lock == NULL) s_bsc2_lock = xSemaphoreCreateMutex();
+    if (s_bsc2_lock == NULL) return ESP_ERR_NO_MEM;
+    xSemaphoreTake(s_bsc2_lock, portMAX_DELAY);
+    load_bsc2_catalogs_locked();
+    const bool loaded = s_bsc2[0].loaded || s_bsc2[1].loaded;
+    xSemaphoreGive(s_bsc2_lock);
+    return loaded ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+static bool bsc2_lookup(bus_operator_t op, const char *stop_id,
+                        bus_stop_metadata_t *out)
+{
+    const uint8_t provider = op == BUS_OP_KMB ? 1 : 2;
+    if (bus_stop_catalog_init() != ESP_OK) return false;
+    /* A cold boot may initialize before the background sync publishes its
+     * first generation. Retry the provider once when its file appears later. */
+    if (!s_bsc2[provider - 1].loaded) {
+        xSemaphoreTake(s_bsc2_lock, portMAX_DELAY);
+        s_bsc2_attempted = false;
+        load_bsc2_catalogs_locked();
+        xSemaphoreGive(s_bsc2_lock);
+    }
+    xSemaphoreTake(s_bsc2_lock, portMAX_DELAY);
+    bsc2_catalog_t *catalog = &s_bsc2[provider - 1];
+    uint32_t lo = 0, hi = catalog->loaded ? catalog->record_count : 0;
+    while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo) / 2;
+        const bsc2_entry_t *entry = &catalog->index[mid];
+        if (entry->id_offset > catalog->pool_size ||
+            entry->id_length > catalog->pool_size - entry->id_offset ||
+            entry->name_en_offset > catalog->pool_size ||
+            entry->name_en_length > catalog->pool_size - entry->name_en_offset ||
+            entry->name_tc_offset > catalog->pool_size ||
+            entry->name_tc_length > catalog->pool_size - entry->name_tc_offset) {
+            break;
+        }
+        const size_t id_len = entry->id_length < BUS_STOP_ID_MAX ? entry->id_length : BUS_STOP_ID_MAX - 1;
+        const int cmp = strncmp(stop_id, (const char *)catalog->pool + entry->id_offset, id_len);
+        if (cmp == 0 && strlen(stop_id) == id_len) {
+            memset(out, 0, sizeof(*out));
+            out->op = op;
+            memcpy(out->stop_id, catalog->pool + entry->id_offset, id_len);
+            const size_t en_len = entry->name_en_length < BUS_STOP_NAME_MAX ? entry->name_en_length : BUS_STOP_NAME_MAX - 1;
+            const size_t tc_len = entry->name_tc_length < BUS_STOP_NAME_MAX ? entry->name_tc_length : BUS_STOP_NAME_MAX - 1;
+            if (entry->name_en_offset + en_len <= catalog->pool_size) memcpy(out->name_en, catalog->pool + entry->name_en_offset, en_len);
+            if (entry->name_tc_offset + tc_len <= catalog->pool_size) memcpy(out->name_tc, catalog->pool + entry->name_tc_offset, tc_len);
+            out->lat = entry->lat; out->lon = entry->lon; out->has_coordinates = entry->has_coords != 0; out->resolved = true;
+            xSemaphoreGive(s_bsc2_lock);
+            return true;
+        }
+        if (cmp < 0) hi = mid; else lo = mid + 1;
+    }
+    xSemaphoreGive(s_bsc2_lock);
+    return false;
+}
 
 extern void bus_stop_catalog_report_progress(uint16_t discovered,
                                              uint16_t resolved,
@@ -596,6 +761,7 @@ esp_err_t bus_stop_catalog_lookup(bus_operator_t op, const char *stop_id,
     strlcpy(key.stop_id, stop_id, sizeof(key.stop_id));
     const int index = record_index(&key);
     if (index < 0) {
+        if (bsc2_lookup(op, stop_id, out)) return ESP_OK;
         return ESP_ERR_NOT_FOUND;
     }
     *out = s_records[index];

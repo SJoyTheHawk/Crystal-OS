@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <ctime>
 #include <cstdint>
+#include <cstdlib>
 
 namespace {
 constexpr const char *TAG = "bus_app";
@@ -26,6 +27,10 @@ constexpr uint32_t kAccent = 0x38BDF8;
 
 constexpr lv_coord_t kPad = 16;
 constexpr lv_coord_t kGap = 12;
+
+struct StopRowContext {
+    bus_stop_t stop;
+};
 
 lv_obj_t *makeCard(lv_obj_t *parent)
 {
@@ -601,6 +606,8 @@ void BusApp::showStopPage(const bus_route_variant_t &variant)
                  variant.route, operator_name);
     }
     lv_label_set_text(stop_title_, title);
+    selected_stop_valid_ = false;
+    memset(&selected_stop_, 0, sizeof(selected_stop_));
     lv_obj_clean(stop_list_);
     lv_obj_t *loading = makeLabel(stop_list_, &lv_font_montserrat_16, kTextSecondary);
     lv_label_set_text(loading, "Loading bus stops...");
@@ -633,12 +640,53 @@ void BusApp::showStopList(const bus_stop_t *stops, uint16_t count)
         lv_obj_set_style_border_color(row, lv_color_hex(kBorder), 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        char label_text[24];
-        snprintf(label_text, sizeof(label_text), "Stop %u", static_cast<unsigned>(stops[i].seq != 0 ? stops[i].seq : i + 1));
+        StopRowContext *context = static_cast<StopRowContext *>(calloc(1, sizeof(*context)));
+        if (context != nullptr) {
+            context->stop = stops[i];
+            lv_obj_add_event_cb(row, onStopClicked, LV_EVENT_CLICKED, this);
+            lv_obj_add_event_cb(row, [](lv_event_t *event) {
+                if (lv_event_get_code(event) == LV_EVENT_DELETE) {
+                    free(lv_event_get_user_data(event));
+                }
+            }, LV_EVENT_DELETE, context);
+            lv_obj_set_user_data(row, context);
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        }
+        char label_text[96];
+        const unsigned sequence = static_cast<unsigned>(
+            stops[i].seq != 0 ? stops[i].seq : i + 1);
+        if (stops[i].name_en[0] != '\0') {
+            snprintf(label_text, sizeof(label_text), "%u. %s", sequence,
+                     stops[i].name_en);
+        } else if (stops[i].stop_id[0] != '\0') {
+            snprintf(label_text, sizeof(label_text), "%u. Stop %s", sequence,
+                     stops[i].stop_id);
+        } else {
+            snprintf(label_text, sizeof(label_text), "%u. Stop", sequence);
+        }
         lv_obj_t *label = makeLabel(row, &lv_font_montserrat_16, kTextPrimary);
         lv_label_set_text(label, label_text);
         lv_obj_align(label, LV_ALIGN_LEFT_MID, 10, 0);
     }
+}
+
+void BusApp::onStopClicked(lv_event_t *event)
+{
+    BusApp *app = static_cast<BusApp *>(lv_event_get_user_data(event));
+    lv_obj_t *row = lv_event_get_target(event);
+    if (app == nullptr || row == nullptr) return;
+    StopRowContext *context = static_cast<StopRowContext *>(lv_obj_get_user_data(row));
+    if (context == nullptr) return;
+    app->selected_stop_ = context->stop;
+    app->selected_stop_valid_ = true;
+    lv_obj_set_style_bg_color(row, lv_color_hex(kAccent), 0);
+    ESP_LOGI(TAG, "Stop selected route=%s op=%u bound=%c seq=%u id=%s name=%s",
+             app->selected_stop_.route,
+             static_cast<unsigned>(app->selected_stop_.op),
+             static_cast<char>(app->selected_stop_.bound),
+             static_cast<unsigned>(app->selected_stop_.seq),
+             app->selected_stop_.stop_id,
+             app->selected_stop_.name_en);
 }
 
 void BusApp::setCatalogState(bool ready, const char *message)
