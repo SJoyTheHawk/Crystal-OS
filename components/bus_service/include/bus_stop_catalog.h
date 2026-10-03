@@ -7,6 +7,7 @@
 // service API so callers receive the same representation used by route-stop
 // requests and catalog persistence.
 #include "bus_service.h"
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,24 @@ esp_err_t bus_stop_catalog_lookup(bus_operator_t op,
 
 /** Load the newest valid persisted BSC2 catalog generation, if present. */
 esp_err_t bus_stop_catalog_init(void);
+
+typedef enum {
+    BUS_CATALOG_NONE = 0,
+    BUS_CATALOG_LOADING,
+    BUS_CATALOG_READY,
+    BUS_CATALOG_STALE,
+} bus_catalog_status_t;
+
+typedef struct {
+    bus_catalog_status_t status;
+    uint32_t kmb_record_count;
+    uint32_t ctb_record_count;
+    time_t kmb_source_time;
+    time_t ctb_source_time;
+} bus_catalog_info_t;
+
+/** Copy the current local stop-catalog state for UI/status reporting. */
+void bus_catalog_get_info(bus_catalog_info_t *out);
 
 /** Return true when at least one provider has usable catalog records loaded. */
 bool bus_stop_catalog_ready(void);

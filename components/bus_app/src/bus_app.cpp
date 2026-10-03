@@ -1,5 +1,6 @@
 #include "bus_app.hpp"
 #include "bus_routes.h"
+#include "bus_stop_catalog.h"
 #include "crystal_network.h"
 #include "esp_log.h"
 #include <cstring>
@@ -157,6 +158,12 @@ bool BusApp::onCreate()
     // Initialize service
     bus_service_init();
     bus_service_set_listener(onBusEvent, this);
+    bus_catalog_info_t stop_catalog_info = {};
+    bus_catalog_get_info(&stop_catalog_info);
+    ESP_LOGI(TAG, "Stop catalog status=%d KMB=%lu CTB=%lu",
+             static_cast<int>(stop_catalog_info.status),
+             static_cast<unsigned long>(stop_catalog_info.kmb_record_count),
+             static_cast<unsigned long>(stop_catalog_info.ctb_record_count));
     catalog_ready_ = bus_service_route_catalog_ready();
     if (!catalog_ready_) {
         ESP_LOGI(TAG, "Route catalog not ready; Search keypad will remain locked");

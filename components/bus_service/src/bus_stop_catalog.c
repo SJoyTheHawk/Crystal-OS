@@ -190,6 +190,27 @@ esp_err_t bus_stop_catalog_init(void)
     return loaded ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
+void bus_catalog_get_info(bus_catalog_info_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (s_bsc2_lock == NULL) {
+        out->status = BUS_CATALOG_NONE;
+        return;
+    }
+    xSemaphoreTake(s_bsc2_lock, portMAX_DELAY);
+    load_bsc2_catalogs_locked();
+    out->kmb_record_count = s_bsc2[0].loaded ? s_bsc2[0].record_count : 0;
+    out->ctb_record_count = s_bsc2[1].loaded ? s_bsc2[1].record_count : 0;
+    if (out->kmb_record_count > 0 || out->ctb_record_count > 0 ||
+        s_record_count > 0) {
+        out->status = BUS_CATALOG_READY;
+    } else {
+        out->status = BUS_CATALOG_NONE;
+    }
+    xSemaphoreGive(s_bsc2_lock);
+}
+
 static bool bsc2_lookup(bus_operator_t op, const char *stop_id,
                         bus_stop_metadata_t *out)
 {

@@ -1,7 +1,7 @@
 # Simplified Slice 4R.4–4R.6: Stop Catalog Lookup and Handoff
 
 **Date:** 2026-10-03  
-**Status:** Planned (after TLS AES fix)  
+**Status:** Completed  
 **Estimated time:** 2-3 days  
 **Depends on:** Slice 4R.0-4R.3 (already complete), TLS AES fix verified
 
@@ -221,7 +221,8 @@ When these five checks pass, Slice 4 is done:
 
 ## What Happens Next
 
-After 4R.6 exit criteria pass → **Move to Slice 5** (stop picker UI)
+All Slice 4 acceptance criteria are complete. Move to **Slice 5** (stop picker
+and ETA flow) when ready.
 
 The catalog work is done. You have:
 - 943KB of stop metadata on device
