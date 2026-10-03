@@ -243,3 +243,76 @@ The later route browsing requests are excluded from this catalog result. This
 closes the 4R.2 device acceptance set together with the earlier cancellation,
 retry, foreground-priority, and low-heap traces. Production hosting ownership
 and refresh cadence remain a handoff dependency.
+
+The current KMB file is the deliberate one-byte test revision from commit
+`92fd21a`, so `test_stop_catalogs.py --full` correctly detects that it no longer
+matches a fresh conversion of the pinned source (`f57987f...` is the source
+conversion hash; `6fa8f9e3...` is the hosted test hash). Restore or regenerate
+the KMB artifact from the pinned source before treating the hosting location as
+a production catalog feed.
+
+## 4R.3 implementation checkpoint: durable provider generations
+
+The synchronization writer now publishes each provider into recoverable A/B
+SPIFFS slots. It writes the inactive artifact to a temporary file, flushes it,
+renames it into the inactive slot, and then writes a matching commit record
+containing provider, generation, record count, byte count, and SHA-256. A boot
+scan accepts only a complete artifact whose commit record, size, BSC2 header,
+record count, and SHA-256 agree, and selects the highest valid generation.
+An interrupted artifact or commit write therefore leaves the previous committed
+slot selectable. KMB and CTB are still published sequentially, so a failed
+provider publication does not replace the other provider's active slot.
+
+The ESP-IDF build passed after this change. Device fault-injection evidence for
+power loss during each rename, deliberate slot corruption, and a no-space
+replacement is still required before 4R.3 can be accepted. Local lookup and
+provider status remain 4R.4 work; the preserved v1 partial catalog module and
+other deprecated runtime pieces remain in the tree.
+
+For deterministic device fault checks, the component now has a disabled-by-
+default `CRYSTAL_BUS_CATALOG_TEST_FAULT` build option. `interrupt` leaves the
+new artifact without its commit record, `corrupt` damages the selected active
+slot for the next boot, and `no_space` rejects publication before changing any
+slot. Build each test variant, flash the app without erasing SPIFFS, capture
+the recovery log, then rebuild with `none` before normal use.
+
+The first device fault runs exposed that treating POSIX `fsync()` as mandatory
+caused SPIFFS publications to be reported as invalid even after complete
+downloads. The writer now treats `fsync()` as best-effort on the ESP VFS and
+uses `fflush`, close, and rename for the SPIFFS publication boundary. The
+4R.3 device acceptance runs must be repeated with this fix.
+
+## 4R.3 device checkpoint: publication and warm boot
+
+The post-fix cold bootstrap trace published both providers successfully. KMB
+reported generation 1, slot 0, 6,753 records, and 685,020 bytes; CTB reported
+generation 1, slot 0, 2,586 records, and 258,706 bytes. The later reboot trace
+loaded those same committed generations before the network worker started, then
+received the manifest and logged `KMB catalog unchanged` and `CTB catalog
+unchanged`. No provider artifact request followed. This proves complete
+publication, boot validation, generation selection, and the unchanged warm-boot
+path. No old per-stop detail request appeared in either trace.
+
+The earlier `interrupt`, `corrupt`, and `no_space` runs were made before a
+valid generation existed, so their messages are useful hook checks but do not
+prove fallback from an existing generation. Full failure-injection acceptance
+therefore remains a review limitation for 4R.3; it is not needed to assess the
+publication and warm-boot behavior recorded above.
+
+The measured post-candidate SPIFFS free space was 1,834,559 bytes. The host
+estimate for two complete KMB and CTB generations plus the manifest is
+1,889,684 bytes before filesystem overhead, leaving a roughly 55 KiB deficit.
+The A/B writer therefore still needs a real second-generation capacity result
+before online replacement can be called reliable.
+
+## Watchdog classification
+
+The pasted watchdog trace is independent of catalog persistence. At the time of
+the warning the current task was `crystal_http`, and the backtrace ends in
+Mbed TLS P-384 ECDSA certificate verification during `esp_http_client_open()`.
+The HTTP worker is pinned to CPU0 and the project checks both idle tasks with a
+5-second task-watchdog window. The same trace later completed the HTTPS request
+with status 200, and `CONFIG_ESP_TASK_WDT_PANIC` is disabled, so this event did
+not reset the device or invalidate a catalog generation. Treat it as a
+separate HTTPS responsiveness issue; changing the watchdog window or disabling
+an idle-core check would hide the signal and is outside this catalog slice.

@@ -19,6 +19,12 @@ set(CRYSTAL_BUS_CATALOG_MANIFEST_URL "https://raw.githubusercontent.com/SJoyTheH
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     "CRYSTAL_BUS_CATALOG_MANIFEST_URL=\"${CRYSTAL_BUS_CATALOG_MANIFEST_URL}\"")
 
+set(CRYSTAL_BUS_CATALOG_TEST_FAULT "none" CACHE STRING
+    "4R.3 test fault: none, interrupt, corrupt, or no_space")
+set_property(CACHE CRYSTAL_BUS_CATALOG_TEST_FAULT PROPERTY STRINGS none interrupt corrupt no_space)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    "CRYSTAL_BUS_CATALOG_TEST_FAULT=\"${CRYSTAL_BUS_CATALOG_TEST_FAULT}\"")
+
 set(CRYSTAL_HTTP_PHASE3_KMB_FORCE_FAILURE OFF CACHE BOOL
     "Use an invalid KMB endpoint for the Phase 3 retry validation run")
 if(CRYSTAL_HTTP_PHASE3_KMB_FORCE_FAILURE)
