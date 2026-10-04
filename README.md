@@ -8,9 +8,22 @@ LVGL and Espressif's `esp-brookesia` phone UI.
 ## No-bus baseline branch
 
 This branch removes the Bus app and its service/catalog workload from the current
-firmware. Bus development is preserved on `bus-app-development` at `fc20cf7`.
-See [baseline testing](docs/NO_BUS_BASELINE.md) for build, flash, and comparison steps.
-Bus planning documents below `docs/` are historical and do not describe this build.
+firmware. Bus development is preserved at `examples/bus_app/` (extracted from 
+`bus-app-development` at fc20cf7).
+
+**Status**: Development halted due to ESP32-S3 memory constraints (internal DRAM 
+exhaustion). The extracted code serves as architecture evidence for Phase 14+ app 
+platform work.
+
+**Documentation**:
+- [Bus app handoff](examples/bus_app/ARCHITECTURE_HANDOFF.md) — validated patterns 
+  and architecture gaps
+- [App platform lessons](docs/APP_PLATFORM_BUS_LESSONS.md) — resource ownership, 
+  quotas, permissions, and third-party distribution model derived from bus app evidence
+- [Baseline testing](docs/NO_BUS_BASELINE.md) — build, flash, and comparison steps
+
+Historical bus planning documents below `docs/` describe the development roadmap but 
+do not reflect this baseline build.
 
 ## Project goal
 
@@ -18,6 +31,12 @@ Crystal OS standardizes touch-screen apps on ESP32 with a shared shell,
 hardware interfaces, lifecycle, persistence, and system services. Early phases
 verify that the MCU can run a modern, animation-rich interface. Apps currently
 ship in firmware; later phases will add packages and a PC loader.
+
+**App Platform Development**: The bus app (preserved at `examples/bus_app/`) served as 
+a demanding reference workload for designing the third-party app platform (Phases 14-17). 
+While memory constraints halted its development, the extracted architecture patterns and 
+identified gaps inform the resource management, permission model, and package distribution 
+design. See [App Platform Lessons](docs/APP_PLATFORM_BUS_LESSONS.md) for the full analysis.
 
 ## Why ESP32?
 
@@ -134,6 +153,12 @@ The consolidated regression checklist is in [`docs/VALIDATION_CHECKLIST.md`](doc
 The complete project-specific ESP-IDF command reference is in
 [`docs/ESP_IDF_COMMAND_GUIDE.md`](docs/ESP_IDF_COMMAND_GUIDE.md).
 
+## Bus app architecture reference
+
+The [extracted bus app](examples/bus_app/README.md) preserves the native UI,
+service, catalog tools, fixtures, and architecture handoff for future package
+work. It is reference source only and is not included in the no-bus firmware.
+
 ## Build and flash
 
 From the project directory, activate the matching ESP-IDF environment:
@@ -208,3 +233,23 @@ artwork. Third-party dependencies and reference materials retain their own
 licenses. See [`NOTICE`](NOTICE) for third-party credits; the exact dependency
 license files under `managed_components/` remain authoritative for
 redistributed components.
+
+## Documentation
+
+Core design and implementation documentation:
+
+- **[DESIGN.md](docs/DESIGN.md)** — system architecture, visual language, lifecycle contract
+- **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — phase breakdown and exit criteria
+- **[CODE_GUIDE.md](docs/CODE_GUIDE.md)** — developer reference for the codebase
+
+App platform design (Phases 14-17):
+
+- **[APP_PLATFORM.md](docs/APP_PLATFORM.md)** — third-party app packaging, runtime tiers, host ABI
+- **[APP_PLATFORM_BUS_LESSONS.md](docs/APP_PLATFORM_BUS_LESSONS.md)** — architecture lessons from bus app development
+- **[examples/bus_app/ARCHITECTURE_HANDOFF.md](examples/bus_app/ARCHITECTURE_HANDOFF.md)** — validated patterns and gaps from reference workload
+- **[BUS_APP_VALIDATION_SUMMARY.md](docs/BUS_APP_VALIDATION_SUMMARY.md)** — validation findings and next steps
+
+Phase-specific proposals:
+
+- **[PHASE_12_PROPOSAL.md](docs/PHASE_12_PROPOSAL.md)** — OTA updates, crash reporting, recovery
+- **[NO_BUS_BASELINE.md](docs/NO_BUS_BASELINE.md)** — baseline testing without bus app

@@ -1,0 +1,558 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+
+#include "crystal_http.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "esp_log.h"
+#include "esp_crt_bundle.h"
+#include "esp_http_client.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "mbedtls/ssl.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+static const char *TAG = "crystal_http";
+
+#define CRYSTAL_HTTP_QUEUE_DEPTH 8
+#define CRYSTAL_HTTP_URL_MAX 256
+#define CRYSTAL_HTTP_CONTEXT_SLOTS CRYSTAL_HTTP_QUEUE_DEPTH
+#define CRYSTAL_HTTP_SYNTHETIC_ERROR ESP_ERR_NOT_SUPPORTED
+
+typedef struct {
+    bool used;
+    volatile bool cancelled;
+    uint32_t request_id;
+    uint32_t owner_id;
+    char url[CRYSTAL_HTTP_URL_MAX];
+    crystal_http_callback_t callback;
+    void *context;
+    uint32_t timeout_ms;
+    uint8_t max_attempts;
+    uint32_t retry_backoff_ms;
+    uint32_t retry_backoff_max_ms;
+    size_t max_body_bytes;
+    bool keep_alive;
+} request_slot_t;
+
+typedef struct {
+    uint8_t slot;
+} queue_item_t;
+
+static QueueHandle_t s_queue;
+static SemaphoreHandle_t s_lock;
+static TaskHandle_t s_worker;
+static request_slot_t s_slots[CRYSTAL_HTTP_CONTEXT_SLOTS];
+static uint32_t s_next_request_id = 1;
+static bool s_ready;
+static crystal_http_stats_t s_stats;
+
+typedef struct {
+    bool sampled;
+    uint32_t internal_before;
+    uint32_t largest_before;
+    uint32_t psram_before;
+    uint32_t tls_internal_min;
+    uint32_t tls_largest_min;
+    uint32_t tls_psram_min;
+} memory_trace_t;
+
+static void sample_memory(memory_trace_t *trace, bool tls_stage)
+{
+    const uint32_t internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!trace->sampled) {
+        trace->sampled = true;
+        trace->internal_before = internal;
+        trace->largest_before = largest;
+        trace->psram_before = psram;
+        trace->tls_internal_min = internal;
+        trace->tls_largest_min = largest;
+        trace->tls_psram_min = psram;
+    }
+    if (tls_stage) {
+        if (internal < trace->tls_internal_min) trace->tls_internal_min = internal;
+        if (largest < trace->tls_largest_min) trace->tls_largest_min = largest;
+        if (psram < trace->tls_psram_min) trace->tls_psram_min = psram;
+    }
+}
+
+static void log_heap(const char *stage, uint32_t request_id)
+{
+    ESP_LOGI(TAG, "heap %s id=%lu internal=%u largest_internal=%u psram=%u largest_psram=%u",
+             stage, (unsigned long)request_id,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+}
+
+static void capture_transport_failure(esp_http_client_handle_t client,
+                                      crystal_http_response_t *response)
+{
+    int tls_code = 0;
+    int tls_flags = 0;
+    const int socket_errno = esp_http_client_get_errno(client);
+    const esp_err_t tls_error = esp_http_client_get_and_clear_last_tls_error(
+        client, &tls_code, &tls_flags);
+    // esp_http_client_open wraps TLS allocation failures in HTTP_CONNECT.
+    // Preserve the resource classification so the existing no-memory policy
+    // does not retry an identical allocation under the same heap pressure.
+    // esp-tls stores the Mbed TLS code as a positive value in IDF 6.1,
+    // although the Mbed TLS macro itself is negative on older releases.
+    if (tls_code == MBEDTLS_ERR_SSL_ALLOC_FAILED ||
+        tls_code == -MBEDTLS_ERR_SSL_ALLOC_FAILED ||
+        tls_error == ESP_ERR_NO_MEM) {
+        response->transport_error = ESP_ERR_NO_MEM;
+    }
+    ESP_LOGW(TAG, "transport diagnostic id=%lu error=%s tls_error=%s tls_code=%d tls_flags=0x%x socket_errno=%d",
+             (unsigned long)response->request_id,
+             esp_err_to_name(response->transport_error), esp_err_to_name(tls_error),
+             tls_code, (unsigned)tls_flags, socket_errno);
+    log_heap("failure", response->request_id);
+}
+
+static request_slot_t *slot_for(uint8_t index)
+{
+    return index < CRYSTAL_HTTP_CONTEXT_SLOTS ? &s_slots[index] : NULL;
+}
+
+static void perform_request_once(request_slot_t *slot,
+                                 crystal_http_response_t *response,
+                                 int64_t started)
+{
+    memset(response, 0, sizeof(*response));
+    response->request_id = slot->request_id;
+    response->status_code = 0;
+    response->transport_error = slot->cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
+    memory_trace_t memory = {0};
+    sample_memory(&memory, false);
+
+    if (!slot->cancelled && strncmp(slot->url, "crystal://", 10) == 0) {
+        response->transport_error = CRYSTAL_HTTP_SYNTHETIC_ERROR;
+    } else if (!slot->cancelled) {
+        log_heap("before", slot->request_id);
+        esp_http_client_config_t config = {
+            .url = slot->url,
+            .timeout_ms = slot->timeout_ms != 0 ? slot->timeout_ms : 15000,
+            .keep_alive_enable = slot->keep_alive,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            // These IDF buffers use ordinary malloc, which prefers internal
+            // RAM for small allocations. Bodies still accumulate in PSRAM.
+            .buffer_size = 1024,
+            .buffer_size_tx = 1024,
+        };
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        sample_memory(&memory, true);
+        if (client == NULL) {
+            response->transport_error = ESP_ERR_NO_MEM;
+        } else {
+            const esp_err_t open_err = esp_http_client_open(client, 0);
+            sample_memory(&memory, true);
+            if (open_err != ESP_OK) {
+                response->transport_error = open_err;
+                ESP_LOGW(TAG, "request id=%lu transport failure=%s",
+                         (unsigned long)slot->request_id, esp_err_to_name(open_err));
+            } else {
+                ESP_LOGI(TAG, "TLS connected id=%lu", (unsigned long)slot->request_id);
+                const int64_t declared = esp_http_client_fetch_headers(client);
+                sample_memory(&memory, true);
+                response->status_code = esp_http_client_get_status_code(client);
+                const size_t limit = slot->max_body_bytes != 0 ? slot->max_body_bytes : 8192;
+                if (declared > (int64_t)limit) {
+                    response->transport_error = ESP_ERR_INVALID_SIZE;
+                    ESP_LOGW(TAG, "response id=%lu exceeds body limit (%lld > %u)",
+                             (unsigned long)slot->request_id, (long long)declared,
+                             (unsigned)limit);
+                } else {
+                    /* A negative length means chunked transfer. Some servers
+                     * also omit Content-Length and report zero, so both cases
+                     * use the same bounded read loop. */
+                    size_t capacity = declared > 0 ? (size_t)declared + 1 : 1024;
+                    if (capacity > limit + 1) capacity = limit + 1;
+                    response->body = heap_caps_malloc(capacity,
+                                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    sample_memory(&memory, false);
+                    if (response->body == NULL) {
+                        response->transport_error = ESP_ERR_NO_MEM;
+                    } else {
+                        ESP_LOGI(TAG, "body allocation id=%lu bytes=%u memory=PSRAM",
+                                 (unsigned long)slot->request_id, (unsigned)capacity);
+                        size_t total = 0;
+                        response->transport_error = ESP_OK;
+                        while (!slot->cancelled) {
+                            if (total + 1 >= capacity) {
+                                if (capacity >= limit + 1) {
+                                    /* Probe for another byte so an exact-limit
+                                     * response is accepted while a larger one
+                                     * is rejected. */
+                                    char extra = 0;
+                                    const int read = esp_http_client_read(client, &extra, 1);
+                                    if (read > 0) response->transport_error = ESP_ERR_INVALID_SIZE;
+                                    else if (read < 0) response->transport_error = ESP_FAIL;
+                                    break;
+                                }
+                                size_t next = capacity * 2;
+                                if (next > limit + 1) next = limit + 1;
+                                uint8_t *grown = heap_caps_realloc(response->body, next,
+                                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                if (grown == NULL) {
+                                    response->transport_error = ESP_ERR_NO_MEM;
+                                    break;
+                                }
+                                response->body = grown;
+                                capacity = next;
+                            }
+                            const int read = esp_http_client_read(client,
+                                                                  (char *)response->body + total,
+                                                                  (int)(capacity - total - 1));
+                            if (read == 0) break;
+                            if (read < 0) {
+                                response->transport_error = ESP_FAIL;
+                                break;
+                            }
+                            total += (size_t)read;
+                        }
+                        if (slot->cancelled) response->transport_error = ESP_ERR_INVALID_STATE;
+                        else if (declared > 0 && total != (size_t)declared &&
+                                 response->transport_error == ESP_OK) response->transport_error = ESP_FAIL;
+                        response->body[total] = '\0';
+                        response->body_len = total;
+                        // A connection can open successfully and then time
+                        // out before headers/body data arrive. In that case
+                        // esp_http_client reports status -1 while the read
+                        // loop may still leave transport_error as ESP_OK.
+                        // Normalize it to a transport failure so framework
+                        // retry policy is applied.
+                        if (response->status_code <= 0 &&
+                            response->transport_error == ESP_OK) {
+                            response->transport_error = ESP_FAIL;
+                        }
+                        if (response->transport_error == ESP_OK) {
+                            ESP_LOGI(TAG, "body received id=%lu bytes=%u",
+                                     (unsigned long)slot->request_id, (unsigned)total);
+                            if (total == 0) ESP_LOGW(TAG, "response id=%lu body empty",
+                                                     (unsigned long)slot->request_id);
+                        }
+                    }
+                }
+            }
+            // Capture TLS details before close/cleanup destroys the handle.
+            if (response->transport_error != ESP_OK && !slot->cancelled) {
+                capture_transport_failure(client, response);
+            }
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            log_heap("after", slot->request_id);
+        }
+    }
+    response->internal_free_before = memory.internal_before;
+    response->largest_internal_before = memory.largest_before;
+    response->psram_free_before = memory.psram_before;
+    response->tls_internal_free_min = memory.tls_internal_min;
+    response->tls_largest_internal_min = memory.tls_largest_min;
+    response->tls_psram_free_min = memory.tls_psram_min;
+    ESP_LOGI(TAG, "heap tls-peak id=%lu internal=%u largest_internal=%u psram=%u",
+             (unsigned long)slot->request_id,
+             (unsigned)response->tls_internal_free_min,
+             (unsigned)response->tls_largest_internal_min,
+             (unsigned)response->tls_psram_free_min);
+    response->elapsed_ms = (uint32_t)((esp_timer_get_time() - started + 999) / 1000);
+}
+
+static bool is_retryable_response(const crystal_http_response_t *response)
+{
+    if (response->transport_error != ESP_OK) {
+        return response->transport_error != ESP_ERR_INVALID_STATE &&
+               response->transport_error != ESP_ERR_NO_MEM &&
+               response->transport_error != ESP_ERR_INVALID_SIZE;
+    }
+    return response->status_code == 408 || response->status_code == 425 ||
+           response->status_code == 429 || response->status_code >= 500;
+}
+
+static void deliver_request(request_slot_t *slot)
+{
+    const int64_t started = esp_timer_get_time();
+    crystal_http_response_t response = {0};
+    uint8_t attempts = slot->max_attempts != 0 ? slot->max_attempts : 1;
+    if (attempts > 10) attempts = 10;
+    const uint32_t base_backoff = slot->retry_backoff_ms != 0 ? slot->retry_backoff_ms : 500;
+    const uint32_t max_backoff = slot->retry_backoff_max_ms != 0 ?
+        slot->retry_backoff_max_ms : 8000;
+
+    for (uint8_t attempt = 1; attempt <= attempts; ++attempt) {
+        if (slot->cancelled) {
+            response.request_id = slot->request_id;
+            response.transport_error = ESP_ERR_INVALID_STATE;
+            response.attempts = attempt - 1;
+            response.elapsed_ms = (uint32_t)((esp_timer_get_time() - started + 999) / 1000);
+            break;
+        }
+        ESP_LOGI(TAG, "request attempt id=%lu attempt=%u/%u",
+                 (unsigned long)slot->request_id, (unsigned)attempt, (unsigned)attempts);
+        perform_request_once(slot, &response, started);
+        response.attempts = attempt;
+        // Include failed attempts in the resource evidence, even when a later
+        // attempt succeeds with a less demanding handshake.
+        if (response.tls_internal_free_min < s_stats.min_tls_internal_free)
+            s_stats.min_tls_internal_free = response.tls_internal_free_min;
+        if (response.tls_largest_internal_min < s_stats.min_tls_largest_internal)
+            s_stats.min_tls_largest_internal = response.tls_largest_internal_min;
+        if (response.tls_psram_free_min < s_stats.min_tls_psram_free)
+            s_stats.min_tls_psram_free = response.tls_psram_free_min;
+        if (!is_retryable_response(&response) || attempt == attempts || slot->cancelled) break;
+
+        if (response.body != NULL) {
+            free(response.body);
+            response.body = NULL;
+            response.body_len = 0;
+        }
+        s_stats.retry_attempts++;
+        uint32_t delay = base_backoff;
+        for (uint8_t i = 1; i < attempt && delay < max_backoff; ++i) {
+            if (delay > max_backoff / 2) { delay = max_backoff; break; }
+            delay *= 2;
+        }
+        if (delay > max_backoff) delay = max_backoff;
+        ESP_LOGW(TAG, "request retry id=%lu after %lu ms error=%s status=%d",
+                 (unsigned long)slot->request_id, (unsigned long)delay,
+                 esp_err_to_name(response.transport_error), response.status_code);
+        const TickType_t ticks = pdMS_TO_TICKS(delay);
+        const TickType_t start = xTaskGetTickCount();
+        while (!slot->cancelled && (xTaskGetTickCount() - start) < ticks) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+    }
+
+    if (slot->cancelled) {
+        if (response.body != NULL) {
+            free(response.body);
+            response.body = NULL;
+            response.body_len = 0;
+        }
+        response.transport_error = ESP_ERR_INVALID_STATE;
+    }
+
+    if (response.transport_error == ESP_OK) {
+        if (response.status_code >= 200 && response.status_code < 400) s_stats.successful++;
+        if (response.status_code >= 400) s_stats.http_failures++;
+    } else if (response.transport_error != ESP_ERR_INVALID_STATE) {
+        s_stats.transport_failures++;
+    }
+    if (response.body_len > s_stats.peak_body_bytes) s_stats.peak_body_bytes = response.body_len;
+    s_stats.completed++;
+
+    if (slot->callback != NULL) {
+        ESP_LOGI(TAG, "request completed id=%lu attempts=%u elapsed=%lu ms status=%d",
+                 (unsigned long)response.request_id, (unsigned)response.attempts,
+                 (unsigned long)response.elapsed_ms, response.status_code);
+        ESP_LOGI(TAG, "request callback id=%lu error=%s",
+                 (unsigned long)response.request_id, esp_err_to_name(response.transport_error));
+        ESP_LOGI(TAG, "stats requests=%lu successes=%lu retries=%lu failures=%lu cancelled=%lu peak_body=%lu",
+                 (unsigned long)s_stats.queued, (unsigned long)s_stats.successful,
+                 (unsigned long)s_stats.retry_attempts,
+                 (unsigned long)(s_stats.transport_failures + s_stats.http_failures),
+                 (unsigned long)s_stats.cancellations, (unsigned long)s_stats.peak_body_bytes);
+        ESP_LOGI(TAG, "stats tls-min internal=%lu largest_internal=%lu psram=%lu",
+                 (unsigned long)s_stats.min_tls_internal_free,
+                 (unsigned long)s_stats.min_tls_largest_internal,
+                 (unsigned long)s_stats.min_tls_psram_free);
+        slot->callback(&response, slot->context);
+    }
+}
+
+static void worker_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "worker started core=%d", xPortGetCoreID());
+
+    queue_item_t item;
+    while (xQueueReceive(s_queue, &item, portMAX_DELAY) == pdTRUE) {
+        request_slot_t *slot = slot_for(item.slot);
+        if (slot == NULL) continue;
+
+        deliver_request(slot);
+
+        if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+            memset(slot, 0, sizeof(*slot));
+            xSemaphoreGive(s_lock);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+bool crystal_http_init(void)
+{
+    if (s_ready) return true;
+
+    s_lock = xSemaphoreCreateMutex();
+    s_queue = xQueueCreate(CRYSTAL_HTTP_QUEUE_DEPTH, sizeof(queue_item_t));
+    if (s_lock == NULL || s_queue == NULL) {
+        if (s_queue != NULL) vQueueDelete(s_queue);
+        if (s_lock != NULL) vSemaphoreDelete(s_lock);
+        s_queue = NULL;
+        s_lock = NULL;
+        return false;
+    }
+
+    if (xTaskCreatePinnedToCore(worker_task, "crystal_http", 8192, NULL, 2,
+                                &s_worker, 0) != pdPASS) {
+        vQueueDelete(s_queue);
+        vSemaphoreDelete(s_lock);
+        s_queue = NULL;
+        s_lock = NULL;
+        s_worker = NULL;
+        return false;
+    }
+
+    s_ready = true;
+    memset(&s_stats, 0, sizeof(s_stats));
+    s_stats.min_tls_internal_free = UINT32_MAX;
+    s_stats.min_tls_largest_internal = UINT32_MAX;
+    s_stats.min_tls_psram_free = UINT32_MAX;
+    ESP_LOGI(TAG, "component initialized");
+#if CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC
+    ESP_LOGI(TAG, "TLS allocator=PSRAM");
+#else
+    ESP_LOGI(TAG, "TLS allocator is not forced to PSRAM");
+#endif
+#if CONFIG_MBEDTLS_HARDWARE_AES
+    ESP_LOGI(TAG, "TLS hardware AES=enabled");
+#else
+    ESP_LOGI(TAG, "TLS hardware AES=disabled");
+#endif
+    ESP_LOGI(TAG, "queue depth=%d", CRYSTAL_HTTP_QUEUE_DEPTH);
+    return true;
+}
+
+bool crystal_http_is_ready(void)
+{
+    return s_ready;
+}
+
+uint32_t crystal_http_get(const crystal_http_options_t *options,
+                          crystal_http_callback_t callback,
+                          void *context)
+{
+    if (!s_ready || options == NULL || callback == NULL || options->url == NULL ||
+            options->url[0] == '\0' || strlen(options->url) >= CRYSTAL_HTTP_URL_MAX) {
+        return 0;
+    }
+
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return 0;
+
+    int free_slot = -1;
+    for (int i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
+        if (!s_slots[i].used) {
+            free_slot = i;
+            break;
+        }
+    }
+    if (free_slot < 0) {
+        xSemaphoreGive(s_lock);
+        return 0;
+    }
+
+    request_slot_t *slot = &s_slots[free_slot];
+    memset(slot, 0, sizeof(*slot));
+    slot->used = true;
+    slot->request_id = s_next_request_id++;
+    if (slot->request_id == 0) slot->request_id = s_next_request_id++;
+    slot->owner_id = options->owner_id;
+    strlcpy(slot->url, options->url, sizeof(slot->url));
+    slot->callback = callback;
+    slot->context = context;
+    slot->timeout_ms = options->timeout_ms;
+    slot->max_attempts = options->max_attempts;
+    slot->retry_backoff_ms = options->retry_backoff_ms;
+    slot->retry_backoff_max_ms = options->retry_backoff_max_ms;
+    slot->max_body_bytes = options->max_body_bytes;
+    slot->keep_alive = options->keep_alive;
+
+    queue_item_t item = {.slot = (uint8_t)free_slot};
+    if (xQueueSend(s_queue, &item, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "request rejected: queue full");
+        memset(slot, 0, sizeof(*slot));
+        xSemaphoreGive(s_lock);
+        return 0;
+    }
+    const uint32_t request_id = slot->request_id;
+    s_stats.queued++;
+    s_stats.current_queue_depth = (uint32_t)uxQueueMessagesWaiting(s_queue);
+    ESP_LOGI(TAG, "request queued id=%lu owner=%lu",
+             (unsigned long)request_id, (unsigned long)slot->owner_id);
+    xSemaphoreGive(s_lock);
+    return request_id;
+}
+
+bool crystal_http_cancel(uint32_t request_id)
+{
+    if (!s_ready || request_id == 0 || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    bool found = false;
+    for (size_t i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
+        if (s_slots[i].used && s_slots[i].request_id == request_id) {
+            if (!s_slots[i].cancelled) {
+                s_slots[i].cancelled = true;
+                s_stats.cancellations++;
+            }
+            ESP_LOGI(TAG, "request cancellation requested id=%lu",
+                     (unsigned long)request_id);
+            found = true;
+            break;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return found;
+}
+
+size_t crystal_http_cancel_owner(uint32_t owner_id)
+{
+    if (!s_ready || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return 0;
+    size_t count = 0;
+    for (size_t i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
+        if (s_slots[i].used && s_slots[i].owner_id == owner_id) {
+            if (!s_slots[i].cancelled) {
+                s_slots[i].cancelled = true;
+                ++count;
+            }
+        }
+    }
+    xSemaphoreGive(s_lock);
+    if (count != 0) {
+        s_stats.cancellations += (uint32_t)count;
+        ESP_LOGI(TAG, "owner cancellation requested owner=%lu count=%u",
+                 (unsigned long)owner_id, (unsigned)count);
+    }
+    return count;
+}
+
+bool crystal_http_get_stats(crystal_http_stats_t *stats)
+{
+    if (!s_ready || stats == NULL || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    *stats = s_stats;
+    stats->current_queue_depth = (uint32_t)uxQueueMessagesWaiting(s_queue);
+    xSemaphoreGive(s_lock);
+    return true;
+}
+
+void crystal_http_response_release(const crystal_http_response_t *response)
+{
+    if (response == NULL) return;
+    free(response->body);
+    ESP_LOGI(TAG, "response released id=%lu", (unsigned long)response->request_id);
+    ESP_LOGI(TAG, "heap released id=%lu internal=%u largest_internal=%u psram=%u",
+             (unsigned long)response->request_id,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+}

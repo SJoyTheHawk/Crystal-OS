@@ -1,0 +1,205 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+
+#include "crystal_app.hpp"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "crystal_hal.hpp"
+#include "esp_log.h"
+#include "lvgl.h"
+
+static const char *TAG = "crystal_app";
+
+namespace {
+constexpr size_t kMaxStateBytes = 2048;
+constexpr size_t kMaxKeyBytes = 7;
+crystal_shell_back_hook_t s_shell_back_hook = nullptr;
+
+ESP_Brookesia_PhoneAppData_t crystal_phone_app_data(const void *launcher_icon)
+{
+    ESP_Brookesia_PhoneAppData_t data =
+        ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT(launcher_icon, true, false);
+    // Crystal arbitrates the bottom edge so a shell page is dismissed before
+    // the card underneath it is sent home.
+    data.flags.enable_navigation_gesture = 0;
+    return data;
+}
+}
+
+void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook)
+{
+    s_shell_back_hook = hook;
+}
+
+CrystalState::CrystalState(const char *app_name)
+    : prefix_("a")
+{
+    uint32_t hash = 2166136261u;
+    if (app_name != nullptr) {
+        for (const unsigned char *p = reinterpret_cast<const unsigned char *>(app_name); *p != '\0'; ++p) {
+            hash ^= *p;
+            hash *= 16777619u;
+        }
+    }
+    char suffix[8];
+    snprintf(suffix, sizeof(suffix), "%06lx", static_cast<unsigned long>(hash & 0xFFFFFFu));
+    prefix_ += suffix;
+    prefix_ += ".";
+}
+
+bool CrystalState::make_key(const char *key, std::string *out) const
+{
+    if (key == nullptr || out == nullptr || key[0] == '\0' || strlen(key) > kMaxKeyBytes) {
+        return false;
+    }
+    *out = prefix_ + key;
+    return out->size() < 64;
+}
+
+bool CrystalState::get(const char *key, void *value, size_t *length) const
+{
+    std::string full_key;
+    if (value == nullptr || length == nullptr || *length > kMaxStateBytes || !make_key(key, &full_key)) {
+        return false;
+    }
+    return hal().storage != nullptr && hal().storage->get(full_key.c_str(), value, length);
+}
+
+bool CrystalState::set(const char *key, const void *value, size_t length)
+{
+    std::string full_key;
+    if (value == nullptr || length > kMaxStateBytes || !make_key(key, &full_key)) {
+        return false;
+    }
+    return hal().storage != nullptr && hal().storage->set(full_key.c_str(), value, length);
+}
+
+bool CrystalState::erase(const char *key)
+{
+    std::string full_key;
+    if (!make_key(key, &full_key)) {
+        return false;
+    }
+    return hal().storage != nullptr && hal().storage->erase(full_key.c_str());
+}
+
+bool CrystalState::get_u32(const char *key, uint32_t *value) const
+{
+    size_t length = sizeof(*value);
+    return value != nullptr && get(key, value, &length) && length == sizeof(*value);
+}
+
+bool CrystalState::set_u32(const char *key, uint32_t value)
+{
+    return set(key, &value, sizeof(value));
+}
+
+CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
+    : ESP_Brookesia_PhoneApp(
+          ESP_BROOKESIA_CORE_APP_DATA_DEFAULT(name, launcher_icon, true),
+          crystal_phone_app_data(launcher_icon)),
+      app_name_(name != nullptr ? name : "<unnamed>"), state_(name)
+{
+}
+
+// Brookesia's init()/deinit() are lifecycle bookkeeping only. They forward to no
+// app hook: setup belongs in onCreate(), and boot-time reconciliation of service
+// state belongs to the owning service.
+bool CrystalApp::init()
+{
+    assert(lifecycle_state_ == LifecycleState::Destroyed);
+    lifecycle_state_ = LifecycleState::Installed;
+    return true;
+}
+
+bool CrystalApp::deinit()
+{
+    lifecycle_state_ = LifecycleState::Destroyed;
+    return true;
+}
+
+bool CrystalApp::run()
+{
+    assert(lifecycle_state_ == LifecycleState::Installed ||
+           lifecycle_state_ == LifecycleState::Destroyed);
+    ESP_LOGI(TAG, "%s lifecycle: onCreate", app_name_.c_str());
+    const uint32_t start = lv_tick_get();
+    const bool ok = onCreate();
+    const uint32_t elapsed = lv_tick_elaps(start);
+    if (elapsed > 80) {
+        ESP_LOGW(TAG, "%s onCreate took %lu ms (budget 80 ms)",
+                 app_name_.c_str(), static_cast<unsigned long>(elapsed));
+    }
+    if (ok) {
+        lifecycle_state_ = LifecycleState::Created;
+    }
+    return ok;
+}
+
+bool CrystalApp::pause()
+{
+    if (lifecycle_state_ == LifecycleState::Paused) {
+        return true;
+    }
+    assert(is_active());
+    ESP_LOGI(TAG, "%s lifecycle: onPause", app_name_.c_str());
+    if (!onPause()) {
+        ESP_LOGW(TAG, "%s onPause reported failure; continuing teardown", app_name_.c_str());
+    }
+    lifecycle_state_ = LifecycleState::Paused;
+    return true;
+}
+
+bool CrystalApp::resume()
+{
+    assert(lifecycle_state_ == LifecycleState::Paused);
+    ESP_LOGI(TAG, "%s lifecycle: onResume", app_name_.c_str());
+    const uint32_t start = lv_tick_get();
+    const bool ok = onResume();
+    const uint32_t elapsed = lv_tick_elaps(start);
+    if (elapsed > 80) {
+        ESP_LOGW(TAG, "%s onResume took %lu ms (budget 80 ms)",
+                 app_name_.c_str(), static_cast<unsigned long>(elapsed));
+    }
+    if (ok) {
+        lifecycle_state_ = LifecycleState::Resumed;
+    }
+    return ok;
+}
+bool CrystalApp::close()
+{
+    if (lifecycle_state_ == LifecycleState::Destroyed) {
+        return true;
+    }
+    if (is_active() && lifecycle_state_ != LifecycleState::Paused) {
+        (void)pause();
+    }
+    ESP_LOGI(TAG, "%s lifecycle: onDestroy", app_name_.c_str());
+    if (!onDestroy()) {
+        ESP_LOGW(TAG, "%s onDestroy reported failure; continuing teardown", app_name_.c_str());
+    }
+    lifecycle_state_ = LifecycleState::Destroyed;
+    return true;
+}
+
+bool CrystalApp::back()
+{
+    assert(is_active());
+    ESP_LOGI(TAG, "%s lifecycle: onBack", app_name_.c_str());
+    return onBack();
+}
+
+bool CrystalApp::onBack()
+{
+    if (s_shell_back_hook != nullptr && s_shell_back_hook()) return true;
+    return notifyCoreClosed();
+}
+
+bool CrystalApp::is_active() const
+{
+    return lifecycle_state_ == LifecycleState::Created ||
+           lifecycle_state_ == LifecycleState::Started ||
+           lifecycle_state_ == LifecycleState::Resumed;
+}

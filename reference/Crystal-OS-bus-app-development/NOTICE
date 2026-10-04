@@ -1,0 +1,11 @@
+Crystal OS
+
+This product includes software developed by Espressif Systems (Shanghai) Co.,
+Ltd., including ESP-IDF and esp-brookesia.
+
+ESP-IDF: https://github.com/espressif/esp-idf
+esp-brookesia: https://github.com/espressif/esp-brookesia
+
+The dependency license files downloaded by the ESP-IDF Component Manager are
+the authoritative license terms for the exact versions used by a build. Review
+and retain those files with distributed firmware source and notices.

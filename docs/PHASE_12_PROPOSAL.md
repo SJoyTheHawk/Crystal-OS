@@ -6,6 +6,10 @@ Implement crash reporting, signed full-image OTA, automatic rollback, stable/sta
 
 OTA distributes the signed `crystal_os.bin` application image, not a patch, ZIP, ELF, bootloader, partition table, or SPIFFS image. Bootloader and partition-table changes require USB recovery.
 
+**Note**: Phase 12 was originally scoped before bus app development. The lessons from 
+bus app memory constraints (documented in `APP_PLATFORM_BUS_LESSONS.md`) inform Phase 
+14+ app platform work but do not change Phase 12's core OTA and recovery contracts.
+
 ## Update Contract
 
 - Production source:
@@ -87,3 +91,20 @@ Use this bounded JSON schema:
 - Development devices trust only the development key and staging feed; production devices trust only the production key and stable feed.
 - SPIFFS assets, bootloader OTA, delta updates, automatic background installation, public beta channels, and hardware Secure Boot remain out of Phase 12.
 - Update [`CODE_GUIDE.md`](/Users/szemy/Workspace/ESP32%20Crystal%20OS/docs/CODE_GUIDE.md:1598) and [`DESIGN.md`](/Users/szemy/Workspace/ESP32%20Crystal%20OS/docs/DESIGN.md:604) to reflect the decisions above, especially strict version ordering, signed images, dedicated OTA worker, retained raw dumps, source topology, and recovery behavior.
+
+## Relationship to App Platform Work
+
+Phase 12 focuses on OS-level OTA and recovery. The bus app (parked in `examples/bus_app/`) 
+demonstrated memory constraints that halted its development but produced valuable 
+architecture evidence for Phase 14+ app packaging work:
+
+- **Separate concerns**: OTA updates the entire firmware image; app install/uninstall 
+  (Phase 14+) modifies only `/apps/` partition contents
+- **No app runtime in Phase 12**: The bus app's singleton service pattern and resource 
+  ownership gaps inform future app platform design but don't affect OTA implementation
+- **Partition table coordination**: Phase 12 ships with the current partition table; 
+  Phase 14's proposed repartition (4M OTA slots, 5.5M apps partition) must ship via 
+  USB recovery, not OTA
+
+See `APP_PLATFORM_BUS_LESSONS.md` for extracted architecture patterns and 
+`examples/bus_app/ARCHITECTURE_HANDOFF.md` for the preserved reference implementation.

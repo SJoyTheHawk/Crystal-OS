@@ -1,0 +1,86 @@
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_PM_ENABLE=y
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=2000000
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+CONFIG_ESP_BROOKESIA_MEMORY_USE_CUSTOM=y
+CONFIG_BSP_I2C_NUM=1
+CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2
+CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR=y
+CONFIG_BSP_DISPLAY_LVGL_TASK_STACK_SIZE_KB=16
+CONFIG_BSP_DISPLAY_LVGL_DIRECT_MODE=y
+
+CONFIG_LV_COLOR_DEPTH=16
+CONFIG_LV_COLOR_16_SWAP=n
+CONFIG_LV_COLOR_SCREEN_TRANSP=y
+CONFIG_LV_MEM_CUSTOM=y
+CONFIG_LV_MEMCPY_MEMSET_STD=y
+CONFIG_LV_USE_PERF_MONITOR=y
+CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+# Weather reads its temperature from across the room; 28 px is too small for a
+# hero number. Costs ~40 KiB of flash, which the app budget can carry.
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_FONT_FMT_TXT_LARGE=y
+CONFIG_LV_USE_FONT_COMPRESSED=y
+CONFIG_LV_USE_DEMO_BENCHMARK=y
+
+CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
+
+# Phase 9.5 TLS. Both weather endpoints present chains that terminate in a
+# cross-signed certificate rather than a self-signed root in the bundle:
+# api.open-meteo.com sends ISRG Root YR, which is issued by ISRG Root X1. Without
+# this option the bundle can only anchor a chain whose last certificate it holds
+# directly, which is not how CAs are currently rotating roots.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+
+# Phase 9.7. mbedtls_ssl_setup() returned -0x008D (MBEDTLS_ERR_SSL_ALLOC_FAILED,
+# = PSA_ERROR_INSUFFICIENT_MEMORY) on every KMB ETA request. The default
+# INTERNAL_MEM_ALLOC forces every mbedtls allocation into DRAM, and one session
+# wants ~20 KB of that for its record buffers alone -- CONFIG_MBEDTLS_
+# SSL_IN_CONTENT_LEN is 16384. On this board the RGB framebuffers, LVGL's draw
+# buffers, and the WiFi/lwIP pools have already taken the internal heap by the
+# time an app asks for a socket, so a handshake that would fit at boot does not
+# fit from inside a running app.
+#
+# TLS record buffers are memcpy targets, never DMA descriptors, so PSRAM is a
+# correct home for them and not just a bigger one. SPIRAM_USE_MALLOC is already
+# set, which is what this option depends on.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# TLS reliability: hardware AES stages PSRAM data in internal DMA buffers.
+# During bus stop requests those buffers can fail despite free PSRAM.
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
+# Keep TLS session tickets enabled so repeated HTTPS requests can resume a
+# connection without paying a full handshake each time.
+CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y
+
+# app_main builds the first card and calls lv_refr_now() on the main task, so both
+# app creation and LVGL's recursive draw walk run on this stack.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

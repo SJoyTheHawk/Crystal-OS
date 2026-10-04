@@ -1,0 +1,8 @@
+{
+  "type": "RouteStop",
+  "data": [
+    {"co": "CTB", "route": "969", "dir": "I", "seq": 1, "stop": "002536"},
+    {"co": "CTB", "route": "969", "dir": "I", "seq": "2", "stop": "002554"},
+    {"co": "CTB", "route": "969", "dir": "I", "seq": 3, "stop": "002440"}
+  ]
+}

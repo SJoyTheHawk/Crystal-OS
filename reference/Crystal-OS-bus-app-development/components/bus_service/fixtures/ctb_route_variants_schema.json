@@ -1,0 +1,29 @@
+{
+  "type": "RouteList",
+  "version": "2.0",
+  "generated_timestamp": "<redacted>",
+  "data": [
+    {
+      "co": "CTB",
+      "route": "1",
+      "orig_en": "<terminal-a-en>",
+      "orig_tc": "<terminal-a-tc>",
+      "orig_sc": "<terminal-a-sc>",
+      "dest_en": "<terminal-b-en>",
+      "dest_tc": "<terminal-b-tc>",
+      "dest_sc": "<terminal-b-sc>",
+      "data_timestamp": "<redacted>"
+    },
+    {
+      "co": "CTB",
+      "route": "1",
+      "orig_en": "<terminal-b-en>",
+      "orig_tc": "<terminal-b-tc>",
+      "orig_sc": "<terminal-b-sc>",
+      "dest_en": "<terminal-a-en>",
+      "dest_tc": "<terminal-a-tc>",
+      "dest_sc": "<terminal-a-sc>",
+      "data_timestamp": "<redacted>"
+    }
+  ]
+}

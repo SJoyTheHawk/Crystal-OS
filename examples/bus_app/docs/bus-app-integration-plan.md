@@ -1,0 +1,314 @@
+# Bus App Integration Readiness and Incremental Plan
+
+**Date:** 2026-09-25  
+**Status:** Working implementation plan  
+**Scope:** The first two tabs (Favorites and Search), route and stop drill-down, live ETA, and persistence. Nearby remains deferred.
+
+**Progress (2026-10-01):** HTTPS/TLS Phase 5 Slices 1–3 are implementation
+signed off for handoff. Slice 2 established provider-qualified CTB variants,
+cache identity, stop handoff, and lifecycle guards. Slice 3 added normalized
+route metadata, CTB route-level destination summaries, and destination-first
+Search presentation. Slice 4 is being revised from per-stop acquisition to prepared stop catalogs;
+Slice 5 owns named stop picking and selection.
+
+See [Slice 3 — normalized route metadata](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+and its [code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
+The next implementation slice is [Slice 4 — stop metadata catalog](crystal-http-phase5-slice4-stop-picker-plan.md)
+with its [code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md).
+The picker and selection boundary move to [Slice 5](crystal-http-phase5-slice5-stop-picker-plan.md).
+
+This document compares the requested workflow in [`bus-app-workflow.md`](bus-app-workflow.md), [`bus-app-ui-design.md`](bus-app-ui-design.md), and [`bus-app-code-guide.md`](bus-app-code-guide.md) with the code that currently exists in `components/bus_service` and `components/bus_app`. Each implementation step should be completed and verified before starting the next one.
+
+## Current conclusion (2026-10-02)
+
+Slices 1–3 provide runtime KMB/CTB route catalogs, provider-qualified variants,
+normalized route summaries, ordered route-stop IDs, and cancellation/network
+lifecycle handling. The old skeleton-only assessment is superseded; the detailed
+capability matrix below includes historical rows that still require verification
+before being used as evidence of current code behaviour.
+
+Original Slice 4 reached local lookup diagnostics, but acquired names through
+individual stop requests triggered by route discovery. KMB requests are failing
+on the device; that transport cause remains unproven. The acquisition design
+also conflicts with the intended preloaded stop directory experience.
+
+The revised [Slice 4 plan](crystal-http-phase5-slice4-stop-picker-plan.md) uses
+compact provider snapshots built off-device: KMB from its official bulk API,
+CTB from HK Bus Crawling's prepared dataset. The device independently updates
+and persists these catalogs. Selected routes continue using official route-stop
+requests and resolve names locally. Artifact hosting and scheduled preparation
+are explicit delivery dependencies; they are not implemented yet.
+
+Use a selective refactor from the current worktree. `e79d24a` is the Slice 3
+baseline and remains HEAD at this review; no full revert is recommended. Keep
+copied metadata/key contracts, replace the per-stop queue and partial-catalog
+state, and preserve unrelated work. Revision steps are named **4R.0–4R.6** so a
+new session cannot mistake original S4.4 completion for acceptance of this plan.
+
+## HTTPS/TLS migration dependency and sequencing
+
+The bus app integration continues alongside the HTTPS/TLS hardening. The KMB
+catalog and KMB route-stop operations already use `crystal_http`; their final
+failure/lifetime acceptance run is deferred while this integration proceeds.
+That deferral does not block the next bus-service work, but it does mean the
+Phase 4 hardening phase remains pending final acceptance.
+
+Use the shared transport at the service boundary in this order:
+
+1. Finish the normalized service contracts and LVGL-task event delivery before
+   adding more provider-specific screens.
+2. Implement CTB route, stop, and provider-result adapters with their own
+   parsing and normalization code.
+3. Submit each CTB HTTPS operation through `crystal_http` once its normalized
+   request and response contract is defined. Reuse the KMB bounded handoff,
+   ownership, cancellation, and stale-request pattern.
+4. Add co-operated-route merging only after KMB and CTB records can be
+   represented by the same normalized model.
+5. Return to the deferred KMB failure/lifetime matrix after CTB and weather
+   clients are available, then run contention and global direct-client checks.
+
+This is deliberate interleaving, not a return to a large combined migration:
+the bus plan owns provider contracts and user flow, while the HTTPS plan owns
+transport lifetime, buffering, retries, cancellation, and diagnostics. Keep
+those responsibilities separate so a failed device gate remains localizable.
+
+## Capability matrix
+
+| # | Workflow capability | Current implementation | Readiness | Required work |
+|---:|---|---|---:|---|
+| 1 | Full route catalog bootstrap and cache | Runtime KMB/CTB route catalog fetch, in-memory index, atomic SPIFFS cache, seven-day freshness, provider progress logs, and Search loading lock | Complete | KMB route variants are persisted with the searchable catalog. Bootstrap waits for synchronized time and Wi-Fi/IP before fetching; NWFB remains skipped unless a live endpoint is confirmed. |
+| 2 | Launch on Favorites | `onCreate()`, `buildFavoritesTab()`, `rebuildFavoritesView()` | Complete | Persisted favorites render immediately; cached ETAs remain visible during refresh, with loading, age, empty, partial-failure, and no-network states. |
+| 3 | Search tab and keypad | `buildSearchTab()`, `buildKeypad()`, `rebuildSearchResults()` | Complete | Compact reference-style keypad, reset/backspace, loading lock, catalog-backed ascending route rows, adaptive key dimming, disabled-until-complete Go action, route selection, and page scrolling are implemented. Separate inbound/outbound rows and terminal destinations are intentionally handled by rows 5/9 after route variants are loaded. |
+| 4 | Route prefix validation | `bus_route_is_complete()`, `bus_route_next_mask()`, `bus_route_get_operators()` | Complete | Validation now reads the active runtime catalog (with the compiled fixture as a fallback), matches only the typed prefix, handles invalid/null input safely, and returns operator metadata for complete routes. |
+| 5 | Route result sorting and both directions | `route_variants_`, `rebuildRouteVariantResults()` | Complete | Route responses are copied into an app-owned model and sorted deterministically. Directional destinations are shown only when authoritative; Slice 3 now supplies route-level CTB destination summaries. |
+| 6 | KMB route variants | `process_route_request()` | Partial | Validate all response fields and stale request handling. |
+| 7 | CTB route variants | Step 3A provider-qualified choices | Implemented with deferred destination association | [Slice 2](crystal-http-phase5-slice2-ctb-route-variants-plan.md) preserves CTB identity and direction. The public route list does not associate terminal pairs with direction; [Slice 3](crystal-http-phase5-slice3-normalized-route-metadata-plan.md) retains those pairs as route-level metadata for Search. |
+| 8 | NWFB compatibility | Enum only; non-KMB falls through to CTB | Missing | Treat NWFB as retired/merged unless a live endpoint is confirmed; keep an extensible operator adapter. |
+| 9 | Direction selection | Inline route-variant rows | Partial | Direction selection is performed directly from the Search result rows; a separate chooser page is unnecessary. The selected normalized variant is now retained and queues its stop request; stop-picker rendering remains in rows 10/12. |
+| 10 | Route-stop list | Official selected-route requests return IDs and sequence | Implemented | Preserve route identity; Slice 5 joins names locally from revised Slice 4 catalogs. |
+| 11 | Stop names and coordinates | Original Slice 4 partial cache and copied lookup APIs | Revision required | Replace per-stop acquisition with 4R prepared provider catalogs and independent status. |
+| 12 | Stop picker | Stop page renders sequence placeholders | Next slice | Build named scrollable rows, selection state, loading/error rows, and back navigation. |
+| 13 | ETA for one operator | `process_eta_request()` | Partial | Correct API parsing, direction filtering, clock-invalid behavior, and error/empty result semantics. |
+| 14 | ETA for co-operated route | None | Missing | Issue both requests, merge and sort predictions, deduplicate, and retain per-operator error state. |
+| 15 | ETA refresh cadence | 30-second app timer | Partial | Make visible-page scoped, prevent duplicate queueing, and preserve last good data on errors. |
+| 16 | ETA detail page | None | Missing | Add detail page, freshness, manual refresh, no-info text, and save toggle. |
+| 17 | Favorite add/remove | NVS load/save only | Missing | Define identity, duplicate detection, max-eight feedback, toggle action, and atomic persistence. |
+| 18 | Favorite edit/delete | None | Missing | Edit mode and trash action; rebuild list after deletion. |
+| 19 | Favorite card update | Stub | Missing | Keep card pointers or rebuild safely; show three merged ETAs and age. |
+| 20 | Language selection | No language state or TC fields | Missing | Add active language, endpoint/query selection, cache generation, and UI strings. |
+| 21 | Seven-day refresh | No timestamp check | Missing | Implement valid-clock checks and daily/app-open expiry checks. |
+| 22 | Offline behavior | None | Missing | Use cached names/routes/favorites and show stale/no-network status. |
+| 23 | Nearby tab | Deliberately absent | Deferred | Add only after location input and coordinate cache decisions are implemented. |
+
+## Data and service contract that must be settled first
+
+### Normalized identity
+
+Use a normalized route variant as the identity for discovery:
+
+```text
+route + operator + bound + service_type
+```
+
+The route label alone is a display group. KMB and CTB may publish different
+routes with the same number, so the catalog may merge equal labels only for
+display and must retain provider-qualified options underneath. Search and
+cache lookups must select the operator before creating a stop or ETA request;
+they must never infer the provider from the route number.
+
+Use a favorite identity that includes the stop:
+
+```text
+route + operator-set + bound + service_type + stop_id
+```
+
+For a co-operated route, `operator-set` contains every operator that serves that route variant and stop. If the APIs use different stop IDs for the same physical stop, retain the operator-specific IDs inside the favorite record rather than assuming uppercase IDs are globally unique.
+
+The current `Favorite` structure has one `op` field and must be revised before co-operated favorites are implemented. The ETA request contract also needs `bound` (or a guaranteed response filter) so an inbound favorite cannot display outbound predictions.
+
+### Event delivery and ownership
+
+The service should own the worker task and HTTP buffers. It should post completed events to a queue drained by an LVGL timer or the platform UI event mechanism. The listener must run on the LVGL task. Every event must carry its request ID, and the app must ignore events for a superseded page or request.
+
+Allocated arrays in `BUS_EVT_ROUTE_VARIANTS` and `BUS_EVT_STOPS_LIST` need an explicit ownership rule. The recommended rule is: the listener owns and frees successful payload arrays after copying the data needed by the current page; error events contain no allocated payload.
+
+### API and normalization
+
+Keep the operator adapters separate even when they share a normalized output:
+
+- KMB uses `bound` values `I`/`O`, KMB service types, and route-specific or stop-wide ETA endpoints.
+- CTB uses its own route/stop endpoint shape and may use direction names or codes depending on the endpoint version.
+- NWFB was removed from the current public combined API specification; the adapter should be retained only if a live data source is confirmed. Do not silently send NWFB requests to CTB.
+- Stop records need `name_en`, `name_tc`, latitude, longitude, operator, and source ID. Do not expose `"Stop N"` as a resolved name.
+- ETA parsing must accept null ETA values, remarks, operator, route, direction, and the provider timestamp. Empty ETA data is a valid “No info available” result.
+
+The official public specification describes KMB's `/stop-eta/{stop_id}` response as all routes at a stop and its `/eta/{stop_id}/{route}/{service_type}` response as route-specific; the implementation must filter by route, direction, and service type before displaying a favorite. See the [KMB API specification](https://data.etabus.gov.hk/datagovhk/kmb_eta_api_specification.pdf) and the [combined bus ETA data dictionary](https://static.data.gov.hk/ogcio/datagovhk/opendata/eta/bus-route-list-and-eta-specific-stop-api-data-dictionary.pdf).
+
+## Incremental implementation order
+
+### Step 0 — Freeze the contracts and create a deterministic baseline
+
+**Goal:** Make the next changes measurable without changing the complete UI.
+
+- Record the current build and device dimensions.
+- Replace implicit numeric operator values and raw direction chars at call sites with named enums/helpers.
+- Define event ownership, request cancellation, request IDs, error status handling, and the normalized route/stop/favorite structures.
+- Add a small service test fixture containing one KMB route, one CTB route, one co-operated route, two directions, and an empty ETA response.
+- Keep the existing seven-entry index only as a test fixture; label it as such.
+
+**Exit check:** The project builds, the fixture can exercise each normalized structure, and no UI code is called from the worker task.
+
+### Step 1 — Make the service transport safe and observable
+
+**Goal:** Establish a reliable asynchronous request path before adding pages.
+
+- Move event delivery from `post_event()` into a UI-task drain queue.
+- Implement consistent success/error events for route, stops, stop detail, and ETA requests.
+- Handle unknown/chunked HTTP content lengths and bounded allocations.
+- Honor cancellation for the in-flight request and discard late results by request ID.
+- Add request de-duplication or a queue capacity that covers the eight-favorite refresh case.
+
+**Exit check:** A fixture or controlled API response produces callbacks on the LVGL task, reports HTTP/parse errors, and never updates a destroyed app.
+
+### Step 2 — Implement the route catalog and freshness policy
+
+**Goal:** Make Search usable and prevent large data downloads on every app open.
+
+- Generate the full route index from the selected data source, including KMB and CTB operator bits and any supported replacement for NWFB.
+- Fix `bus_route_next_mask()` so a candidate character is allowed only when the complete prefix matches.
+- Add active-language metadata and a cache format. The repository has SPIFFS mounted as `/spiffs`; either implement the cache there or deliberately add/configure LittleFS before coding against the guide's LittleFS paths.
+- Store cache generation, language, provider version/hash, and last successful update time.
+- On app open, check for a valid clock, a future/invalid stored time, and age greater than seven days. Run this check at most once per day and whenever the app opens.
+- Fetch into a temporary file and atomically replace the active cache only after validation.
+- Emit progress/error state so Search can show “waiting for route data” while the first cache is being built.
+
+**Exit check:** Search can load the active language's complete route list from cache, survives a failed refresh with the old cache, and can switch EN/TC by replacing the active language dataset.
+
+### Step 3 — Finish the Search tab
+
+**Goal:** Implement the first half of the discovery flow using cached routes only.
+
+- Add reset and backspace behavior exactly as specified.
+- Store keypad button pointers and apply the route mask to digits and letters after every edit. Keep invalid keys visible but dimmed, as the UI design requests.
+- Show matching route numbers in ascending order; show no route rows for an empty input.
+- Show both directions and operator labels for a complete route. Keep the Enter action disabled/dimmed until a complete route is entered.
+- Add a loading overlay while route cache initialization/update is incomplete.
+- Carry the selected route query as a request generation so old results cannot replace new results.
+
+**Exit check:** The keypad and result list work with the fixture and with the full generated index, including reset, backspace, impossible-character dimming, and both directions.
+
+### Step 4A — Normalize route metadata and show destinations (complete)
+
+Slice 3 moved the useful part of the CTB
+route response into Search without weakening directional identity.
+
+- Define a provider-neutral route summary beside `bus_route_variant_t`.
+- Centralize route, direction, service-type, and localized-text normalization.
+- Retain CTB origin/destination pairs even when `bound` is absent.
+- Persist and reload summaries with a bumped cache schema.
+- Show CTB route-level destinations in route rows and label them as summaries
+  when a direction-specific destination is unavailable.
+- Keep stop requests based only on the selected normalized variant.
+
+See [Slice 3 plan](crystal-http-phase5-slice3-normalized-route-metadata-plan.md)
+and [Slice 3 code guide](crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md).
+
+**Exit check:** A CTB route row shows provider destinations, a selected
+inbound/outbound row still produces the same stop URL, and cache reload keeps
+the route summaries and provider identities.
+
+### Step 4B — Prepare and synchronize stop catalogs (revision 4R)
+
+**Goal:** Resolve stop names locally without browsing-triggered detail requests.
+
+- Preserve the Slice 3 route catalog and on-demand ordered route-stop responses.
+- Convert official KMB bulk stops and prepared HK Bus Crawling CTB data into
+  separate compact, provider-qualified artifacts on a host machine.
+- Establish artifact provenance, scheduled generation and HTTPS hosting.
+- Budget full catalogs and replacement space for the 4-MiB SPIFFS partition,
+  plus PSRAM and internal TLS memory. Do not reuse the old 512-key limit.
+- Synchronize manifests/artifacts through `crystal_http`, independently of route
+  selection, with cancellation/deferment for foreground route requests.
+- Persist recoverable provider generations; retain usable stale data on failure.
+- Expose copied local lookups and truthful per-provider status. Unknown IDs do
+  not start individual HTTP requests.
+
+**Exit check:** Both provider snapshots survive reboot and safe replacement,
+resolve names locally, and show zero detail requests caused by browsing. KMB
+transport and CTB artifact delivery must each pass their own device gate.
+
+See the [4R implementation plan](crystal-http-phase5-slice4-stop-picker-plan.md)
+and [code guide](crystal-http-phase5-slice4-stop-picker-code-guide.md). Full route
+mapping preloading and live ETA remain outside this slice.
+
+### Step 4C — Add the stop picker and selection boundary
+
+The picker consumes the local prepared catalogs and selected-route stop mapping. It renders fallback
+sequence labels for unresolved records, supports both providers and directions,
+and emits a complete selected-stop identity without issuing detail HTTPS
+requests. See [Slice 5](crystal-http-phase5-slice5-stop-picker-plan.md).
+
+### Step 5 — Implement ETA normalization and the ETA board
+
+**Goal:** Show correct live predictions for a selected stop.
+
+- Add direction to ETA requests or filter every provider response by normalized route, operator, direction, and service type.
+- Issue one request per operator in a co-operated favorite/selection. Associate each response with a composite identity, not only `stop_id`.
+- Normalize timestamps to minutes and absolute time when the system clock is valid. Preserve provider remarks and support null/no-ETA records.
+- Merge all operator results, sort by arrival time, deduplicate equivalent predictions, and keep the next three.
+- Build the ETA board with back, manual refresh, freshness age, last-good-data retention, and the required EN/TC no-info strings.
+- Use a visible-page 30-second timer (the current UI target; verify the observed reference behavior on the device); do not enqueue another refresh while one is already pending.
+
+**Exit check:** A selected stop displays the correct direction, three merged ETAs or the no-info state, and remains useful after a timeout or app pause/resume.
+
+### Step 6 — Implement favorites and persistence
+
+**Goal:** Complete the main landing-page use case.
+
+- Add a save/unsave toggle on the ETA board using the composite favorite identity.
+- Enforce the eight-entry limit with an actionable message.
+- Append newly saved entries at the bottom and preserve that order when reloading.
+- Persist versioned favorite records atomically. Include operator-specific stop IDs for co-operated routes and the active display name/language or a resolvable name key.
+- Load cached ETAs immediately, then refresh in the background.
+- Rebuild or update the affected card after each response; display up to three merged ETAs and the last-updated age.
+- Add an explicit edit mode with a trash action and confirm/remove behavior.
+- Fix the current event user-data collision by storing both the app pointer and favorite index in a stable context object.
+
+**Exit check:** A user can search, choose a stop, save it, see it on Favorites after reopening the app, refresh it, and remove it without corrupting neighboring entries.
+
+### Step 7 — Navigation, error states, and lifecycle hardening
+
+**Goal:** Make the flow safe on the device.
+
+- Implement a page stack: Favorites/Search tabs, direction chooser, stop picker, and ETA board. Hide tabs on drill-down pages as specified.
+- On tab changes, release page-specific request state and buffers before loading the selected tab's data.
+- Make Back return to the previous page first, clear search input only on the Search page, and exit only when the app is at its root state.
+- Add empty, loading, timeout, offline, invalid-cache, and route-changed states without blanking last-good ETAs.
+- Release page-specific arrays, cache buffers, and pointers on page replacement, pause, and destroy.
+- Validate first render and visual-area dimensions on the target display.
+
+**Exit check:** Repeated tab switching, drill-down/back, pause/resume, and destroy/reopen cycles do not leak objects, deliver stale results to the wrong page, or crash LVGL.
+
+### Step 8 — Defer Nearby until location input is real
+
+Nearby requires a reliable user location source, coordinate caching, permission/error states, and a cost limit for resolving many stops. Leave it out of the first integration slice. Reuse the normalized stop coordinates and cache interfaces when it is started later.
+
+## Per-step verification record
+
+For each step, record:
+
+```text
+Step:
+Changed files:
+Service contract changed:
+Manual device check:
+Build/check command:
+Observed memory/network behavior:
+Known follow-up:
+```
+
+Do not start a later step while an earlier exit check is failing. This keeps each function addition reviewable and prevents another all-at-once integration.
+
+## Reference notes
+
+The reference project uses a versioned route database, stores metadata such as schema/hash/update time, and renews the database on a seven-day policy when automatic renewal is enabled. See its [`db.ts`](https://raw.githubusercontent.com/hkbus/hk-independent-bus-eta/master/src/db.ts). The reference repository describes itself as an ad-free Hong Kong ETA application with data from DATA.GOV.HK and HK Bus Crawling: [hkbus/hk-independent-bus-eta](https://github.com/hkbus/hk-independent-bus-eta).

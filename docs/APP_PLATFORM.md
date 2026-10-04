@@ -75,9 +75,11 @@ icon: assets/icon.bin           # LVGL binary image, loaded on demand
 bar_style: dark                 # indicator bar contrast (DESIGN.md §2)
 
 memory_kb: 160                  # hard ceiling; OOM kills this app, not the OS
+worker_threads: 0               # background task quota (0 = UI thread only)
+storage_kb: 32                  # persistent cache size under data/
 
 permissions:
-  storage_kb: 32
+  storage_kb: 32                # DEPRECATED: moved to top level
   notify: true
   audio: true
   system_timer: true
@@ -88,6 +90,13 @@ permissions:
 `http.fetch` is not reachable from that app at all. Permissions are enforced by
 the host at the ABI call site, never by the interpreter, and are shown to the
 user at install time.
+
+**Resource limits are admission gates.** The host sums `memory_kb` and `storage_kb` 
+across all installed apps; install fails if the total exceeds available PSRAM or 
+flash. `worker_threads` limits background task spawns; script apps typically need 
+zero (all work runs on LVGL task), while native apps doing HTTPS or heavy compute 
+may need 1-2. Bus app evidence: 256 KB PSRAM (route cache + UI + buffers), 1024 KB 
+storage (stop catalogs), 1 worker thread (HTTP requests).
 
 `bar_style` resolves `DESIGN.md` §12's open question #4 for script apps the same
 static way it does for bundled ones: per-app, declared, not dynamic.
@@ -159,6 +168,11 @@ The widget catalog is fixed. It is sized by the three bundled apps plus the
 worked example — if Clock, Weather, and Calculator can be written with it, it is
 enough to open.
 
+**Design principle from bus app evidence**: The ABI must support apps that need 
+background work (HTTPS, heavy parsing) without exposing raw FreeRTOS or blocking 
+the LVGL task. `http.fetch` with async callback is the pattern; the host owns 
+the worker thread and enforces `worker_threads` quota from the manifest.
+
 ### 6.1 `crystal.ui` — tree
 
 | Function | Notes |
@@ -201,7 +215,7 @@ Fonts are the three sizes from `DESIGN.md` §10 — `small` 16, `medium` 20,
 | `timer.status()` | `{state, remaining, total}`; state is `idle`/`ready`/`running`/`paused`/`finished` |
 | `notify.toast(text)` | non-interactive, 2500ms hold |
 | `notify.chime()` | requires `audio` |
-| `http.fetch(url, opts, cb)` | async; host-allowlisted; returns a request handle |
+| `http.fetch(url, opts, cb)` | async; host-allowlisted; returns a request handle; **requires worker_threads >= 1** |
 | `http.cancel(req)` | |
 | `net.status()` | `{state, ssid, ip}` — read-only, no credentials |
 | `location.get()` | lat/long from Settings › Region & Time, if permitted |
@@ -214,7 +228,14 @@ guarantee the bundled Clock has, without being trusted to keep it.
 
 `http.fetch` is async by rule. No blocking call is reachable from a script,
 because script runs on the LVGL task and a blocking call there stalls the panel
-and eventually trips the 5s task watchdog.
+and eventually trips the 5s task watchdog. The host enforces `worker_threads >= 1` 
+in the manifest when `http` permission exists; attempting `http.fetch` from an 
+app with `worker_threads: 0` returns an error immediately.
+
+**Bus app lesson**: Request ownership must be explicit. The callback receives 
+`(request_id, result)` so the app can discard stale responses after navigation. 
+The host tracks request→app_instance mapping; destroying an app cancels its 
+in-flight requests and suppresses callbacks that race teardown.
 
 ### 6.4 `crystal.state`
 
@@ -227,6 +248,10 @@ Numbers, strings, booleans, and flat tables. Backed by `data/state.json` for
 script apps and by NVS `CrystalState` for builtins. Raw NVS is not in the ABI at
 all — that boundary is what keeps WiFi credentials out of app reach, as
 `IMPLEMENTATION_PLAN.md` §Phase 4 already noted.
+
+**Namespace isolation**: Keys are automatically prefixed with `<app_id>:` when 
+written to NVS for script apps. Deleting an app folder triggers NVS enumeration 
+to erase all keys matching the prefix, preventing orphaned state.
 
 ### 6.5 `crystal.fs`
 
@@ -260,6 +285,12 @@ The contract authors must be told, because guessing wrong is silent data loss:
 - Return values are advisory. A false return is logged, not fatal — same fix as
   §4.5 item 5.
 - `onCreate` has an 80ms budget, warned in debug builds.
+
+**Bus app onCreate measured at 275-500ms**, which is 3-6× budget. This is acceptable 
+for a reference implementation proving complex workloads, but production apps should 
+defer expensive work (large file loads, network checks) to onResume or lazy UI 
+construction. The 80ms budget assumes simple apps (Clock, Weather, Calculator); 
+data-heavy apps may need a relaxed budget or explicit "Loading..." state.
 
 ## 7. Runtime tiers
 
@@ -402,17 +433,53 @@ interpreter risk.
 `.capp` spec and `crystal pack`; LittleFS `apps` partition; `origin` on the
 registry record; boot reconcile per §5; icons loaded from bundle files.
 
+**New requirements from bus app evidence:**
+
+1. **Per-app resource handles**: Refactor singleton services (where they exist in 
+   bundled apps) to instance-based handles. Add `crystal_app_service_create(app_id)` 
+   returning opaque handle; all service APIs take handle as first parameter. Track 
+   allocations (heap, tasks, queues, timers) per handle.
+
+2. **Transactional teardown with verification**: `onDestroy()` must block until 
+   owned resources released. Add `crystal_app_verify_cleanup(app_id)` scanning for 
+   leaked tasks, timers, queue handles, and allocated blocks. Log leaks in debug; 
+   refuse package uninstall if leaks detected (force-disable instead).
+
+3. **Namespaced NVS state**: `CrystalState::set(key, value)` for package apps 
+   writes NVS key as `<app_id>:key`. On uninstall, enumerate NVS keys matching 
+   `<app_id>:*` prefix and erase all. Test: install app, save state, uninstall, 
+   verify no orphaned keys.
+
 Exit: a bundled app converted to a package installs, launches, reorders, and
 uninstalls cleanly. Hand-deleting its folder over USB leaves no orphan NVS row.
+**New exit criterion**: After uninstall, `crystal_app_verify_cleanup()` reports 
+zero leaked resources.
 
 ### Phase 15 — Control panel
 
 HTTP API, static web UI, CDC-ACM carrier, Web Serial page, pairing PIN, signature
 verification, `crystal` CLI with `logs -f`.
 
+**New requirements from bus app evidence:**
+
+1. **Resource admission control**: Before accepting package install, sum 
+   `memory_kb` + `storage_kb` + `worker_threads` across installed apps plus the 
+   new package. Reject install with clear error if total exceeds available PSRAM 
+   (measure at boot), flash quota (fixed partition size), or task limit 
+   (CONFIG_FREERTOS_MAX_TASKS minus OS reserved count).
+
+2. **Manifest validation**: Enforce `worker_threads >= 1` when `network_hosts` 
+   permission exists. Reject manifests declaring `http.fetch` permission without 
+   worker thread budget.
+
+3. **Install progress for large packages**: Report progress for packages >1MB. 
+   Bus app evidence: 943KB stop catalog alone; realistic data-heavy apps may ship 
+   2-5MB assets. Show progress bar, not just spinner.
+
 Exit: a `.capp` installs over both WiFi and USB from the same browser page. The
 API refuses every request without a paired token. On-device Manage Apps and the
-external panel agree after a change made from either.
+external panel agree after a change made from either. **New exit criterion**: 
+Install correctly rejects package when `memory_kb` sum exceeds available PSRAM.
 
 ### Phase 16 — Declarative runtime
 
@@ -429,9 +496,29 @@ addition.
 `ScriptApp : CrystalApp`, sandbox, count-hook watchdog, per-app allocator, `data/`
 quota, `crystal run`. Gated on the flash/RAM spike from §7.
 
+**New requirements from bus app evidence:**
+
+1. **Async HTTP with request ownership**: Implement `http.fetch(url, opts, cb)` 
+   with callback receiving `(request_id, status, body)`. Host tracks 
+   request_id→app_instance mapping. On app destroy, cancel in-flight requests and 
+   suppress racing callbacks. Test: start request, destroy app mid-flight, verify 
+   callback never fires and worker thread completes safely.
+
+2. **Worker thread quota enforcement**: When `worker_threads: 1`, limit app to one 
+   concurrent background task. Second `http.fetch` while first is pending either 
+   queues or returns error (decide which). When `worker_threads: 0`, `http.fetch` 
+   returns immediate error.
+
+3. **Lazy onCreate budget relaxation**: Raise onCreate warning threshold from 80ms 
+   to 200ms for script apps, or make it manifest-configurable. Bus app measured 
+   275-500ms for UI + catalog init, which is realistic for data-heavy apps. Keep 
+   80ms for simple apps; document the tradeoff (fast launch vs rich features).
+
 Exit: `examples/clock3p/` runs as a real app. A deliberate infinite loop in a
 callback produces a toast and a dead app, not a watchdog reset. A timer armed by
-the script still fires after the app is destroyed.
+the script still fires after the app is destroyed. **New exit criterion**: HTTP 
+request started before `onDestroy()` completes or cancels cleanly without crashing 
+the worker thread.
 
 ## 12. Open questions
 
@@ -446,3 +533,16 @@ the script still fires after the app is destroyed.
    supported at once? Answer before Phase 16 ships, not after.
 4. **Declarative and script in one package.** Allowing `ui.json` for layout plus
    `main.lua` for behaviour is attractive and doubles the loader's surface. Not v2.
+5. **Per-app resource isolation for native code.** The bus app demonstrated that 
+   C/C++ apps using global state (singleton services, static task handles) cannot 
+   be cleanly unloaded without OS restart. Native tier needs either: (a) strict 
+   "no static mutable state" coding rules with runtime verification, (b) per-app 
+   address spaces (not available on ESP32-S3), or (c) acceptance that native apps 
+   disable rather than uninstall. Decide before Phase 14 native loader work.
+6. **Memory budget enforcement timing.** Should `memory_kb` quota be checked at 
+   install time (reject if total installed apps exceed PSRAM) or at launch time 
+   (refuse to launch if already-running apps consumed the budget)? Install-time 
+   is predictable; launch-time allows overcommit when apps aren't all running.
+7. **App lifecycle during OTA.** Phase 12 OTA requires reboot; should running apps 
+   receive onPause/onDestroy before reboot, or is forced termination acceptable? 
+   If graceful shutdown, does OTA abort if an app's onDestroy returns false?

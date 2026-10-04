@@ -1,0 +1,890 @@
+# Crystal OS — Implementation Plan (v1)
+
+Companion document: `CODE_GUIDE.md`, which holds the skeletons referenced by each
+phase below.
+
+## 1. Target
+
+| Item | v1 choice |
+| --- | --- |
+| Board | Waveshare `esp32_s3_touch_lcd_4b` |
+| SoC | ESP32-S3, dual core, 240MHz, octal PSRAM @80MHz |
+| Panel | RGB parallel, 480x480, ~86mm square (**not** MIPI DSI) |
+| Touch | GT911 via I2C (`CONFIG_BSP_I2C_NUM=1`) |
+| RTC | PCF85063 on the same I2C bus |
+| Flash | 16MB |
+| UI base | `esp-brookesia` 0.4.2 on LVGL 8.4 |
+
+Crystal OS is a shell and app framework layered on `ESP_Brookesia_Phone`. It does
+not reimplement the status bar, launcher, gesture recognition, per-app visual
+area, or app lifecycle core — those are Brookesia's, and are extended rather
+than replaced.
+
+**Attribution requirement:** a `NOTICE` file at the repo root and an attribution
+row in System settings crediting `esp-brookesia` and ESP-IDF to Espressif.
+Brookesia's license text has not been read yet (`managed_components/` was never
+populated in the reference); confirm it after the first successful build and make
+`NOTICE` match what it actually says.
+
+## 2. Settled decisions
+
+These are closed. They are restated here so no phase re-opens them.
+
+- **Destroy-on-switch, not resident apps.** Brookesia's `close()`/`run()` already
+  destroy and rebuild an app's UI. Continuity comes from a snapshot plus a small
+  state store, not from keeping object trees alive.
+- **Single gesture owner.** One arbiter, claimed on direction-lock, OS priority
+  over apps, quick-settings armed only from the top ~20px band.
+- **LVGL is single-threaded.** Core 1 owns every `lv_*` call. Everything else
+  posts to a queue.
+- **All apps ship in firmware.** An NVS registry decides which are installed;
+  app code lives in the OTA slot, app assets live in SPIFFS.
+- **RTC first, SNTP second.** Time is correct before the first frame.
+- **Dual OTA slots from day one**, even before OTA is wired up.
+- **English only.** Three Montserrat sizes plus one for the indicator bar.
+
+## 3. Measurement gates
+
+Four unknowns remain. None change the architecture; each fills a blank. Two are
+sequenced as gates because later work depends on the answer.
+
+| # | Question | Answered by | Blocks |
+| --- | --- | --- | --- |
+| G1 | Full-screen animation FPS with `BSP_LCD_RGB_BUFFER_NUMS=1` | Phase 1 spike | Phase 6 (card switcher) |
+| G2 | Does Brookesia compile against LVGL's SDL port? | Phase 2 | How much of Phase 5-10 can be built off-device |
+| ~~G3~~ | ~~Actual panel size~~ | **Closed** — board README: 4-inch IPS, 480×480, 65K colours, ST7701, RGB interface. The `480_480` stylesheet is correct; "AMOLED-1.8" in `bsp_extra` was copy-paste. | — |
+| ~~G4~~ | ~~Is there a usable battery sense pin?~~ | **Closed, better than hoped** — AXP2101 PMIC. `XPowersLib` gives `getBatteryPercent()`, `getBattVoltage()`, `isCharging()`, `getVbusVoltage()`. A real fuel gauge over I2C: no divider, no discharge-curve modelling, charging state free. | — |
+
+G1 is the important one. If a full-screen drag with a blurred backdrop lands
+under ~20 FPS, the choices are: enable double buffering (+460KB PSRAM and more
+bandwidth on an already-loaded bus), simplify the effect, or move the animation
+work to a later P4 target. Do not build Phase 6 before knowing.
+
+## 4. Phases
+
+Each phase lists its exit criteria. A phase is not done until they hold on real
+hardware.
+
+### Phase 0 — Skeleton and boot baseline (complete)
+
+Create the project, get a blank Brookesia phone booting with one trivial app.
+
+- Root `CMakeLists.txt`, `main/`, `components/`, `idf_component.yml` pinning
+  `idf >=5.3.0`, `espressif/esp-brookesia 0.4.2`, `lvgl/lvgl 8.4.0`,
+  `espressif/esp_lvgl_port ^2`, `waveshare/esp32_s3_touch_lcd_4b`
+- `partitions.csv` per §5
+- `sdkconfig.defaults` per §6
+- Port `my_rounder_cb` verbatim from the reference — the panel requires
+  even-aligned flush areas
+- Register `bsp_display_lock` / `bsp_display_unlock` as Brookesia's LV lock
+  callbacks
+
+Exit: boots, one app launches and returns, `NOTICE` file present, first-frame
+time logged as the baseline for the 1.2-2s budget.
+
+**Completion record (2026-09-02):** Verified on the Waveshare ESP32-S3-Touch-LCD-4B.
+The project builds and flashes successfully; the Brookesia launcher, GT911 touch,
+Hello app, and Return to launcher path all work on hardware. The measured
+first-frame baseline is **1933 ms**, within the Phase 0 target budget. The
+launcher tile's visual affordance and full-tile hit area remain UI polish for a
+later phase and do not block this bring-up milestone.
+
+### Phase 1 — Performance gate (G1) (complete)
+
+A throwaway spike, not production code. Full-screen card drag over a pre-blurred
+static backdrop, `CONFIG_LV_USE_PERF_MONITOR=y` (already on in the reference).
+
+Exit: a recorded FPS number and a written decision on double buffering.
+
+**Spike preparation (2026-09-02):** Added the temporary `Phase 1 Perf` launcher
+app. It renders a dense static 8x8 backdrop and a 300px live card that follows
+touch 1:1, matching the workload described by the future switcher. LVGL's
+performance monitor remains enabled and the app logs
+`drag FPS avg=<n> (single-buffer gate)` once per second while the card is held.
+Run `idf.py flash`, open `Phase 1 Perf`, and drag continuously for at least ten
+seconds. Record the sustained FPS from the serial log, then decide: keep the
+single RGB buffer at >=20 FPS; below 20 FPS, evaluate double buffering before
+starting Phase 6.
+
+**Hardware result (2026-09-02):** On the Waveshare ESP32-S3-Touch-LCD-4B with
+`BSP_LCD_RGB_BUFFER_NUMS=1`, the visible card motion measured approximately
+**7--8 FPS** during sustained dragging. The serial `lv_refr_get_fps_avg()` values
+were 19--30 FPS, but that is the LVGL refresh average rather than the panel's
+visible present rate; the on-screen result is the binding measurement for G1.
+The single-buffer configuration therefore fails the 20 FPS gate. A second run
+with `BSP_LCD_RGB_BUFFER_NUMS=2` still measured approximately **7--8 visible
+FPS** (serial average decayed to 12 FPS), so double buffering does not solve the
+panel-bound workload. **Decision: do not depend on double buffering for Phase 6.**
+Use the planned fallback: a simplified switcher animation, with no live
+full-screen tracking card, no blur/shadow during the drag, and a short
+cross-fade or snap transition. Keep the benchmark app until that simpler
+animation has its own measurement.
+
+**Phase 6.5 re-measurement (2026-09-04):** The original runs used an unintended
+480x100 partial-buffer copy path because Kconfig dropped direct mode. Step 0
+instrumentation measured approximately 49-96 ms render and 15-34 ms synchronous
+flush per refresh with one RGB framebuffer. With two RGB framebuffers,
+`BSP_DISPLAY_LVGL_AVOID_TEAR=y`, and direct mode active, synchronous flush fell
+to approximately 3-10 ms, but render time rose to approximately 91-106 ms.
+Sustained dragging completed only about 8-10 refresh cycles per second; the
+long-window LVGL average decayed from 30 to 15 FPS. This is below the Phase 6.5
+12 FPS stop gate, so the 50% finger-tracked crossover was deferred from Phase 6
+and the snap/fade interaction stands as an interim baseline. The crossover is a
+**required** interaction per `DESIGN.md` §5 and lands in Phase 7.5 after gesture
+arbitration; the 91-106 ms render time is the defect to fix, not a reason to
+change the design. The two-buffer direct mode stays:
+physical-panel testing confirmed that the obvious preview tearing is gone.
+Display initialization measured 922,232 bytes of PSRAM consumed by this mode.
+
+### Phase 2 — HAL boundary and simulator (G2)
+
+Every hardware touch goes behind an interface: `IBrightness`, `IWifi`, `IRtc`,
+`IStorage`, `ITouchRaw`. Device implementations wrap the BSP; desktop mocks back
+an LVGL SDL build.
+
+**Progress (2026-09-02):** Added the device brightness adapter and an NVS-backed
+`IStorage` implementation and a lazy Wi-Fi station adapter in `crystal_hal`.
+The Wi-Fi adapter was verified on hardware by connecting to a WPA2 network and
+obtaining an IP address. The PCF85063 adapter now uses the board's shared I2C
+bus at address `0x51`, and raw touch is exposed through the bound LVGL input
+device. A standalone mock backend is available under `sim/` for host tests.
+The full SDL UI target remains a follow-up.
+
+Worth the effort because the hardest remaining work — card drag feel, pull-down
+feel, keyboard field-centering — needs dozens of tuning passes. On hardware
+that is a week; on desktop, an afternoon.
+
+Caveats to accept up front: the simulator will not reproduce PSRAM limits, frame
+rate, or single-buffer tearing. Those stay device-only questions. If Brookesia
+resists porting (it calls into `esp_log` and `heap_caps` at minimum), simulate
+only Crystal's own layers and leave Brookesia on-device.
+
+Exit: the same UI code builds and runs on macOS and on the board.
+
+### Phase 3 — Core services
+
+**Progress (2026-09-03):** Added `crystal_core`, including a bounded
+cross-task UI event queue, an LVGL-timer drain point, and a low-priority service
+task pinned to core 0. A non-interactive toast overlay now handles queued toast
+events, with a one-time core-0 startup toast serving as the hardware proof.
+System time is loaded from the PCF85063 before display startup, the Brookesia
+clock is refreshed every second, and SNTP corrections are written back to the
+RTC. An unset or invalid RTC displays `--:--` until RTC or SNTP establishes a
+valid time. `crystal_time_set()` provides the shared manual/system-to-RTC write path. The
+service also implements a 30-second dim and 60-second backlight-off
+policy with ramped brightness and touch activity restoration. Swallowing the
+first wake touch remains assigned to the Phase 6 gesture arbiter.
+
+**Brightness stability follow-up (2026-09-05):** Direct hardware observation
+at 0%, 1%, 3%, and 5% for 30 seconds per level was stable. The underlying
+energy-saver low-level brightness behavior remains unresolved and is deferred;
+no production brightness floor or wake-path experiment is retained. The
+temporary diagnostic sequence was removed, and the `Off` target remains 0%.
+
+- UI event queue: `crystal_ui_post()` from any task, drained by an `lv_timer` on
+  the LVGL task so handlers already hold the lock
+- `crystal_service` task, low priority, core 0: RTC reads, brightness ramp,
+  screen-timeout counter
+- Toast layer on `lv_layer_top()`, `LV_OBJ_FLAG_CLICKABLE` cleared so it can
+  never steal a gesture. Built before WiFi because WiFi outcomes are toasts.
+- Time service: PCF85063 → `settimeofday()` at boot, SNTP correction later,
+  corrected time written back to the RTC, POSIX TZ string in NVS
+
+Exit: time is right before the first frame with no network; a toast fires from a
+core-0 task without touching LVGL directly.
+
+### Phase 4 — App framework
+
+**Progress (2026-09-03):** Added `CrystalApp`, a Crystal-owned lifecycle
+wrapper over `ESP_Brookesia_PhoneApp`, with sealed `run()`/`pause()`/`resume()`/
+`close()`/`back()` entry points and `onCreate()`/`onPause()`/`onResume()`/
+`onDestroy()`/`onBack()` hooks, including an 80 ms `onResume()` diagnostic.
+Added `CrystalState`, a bounded (2 KiB per
+value) NVS-backed store with app-specific key prefixes. Hello now uses the
+new lifecycle, and the State Test app demonstrates a counter surviving an app
+switch and reboot. The Phase 4 hardware checkpoint passed; the framework is
+ready for Phase 5 registry work.
+
+`CrystalApp` over `ESP_Brookesia_PhoneApp`, with `run()`/`close()` sealed
+`final` and redirected to the lifecycle hooks. `CrystalState` as a per-app
+namespaced NVS-backed store, hard-capped ~2KB.
+
+Namespacing matters beyond tidiness: it is the boundary that makes a future
+script sandbox possible. An app that can read arbitrary NVS can read WiFi
+credentials.
+
+Exit: two apps convert to the lifecycle and survive switch-away/switch-back with
+scroll position and draft text intact. `onResume()` under 80ms, warned in debug
+builds when exceeded.
+
+### Phase 4.5 — Lifecycle correctness
+
+A review of the Phase 4 hooks against Android's six-callback model
+(`onCreate`/`onStart`/`onResume`/`onPause`/`onStop`/`onDestroy`) found four gaps.
+Android's callbacks are three nested pairs — create/destroy bounds the object
+lifetime, start/stop the visible lifetime, resume/pause the foreground lifetime.
+Crystal's five hooks do not nest, and two of them fire on events other than the
+ones their names imply. This phase closes the gaps that matter before any real
+app is built on the framework. It is small and entirely inside
+`components/crystal_app` plus one stylesheet value. The pause-before-destroy
+ordering, advisory teardown results, sealed install bookkeeping, and
+one-resident-app policy land here. `onStart()`/`onStop()` are defined as dormant API
+hooks and **stay dormant for all of v1** — the note below proposing Phase 7 as their
+dispatch point was not carried out and is not outstanding work. See §"Sequencing
+notes" and `DESIGN.md` §5.5.
+
+Keep the six Android lifecycle hooks declared, with `onStart()`/`onStop()`
+reserved until the shell has a real visibility transition to dispatch. The
+single-window device does not currently have a distinct visible-but-not-
+foreground state.
+
+**1. `onPause()` before `onDestroy()`.** The shipped `close()` calls
+`onDestroy()` alone, so the documented contract "serialize state out in
+`onPause()`" silently loses data on the most common path — return to launcher,
+and destroy-on-switch. Android guarantees `onPause` precedes `onDestroy`; Crystal
+must too. Guard with a lifecycle state enum so an app Brookesia already paused
+does not receive `onPause()` twice.
+
+Brookesia's `processClose()` calls `close()` *before* `enableAutoClean()` and
+`cleanResource()`, so the LVGL tree is still alive inside `onPause()`/
+`onDestroy()`. Widget state can be read there. That is a real difference from
+Android, where the view hierarchy is gone by `onDestroy`, and it is what makes
+this fix a two-line change rather than a redesign. Document it — an app author
+will otherwise assume the Android rule and cache values defensively.
+
+**2. Seal `init()`/`deinit()` as bookkeeping.**
+`ESP_Brookesia_CoreApp::init()`/`deinit()` sat unsealed and unused, so an app
+could override them and bypass the framework. They are now final, update only
+the lifecycle state, and call no app hook. There is no Android install callback,
+and the former name encouraged apps to put boot reconciliation in the wrong
+place. An app that needs once-per-boot setup performs it from `onCreate()` behind
+an instance member guard. Registry installation and Phase 13 clear-data remain
+explicit platform operations.
+
+**3. `onStart()`/`onStop()` for occlusion.** Quick settings (Phase 8) and the
+keyboard overlay (Phase 10) cover the app opaquely with no callback at all, so a
+1s `lv_timer` keeps redrawing behind a fully occluding panel. On a single-buffer
+RGB panel that already measured 7-8 FPS at gate G1, that is wasted bandwidth in
+exactly the moment an animation needs it. `onStop()` was proposed as the hook Clock,
+Weather, and the Phase 1 benchmark would want, fired by the Phase 7 arbiter as the
+only component that knows what covers what.
+
+**Superseded: the hooks are declared and never fired, in v1 and beyond it.** Phase 7
+closed without the call sites and v1 keeps a four-state lifecycle. The corner panel of
+Phase 8.5 also narrowed the original argument considerably — it covers 306x306 rather
+than the full screen, so the app beneath is genuinely still visible and pausing it
+would be wrong. Nothing here is an open item; `DESIGN.md` §5.5 reserves the pair for
+screen-off, and that is the standing answer.
+
+**4. Decide `max_running_num`.** §2 calls destroy-on-switch settled and
+`DESIGN.md` §5 justifies the snapshot design by stating resident apps are not
+paid for, but the active `ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET()` ships
+`max_running_num = 3` with `enable_app_save_snapshot = 1`. Apps 1-3 therefore
+stay resident and paused; nothing is destroyed until a fourth launches. An app
+cannot predict whether it gets `onCreate()` on a fresh tree or `onResume()` on a
+live one, which is Android's "configuration change versus process death" trap and
+fails on the fourth app rather than the first.
+
+**Decision: override to `max_running_num = 1`.** The memory argument in
+`DESIGN.md` §5 holds, Phase 6's 50% crossover already assumes a rebuild behind
+the card, and one resident app makes the lifecycle deterministic — every launch
+is `onCreate()`, every switch away is `onPause()` then `onDestroy()`. Keep
+`enable_app_save_snapshot = 1`; Phase 6 needs the snapshot. Set it in the
+stylesheet override in `main.cpp` rather than editing `managed_components/`.
+
+**5. Ignore `onPause()`'s return value.** Brookesia treats `false` from `pause()`
+as a failure and force-closes the app (`core_manager.cpp:279`). Android's
+callbacks are `void`. An app that returns `false` to signal "state did not save"
+currently gets killed for it, which is the opposite of useful. `CrystalApp::pause()`
+logs a warning and returns `true` unconditionally. The same argument applies to
+`onDestroy()` — there is nothing productive Brookesia can do with a failed
+teardown.
+
+A `LifecycleState` enum member backs items 1 and 5, asserts legal transitions in
+debug builds, and covers Brookesia's error paths, which call `processClose()` from
+inside a failed `pause()` and would otherwise re-enter the hooks. As shipped it is an
+`enum class` nested in `CrystalApp` with mixed-case values —
+`Installed`/`Created`/`Started`/`Resumed`/`Paused`/`Destroyed`
+(`crystal_app.hpp:33`) — reachable through `lifecycle_state()`, which Weather's
+liveness check already uses.
+
+**Progress (2026-09-04):** Implemented the lifecycle state guard, ordered
+pause/destroy teardown, sealed install bookkeeping, advisory teardown returns,
+80 ms `onCreate()` timing, and `max_running_num = 1`. State Test now writes its
+counter only in `onPause()`. `onStart()`/`onStop()` remain dormant for v1.
+
+**Documentation and verification record (2026-09-04):** The handoff is closed.
+`git diff --check` passes, and active ABI, example, validation, design, and
+handoff references now agree that install/uninstall are not app lifecycle hooks.
+After the initial sandboxed attempt was denied access to macOS `sysctl()`, an
+approved unsandboxed ESP-IDF 6.1 build and flash completed. Boot and the
+pause/destroy/create switch sequence were verified on hardware.
+
+Exit: an app whose only state write is in `onPause()` survives return-to-launcher
+and reopen. Opening a fourth app produces the same `onCreate()` path as the
+first. Clock's guarded reconciliation runs once per boot regardless of how many
+times the app is opened. Illegal transitions assert in debug builds. `CODE_GUIDE.md` §"Phase 4 —
+CrystalApp" matches the shipped code.
+
+**Hardware verification (2026-09-04):** ESP-IDF 6.1 build and flash completed.
+The monitor showed `onPause` -> `onDestroy` -> next `onCreate` while switching
+through `Hello -> State Test -> Clock -> State Test -> Hello`; no crash occurred.
+
+### Phase 5 — Registry and launcher
+
+NVS registry (conceptually `app.<name>.enabled` and `app.<name>.slot`). The
+device backend hashes the stable app ID into keys such as `r1234abcd.e` and
+`r1234abcd.s`, because ESP-IDF NVS keys are limited to 15 characters. `main.cpp`
+walks the compiled-in table and installs only enabled apps, in slot order.
+
+**Progress (2026-09-03):** Added `crystal_registry`, a compiled app table in
+`main.cpp`, persistent enabled/slot accessors, stable slot sorting, and boot logs
+for installed and disabled apps. State Test provides temporary Phase 5 hardware
+controls to toggle Hello and swap the two launcher slots for the next boot.
+Hardware validation confirmed that disabling and restoring Hello persists across
+reboots and that saved slot changes reorder the launcher. Phase 5 is complete;
+immediate launcher mutation remains Phase 13 UI work.
+
+Exit: disabling an app removes it from the launcher across a reboot; reordering
+persists.
+
+### Phase 5.5 — Clock app
+
+**Progress (2026-09-03):** Added the Clock app with Clock, Timer, and
+Stopwatch tabs. Timer countdown ownership lives in `crystal_core`, using an
+absolute end instant with pause/resume/reset controls, expiry toast, and a
+status indicator. Stopwatch state and up to 50 laps persist through the app
+lifecycle and across reboot. Countdown timers are deliberately cleared after a
+reboot. The app is registered at launcher slot 2. Timer expiry plays a short
+three-tone chime through the board's ES8311 speaker and shows a visual toast.
+
+The first real app, and deliberately placed here: it is the strongest available
+test of the Phase 4 lifecycle, because a running timer must survive the app being
+destroyed.
+
+Three tabs (Clock, Timer, Stopwatch) per `DESIGN.md` §9.5. Timer presets 30s
+through 30m plus custom; stopwatch with laps.
+
+The architectural work is not the UI, it is the ownership split:
+
+- Absolute end time (`time_t`) in `CrystalState`, never a remaining-seconds
+  counter — so it stays correct across destruction *and* across an SNTP
+  correction that moves the clock.
+- Expiry owned by `crystal_service`, not the app. Fires the toast and chime
+  wherever the user is.
+- Indicator-bar glyph while something is counting. The one addition to the bar in
+  v1, justified because an invisible running timer reads as a bug.
+
+Needs no network, so it can be built before Phase 9.
+
+Exit: start a 3-minute timer, switch to another app, switch back — the ring is
+mid-flight and correct. Start a timer, leave Clock entirely, and the expiry toast
+still fires. Reboot mid-timer and the behaviour is defined (v1: cleared, and the
+user is not lied to about it).
+
+### Phase 6 — App switcher (visual snapshot transition complete)
+
+Gated on G1. A half-resolution RGB565 destination snapshot is shown over an
+opaque handoff cover while the next card is created, then faded out. This keeps
+the preview readable without exposing app construction or requiring live
+full-screen drag tracking.
+
+**Progress (2026-09-04):** Added `crystal_shell`, which exposes the registry's
+slot-sorted installed cards, persists the active card by stable app ID, boots
+directly to the saved card with slot-0 fallback, and switches between cards on
+left/right edge releases. Switching is non-wrapping and uses the G1-approved
+snap behavior: one resident app, `onPause()`/`onDestroy()` followed by the next
+card's `onCreate()`. The firmware builds, flashes, and was verified on hardware
+with the sequence `Hello -> State Test -> Clock -> State Test -> Hello`.
+
+The destination visual transition is now implemented: an opaque handoff cover
+hides app construction, then the destination screen is captured with LVGL,
+center-cropped to 90% of the **app area** about its centre, box-averaged down to
+half the app area per axis (240x220 RGB565, ~103 KiB for the observed 480x440 app
+area), then magnified by a single rounded-up zoom factor and **centred inside a
+container clipped to the app area**, and faded out over 180 ms. The container is
+what protects the status bar: any rounding overshoot is clipped rather than
+arithmetically avoided. The full-screen source snapshot is freed immediately after
+downsampling, so only one live app and the bounded transition buffer remain
+resident. This is an interim replacement for live drag tracking; see Phase 7.5.
+Full gesture ownership, app-input suppression, quick-settings/keyboard exclusions,
+and page dots remain Phase 7.
+
+The shell as built in this phase recognizes the edge gesture and commits on
+release; it does not yet move a card with the finger or transfer touch at a visual
+crossover. Left edge dragged right selects the previous app, and right edge dragged
+left selects the next. The finger tracking and crossover are added in Phase 7.5 —
+the direction mapping above does not change when they land.
+
+Exit: the current shell switches deterministically without wrapping, keeps
+steady-state PSRAM bounded to one live app, and the final app-area-sized
+snapshot transition has passed the physical-panel check. This is an **interim
+fallback**, not a closed design decision — the required 50% live visual crossover
+(`DESIGN.md` §5) is delivered in Phase 7.5; full gesture ownership remains
+Phase 7.
+
+### Phase 6.5 — Crossover re-gate (measured and deferred)
+
+G1's 7-8 FPS was measured with the intended display mode silently disabled:
+`CONFIG_BSP_DISPLAY_LVGL_DIRECT_MODE=y` sits in `sdkconfig.defaults` but is absent
+from the generated `sdkconfig`, because `AVOID_TEAR` requires
+`BSP_LCD_RGB_BUFFER_NUMS > 1` and defaults to `n`. The retest at
+`BSP_LCD_RGB_BUFFER_NUMS=2` was therefore also a no-op — without `AVOID_TEAR` the
+second framebuffer is allocated and never used by LVGL. The band-copy of a
+480x100 partial buffer into the live scanout framebuffer also explains the visible
+layer-by-layer tearing during the snapshot transition.
+
+That does not mean the config fix reaches 20 FPS: `AVOID_TEAR` moves the render
+target into PSRAM, and roughly 100 ms of the 125-143 ms frame time remains
+unattributed. So Phase 6.5 instruments render-vs-flush time first, then changes the
+config, then re-gates. Full procedure, gate thresholds, and the deferral path are
+in `PHASE_6_5_CROSSOVER.md`.
+
+**Result (2026-09-04):** Steps 0 and 1 passed on hardware. Direct mode removed
+the obvious snapshot tearing and reduced synchronous flush cost, but rendering
+dominated at 91-106 ms and sustained dragging completed only 8-10 refreshes per
+second. Per the `<12 FPS` gate, Steps 2-4 are not implemented. The production
+shell keeps the snap/fade transition and the verified two-buffer avoid-tear
+direct mode. This closes the measurement phase, not the crossover requirement.
+
+### Phase 7 — Gesture arbiter and indicator bar
+
+One `gesture_owner` (`NONE`/`APP_SWITCH`/`QUICK_SETTINGS`/`APP`), claimed on
+direction-lock after ~12px, released on touch-up. While the OS owns a gesture,
+`lv_indev` events do not reach the app.
+
+Quick-settings arms only from the top ~20px band. Without that, a swipe-down in
+a scrolled app view opens settings when the user meant to scroll up — the one
+case where OS priority feels broken.
+
+Horizontal edge gestures belong to the OS without an app opt-out. Suppress card
+switching while the keyboard is open, as well as while quick settings, Settings,
+or a modal dialog owns the interaction.
+
+Indicator bar: logo, time (no date), WiFi state, battery percentage and charging
+state from the AXP2101, plus page dots. Icon colour is black or white chosen from
+the foreground app's background; bar background inherits it. Poll the PMIC no
+more than every 30 seconds on the shared I2C bus; read RTC only at boot and after
+SNTP synchronization.
+
+Exit: no gesture reaches an app while the OS owns it; scrolled app views still
+scroll up.
+
+**Status — closed (2026-09-04).** `crystal_shell` now owns the explicit
+four-state arbiter. Brookesia still samples touch, but its eager edge-mask trigger
+is disabled; Crystal raises the input mask only after the 12px direction lock.
+The owner remains stable until release, outward left/right edge drags are reserved
+for card switching, and top-band downward drags are reserved for Phase 8 quick
+settings. Public lock setters cover quick settings, keyboard, Settings, and modal
+states without giving apps an edge-gesture opt-out. A touch that wakes an off
+display is masked through release.
+
+The indicator bar now adds the Crystal mark and fixed-order page dots, reports
+Wi-Fi connectivity, and reads AXP2101 battery percentage plus charging state on
+the service task at a 30-second minimum interval. The existing Brookesia status
+bar continues to own clock rendering. The firmware builds successfully, and the
+physical gesture and available status-bar validation have passed.
+The former once-per-minute RTC diagnostic poll was removed, leaving RTC reads at
+boot and the post-SNTP write path as specified for the shared I2C bus.
+
+Hardware validation with no battery and no network confirms the disconnected
+Wi-Fi state, battery icon/percentage, fixed-order page dots, and expected `--:--`
+clock are visible. Battery percentage accuracy and charging indication remain
+untested until a battery is connected and are retained as a non-blocking hardware
+follow-up.
+
+Hardware testing also exposed an existing Clock defect: countdown start/resume
+was rejected while RTC/SNTP time was unavailable. The service now uses a wall-clock
+deadline when time is valid and a monotonic uptime deadline otherwise. Both keep
+counting across app destruction; only the wall-clock form is persisted, so the
+documented reset-after-reboot behavior is preserved for an unsynchronised device.
+
+### Phase 7.5 — Required 50% visual crossover
+
+Build the finger-tracked card transition specified in `DESIGN.md` §5 on top of
+Phase 7's gesture arbiter. The incoming icon card follows the edge drag while the
+outgoing app remains stationary. The destination is identity-only during dragging;
+10% begins revealing the identity without lifecycle work, and 50% remains the live commit
+threshold on release.
+After a qualifying release, complete the card cover animation, then construct it
+behind the icon card and transfer touch only when its live content is ready. Release before
+the threshold cancels; release after it completes the switch.
+
+Start from the Phase 6 tear-free path: retain two RGB framebuffers, avoid-tear
+direct mode, app-area clipping, and bottom-edge alignment. Optimize the drag path
+to avoid invalidating the full screen on every touch sample; the Phase 6.5
+91-106ms render measurement is the blocking performance problem, not permission
+to remove the interaction.
+
+Exit: the card tracks the finger, both sides of the 50% threshold behave as
+specified, touch ownership transfers without leaking events, the status bar is
+never covered, and physical-panel testing shows no obvious tearing.
+
+**Current implementation record (2026-09-11):** The shell retains the explicit
+idle/dragging/settling crossover state machine but uses an icon-only incoming
+card in every power mode. The live outgoing app remains stationary beneath the
+transparent transition root, so direction lock performs no snapshot capture or
+SPIFFS access. At 10% drag the icon's entering edge reaches the screen and the
+app name begins fading in, reaching full opacity at 50%. Both reach the centre
+of the exposed card area at 50%. The 50% release threshold, 250 ms settle, staged
+lifecycle commit, input blocking, and app-area clipping remain unchanged. The
+former RAM and persistent RGB565 preview repository is retired; existing files
+are ignored and left untouched.
+
+### Phase 8 — Quick settings
+
+Pull-down over a snapshot of the foreground app. Brightness and volume as
+filled bars wired to `bsp_extra`. **Clamp brightness to
+`BSP_LCD_BACKLIGHT_BRIGHTNESS_MAX` = 95, not 100**, or the top of the slider
+does nothing. Gear opens the settings app. Bluetooth button reserved, visibly
+disabled. Power-saving toggle per Phase 11.
+
+Exit: released past half-open completes the animation; releasing short of it
+returns; app switching is locked while the panel is active.
+
+Shipped and validated on hardware as a full-screen overlay. Phase 8.5 supersedes
+its layout, trigger zone, and background. Phase 8 is closed; see the completed
+Phase 8.5 entry below for the final implementation.
+
+### Phase 8.5 — Corner-anchored quick panel
+
+**Status — closed (2026-09-05).** Implemented and validated on hardware,
+including persistence for brightness, volume, and Energy Saving; timeout dimming
+and wake restoration; corner gesture handling; tap-outside dismissal; and
+panel cleanup.
+
+Replaces the full-screen overlay with a 306x306 panel hanging from the top-right
+corner, laid out on a 4x4 grid of 62px cells. The app beneath stays fully visible
+and undimmed; the snapshot background is removed entirely, which drops ~880 KiB of
+transient allocation and a box-average downscale from every open and lets the
+opaque panel body draw through LVGL's solid-fill path.
+
+The open trigger narrows to the top 20px band within the right 120px
+(`kQuickCornerWidth`), so the rest of the top band returns to the app. Dismissal
+adds tap-outside via a transparent full-screen catcher, attached only after the
+open animation completes — otherwise the pull gesture's own release dismisses the
+panel on the same touch. Panel motion stays translate-only; animating opacity
+would composite the subtree through an intermediate buffer.
+
+`lv_switch` is replaced by tiles whose background colour is their state, using
+`LV_STATE_CHECKED`. Colour carries binary state; text remains on any control with
+more than two states, because off and unavailable both render dim — a colour-only
+Bluetooth tile is indistinguishable from power saving being off. Every toggle is
+one cell; two cells stay empty and reserved for Phase 9's SSID expansion, with no
+filler tile permitted.
+
+Spec: `PHASE_8_5_QUICK_PANEL.md`. Supersedes `DESIGN.md` §6, which has been
+updated, along with §4's gesture table and constants.
+
+Exit: corner drag opens and other top-band drags reach the app; both release
+thresholds behave; tap-outside dismisses but a release-outside ending the opening
+drag does not; energy saving persists across reboot; PSRAM returns to its
+pre-open level after close.
+
+### Phase 9 — WiFi
+
+Non-blocking, off the boot path. `esp_wifi_start()` plus auto-connect from NVS
+returns immediately; the bar shows disconnected until `IP_EVENT_STA_GOT_IP`
+arrives on the UI queue.
+
+**Scan buffers never live on the event task stack.** `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE`
+is 2304 bytes and `wifi_ap_record_t` is ~110 bytes, so a 20-record array declared
+inside the `esp_event` handler overflows it and corrupts memory on every scan
+completion. Keep the record array as a file-scope static in the WiFi adapter and
+copy out of it under the adapter's own lock. This was a real crash during the
+first Phase 9 attempt, not a theoretical concern.
+
+Long-press the WiFi tile opens a **full-screen WiFi page**, not an inline list.
+Quick settings closes first, then the page animates in. The page owns a
+full-width scrollable SSID list sorted by RSSI, connected network pinned first,
+and a back button. Pick → credential dialog → on success close the page, return
+to the app underneath, toast; on failure, keep the page open and toast the
+failure. Enable `CONFIG_NVS_ENCRYPTION` with the `nvs_keys` partition —
+credentials are otherwise plaintext.
+
+The page replaces the earlier inline-expansion design because that stacked a
+scrollable list, a modal, and async scan results inside a panel that is itself
+animating and owns a gesture. See §6 of `DESIGN.md`.
+
+Phase 11's Settings › Network reuses this page rather than building a second SSID
+list.
+
+Password entry lands before Phase 10's keyboard overlay, so Phase 9 uses a plain
+`lv_keyboard` parented to the dialog. Phase 10 replaces it with the shell overlay
+and its viewport rebinding; the dialog must not assume it owns the keyboard.
+
+Exit: first frame is not delayed by WiFi; a completed scan does not crash;
+credentials survive reboot; back from the page returns to the app that was
+running, not the launcher. WPA3 interoperability is outside this phase's
+verification scope.
+
+**Status — closed (2026-09-06).** The Phase 9 WiFi page, asynchronous scan,
+credential flow, connection feedback, persistence, and WPA2 connection path were
+validated on hardware. WPA3 interoperability is outside Phase 9's verification
+scope.
+
+### Phase 9.5 — Weather app
+
+**Status — closed (2026-09-07).** Implemented the Open-Meteo service path,
+resolved location and cached reading, lifecycle-safe UI updates, procedural
+condition glyphs, visible age/staleness qualifiers, dynamic app-area geometry,
+and invalid-clock handling. Device flashing and the hardware exit checklist
+remain the final validation step.
+
+First app with a network dependency, so it lands immediately after WiFi.
+
+**Open-Meteo, not weather.com.** Not a cost decision: any API key compiled into
+firmware is extractable with `esptool read_flash`, so a keyed provider means
+either treating the key as public or running a proxy. Open-Meteo needs no key,
+returns compact JSON, and its WMO codes map to a small icon set.
+
+```
+GET https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..
+      &current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m
+```
+
+- Lat/long entered in Settings › Region & Time — no GPS on this board.
+- Fetch runs on `crystal_service`, never the LVGL task; results via the UI queue.
+- Cache the last reading and its timestamp in `CrystalState`, and surface age as
+  "Updated N min ago" so staleness is visible rather than hidden.
+- Refresh on open if older than 15 minutes, plus every 30 minutes while WiFi is
+  up. Not on a tight timer.
+- TLS costs ~30-45KB heap per handshake plus the cert bundle in flash. Budget it.
+
+**Check the schematic first.** If the board has an I2C temp/humidity part, indoor
+readings from the sensor alongside outdoor from the API is a better product than
+either alone. Unverified here.
+
+Exit: correct conditions shown with WiFi up; cached reading with a visible age
+when offline; no LVGL call from the fetch path.
+
+### Phase 9.6 — Calculator port
+
+**Status — closed (2026-09-07).** Ported the reference calculator to
+`CrystalApp` with a visual-area root, lifecycle-safe formula persistence in
+`CrystalState`, procedural launcher icon, and the reference arithmetic/input
+guards. The component is registered in launcher slot 4 and the firmware build
+passes. Hardware validation confirmed arithmetic, division, multiplication,
+percentages, decimal input, clear, and backspace, and confirmed that an
+in-progress formula survives switching away and returning.
+
+Borrow `components/apps/calculator` from the reference (439 lines, self-contained)
+and port it to `CrystalApp`. Third lifecycle conversion test, no network.
+
+Take the class, not the assets: `img_app_calculator.c` is 906,288 bytes for an
+image whose PNG is 2,951 bytes. Convert to an LVGL binary image in SPIFFS.
+
+Exit: arithmetic correct, state survives a switch away and back.
+
+### Phase 10 — Keyboard overlay
+
+**Status — implemented, pending hardware validation (2026-09-07).** The private
+WiFi `lv_keyboard` has been replaced by a shell-owned overlay with iOS-inspired
+key styling and fixed control-key geometry across letter, shift, and symbol
+planes. `crystal_keyboard_show()` publishes the keyboard top, reduces the owning
+viewport, and applies the no-move/covered-field centering rule. A bundled Dev
+Tester app replaces the temporary Hello and Phase 1 state-test launcher entries
+and exercises visible, covered, and password fields. Hardware validation of the
+250 ms reveal animation and touch targets remains before this phase is closed.
+The overlay reserves the same 200 px band while applying Calculator's 26 px
+bottom safe inset, keeping its top stable and clear of Brookesia's navigation
+gesture zone.
+
+App viewport bottom binds to the keyboard top. If the focused field is already
+visible, leave it; if the keyboard would cover it, animate it to the midpoint
+between keyboard top and indicator bar.
+
+Exit: a field near the bottom of a scrolling form stays visible and does not
+jump when already visible.
+
+### Phase 11 — Settings and power
+
+Categories: Network, Display & Power, Sound, Region & Time, and System. Settings
+is a shell-owned override with a bounded page stack; Manage Apps remains Phase 13.
+
+Timezone is not optional — without it SNTP yields UTC and the bar shows the
+wrong hour. The first-boot default is Hong Kong (`HKT-8`, UTC+08:00); Phase 11
+exposes friendly Region & Time entries backed by complete POSIX timezone rules.
+
+`CONFIG_PM_ENABLE=y` with DFS 240/80MHz. **Do not enable automatic light
+sleep in v1**: the RGB panel is a continuous DMA scan-out and will blank or
+tear. Power saving is one NVS flag with several effects — CPU capped at 80MHz,
+`WIFI_PS_MAX_MODEM`, lower brightness ceiling, shorter timeouts.
+
+Auto Dimming (`power.auto_dim`, default on) is the master switch for both
+timeouts and is independent of Energy Saving: Energy Saving halves the timeouts and
+caps the clock, Auto Dimming decides whether the timeouts apply at all.
+
+Exit: static IP and DNS survive reboot; timezone changes apply live and survive
+reboot; power saving measurably lowers current draw; subpage Back peels one
+Settings layer at a time while the home pill exits Settings entirely and restores
+the app it was opened from. See `PHASE_11_SETTINGS.md` for the full implementation
+and validation contract. The fixes and regression results are recorded in
+`PHASE_11_BUG_FIXES_V3.md`; all Phase 11 validation rows pass and the phase is
+closed as of 2026-09-11.
+
+### Phase 12 — Reliability
+
+The next phase. Nothing in it is built yet: the coredump options are in
+`sdkconfig.defaults` but nothing reads a dump, `esp_reset_reason()` is only rendered
+as a Device Status string, and the dual OTA slots are unused. Full shapes in
+`CODE_GUIDE.md` §"Phase 12 — reliability"; user-facing behaviour in `DESIGN.md` §8.5.
+
+Three independent pieces, in this order.
+
+**1. Crash reporting.** `esp_core_dump_get_summary()` at boot, before
+`crystal_time_init()`. Write one blob (`crash.last`: PC, task, reset reason, and a
+timestamp that is legitimately 0 on a cold boot) plus a one-shot `crash.new` flag,
+then erase the image so it reports exactly once. The flag is consumed by
+`service_task`, which raises the toast — `app_main` cannot, because
+`crystal_core_init()` has not created the UI queue at that point. Device Status gains
+a `Last Crash` row beside `Last Reset`.
+
+The `coredump` partition is plaintext regardless of `NVS_ENCRYPTION`, so a dump can
+contain credentials that were in a stack buffer at crash time. Erasing at boot is the
+mitigation; know it before handing a crashed unit to anyone.
+
+**2. Rollback.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is **missing from
+`sdkconfig.defaults`** and is a prerequisite, not a detail — without it the
+bootloader never marks an image `PENDING_VERIFY` and the phase's rollback exit
+criterion cannot be met. Confirm validity from `service_task` after the shell and
+first frame are up, never from the end of `app_main`: a firmware that links and then
+wedges the LVGL task would otherwise confirm itself and become unrecoverable.
+
+**3. OTA.** Settings › System › Software Update, one `system_page_push()` page in
+`crystal_shell`. An HTTPS JSON manifest (version, URL, notes) at a compiled-in
+default URL that the page exposes and lets the user edit; `esp_https_ota` with the
+existing certificate bundle. Manual check, manual install — an unattended data
+display must not reboot itself into new firmware. Both check and write run on
+`crystal_service`; progress reaches the page through two new queued event types
+carrying a small POD, never a string.
+
+Three page responsibilities that the OTA library does not cover: suppress auto-dim
+for the duration and restore it on every exit path, take
+`crystal_shell_set_modal_open(true)` for the write phase only, and announce the
+reboot before `esp_restart()`.
+
+`PROJECT_VER` must be set in the root `CMakeLists.txt` before `project()`. Today it
+is unset, so `app_version()` is a `git describe` string that changes every commit and is
+empty in a tarball build — an update flow needs a version it can compare.
+
+The threat model, stated so it is not mistaken for more than it is: TLS
+authenticates the manifest host, not the image. v1 ships no image signing, which is
+reasonable for a self-hosted source and is the thing to revisit if images are ever
+served from infrastructure you do not control. Anti-rollback stays off deliberately —
+it burns efuses and permanently prevents installing an older image on that unit.
+
+- **Archive `build/crystal_os.elf` for every image given to anyone.** Coredumps
+  decode only against the exact ELF that produced them; without this habit they
+  are unreadable hex. Archive the `.bin` and `.elf` as a pair keyed by version.
+- The USB wrapper stays the recovery transport: same image, two paths.
+
+Watch `CONFIG_ESP_TASK_WDT_TIMEOUT_S=5` (panic disabled): a slow `onResume()`
+holding the LVGL lock is the likeliest way to trip it.
+
+Exit: a deliberate crash produces a symbolised backtrace and one quiet toast on the
+next boot with detail in Device Status; a good OTA installs, confirms itself after
+the UI comes up, and reports its new version; a bad OTA rolls back to the previous
+slot with no user intervention; a failed write leaves the running firmware unchanged
+and says so.
+
+### Phase 13 — App catalog
+
+The user-facing face of Phase 5: browse all bundled apps, install (enable),
+uninstall (disable, optionally wiping that app's state namespace), reorder.
+
+Exit: a non-developer can install, remove, reorder, and clear app data without a
+firmware change.
+
+## 5. Partition table
+
+16MB flash. App code in the OTA slots, app assets in SPIFFS.
+
+```
+# Name,     Type, SubType,  Offset, Size
+nvs,        data, nvs,      ,       0x6000
+nvs_keys,   data, nvs_keys, ,       0x1000
+otadata,    data, ota,      ,       0x2000
+phy_init,   data, phy,      ,       0x1000
+coredump,   data, coredump, ,       0x10000
+ota_0,      app,  ota_0,    ,       5M
+ota_1,      app,  ota_1,    ,       5M
+storage,    data, spiffs,   ,       4M
+```
+
+Two things this encodes. Dual slots exist from Phase 0 even though OTA lands in
+Phase 12 — repartitioning after devices ship means a serial reflash of every
+unit. And 5M slots only stay comfortable if assets stay out of the binary: the
+reference needed 9M almost entirely because of ~48MB of compiled-in image C
+arrays in the music demo (`img_lv_demo_music_cover_*_large.c` alone is 9.4MB
+each). Crystal core should land near 2.5-3MB, leaving room for 15-25 apps of
+logic.
+
+Discard from the reference: all of `music_player/gui_music`, and the 3MB of demo
+MP3s in `spiffs/`.
+
+## 6. sdkconfig deltas
+
+Start from the reference `sdkconfig.defaults`, then:
+
+```
+CONFIG_PM_ENABLE=y                        # absent in reference
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y     # reference is _TO_NONE
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_BSP_DISPLAY_LVGL_TASK_STACK_SIZE_KB=10   # was 6
+```
+
+Two more land with Phase 12. `ROLLBACK_ENABLE` is the one that gates an exit
+criterion; `CHECK_BOOT` already defaults to `y` in IDF and is written down so an IDF
+bump cannot change it silently:
+
+```
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_COREDUMP_CHECK_BOOT=y
+```
+
+Shipped since this list was written, and worth knowing when reading a generated
+`sdkconfig`: two RGB framebuffers with `BSP_DISPLAY_LVGL_AVOID_TEAR` and direct mode
+(Phase 6.5), `MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` for the weather and
+geolocation endpoints (Phase 9.5), and `LV_FONT_MONTSERRAT_48` for Weather's hero
+number — a fourth text size beyond the three §10 of `DESIGN.md` specifies, taken
+deliberately at ~40 KiB of flash.
+
+Keep as-is: `SPIRAM_MODE_OCT`, `SPIRAM_SPEED_80M`, `SPIRAM_FETCH_INSTRUCTIONS`,
+`SPIRAM_RODATA`, `COMPILER_OPTIMIZATION_PERF`, `FREERTOS_HZ=1000`,
+`ESP_BROOKESIA_MEMORY_USE_CUSTOM` with the PSRAM allocator override in
+`main/CMakeLists.txt`, `LV_COLOR_DEPTH=16`, `LV_COLOR_16_SWAP=n`,
+`ESP_WIFI_TASK_PINNED_TO_CORE_0`.
+
+Trim: the ~20 compiled Montserrat sizes down to four (16 small, 20 medium, 28
+large, plus the indicator bar size). Each unused size is dead flash. Drop
+`LV_USE_DEMO_BENCHMARK` after Phase 1.
+
+## 7. Sequencing notes
+
+Phases 0-3 are prerequisites for everything. 4-5 unlock app work. 4.5 should land
+before 5.5, since Clock is the first app to depend on `onPause()` actually being
+called and guarded once-per-boot reconciliation. 6 waits on G1. 7 should precede 8 and 10,
+since both depend on the arbiter existing. 12 can
+start any time after 0 and should not be left to the end — coredumps are most
+valuable while the system is least stable.
+
+**State as of 2026-09-11.** Phases 0 through 11 are closed and device-validated.
+Phase 12 is next, and its first piece — crash reporting — is the part that should
+have landed earlier by the note above; it needs nothing from 13. Within 12, the three
+pieces are independent, so crash reporting can ship on its own while OTA is still
+being built. 13 depends on `CrystalState::clear()`, which still does not exist.
+
+**`onStart()`/`onStop()` stay undispatched, and that is the decision, not a gap.**
+v1 has four lifecycle states — `onCreate`, `onResume`, `onPause`, `onDestroy` — plus
+the `onBack` gesture callback. Phase 4.5 provisionally assigned occlusion call sites
+to Phase 7; Phase 7 closed without them and v1 is not adding them. The two hooks
+remain declared as base-class no-ops so a later version can fire them without an ABI
+break, which is the whole reason they exist in the header. `DESIGN.md` §5.5 is the
+authority and reserves them for screen-off, the case the four cannot express.
+
+Do not write this up as outstanding work. If redrawing behind an opaque quick panel
+ever proves to cost measurable frames, that is a new measurement opening a new
+question — not a Phase 7 item that was missed.

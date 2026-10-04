@@ -1,0 +1,402 @@
+# Crystal OS Validation Checklist
+
+Use this checklist after a clean build, after changing hardware services, and
+before marking a phase complete.
+
+## Build and flash
+
+- [ ] `idf.py build` completes without errors.
+- [ ] Firmware size fits the smallest OTA application partition.
+- [ ] Flash write and hash verification complete successfully.
+- [ ] The monitor uses the correct USB port and `2000000` baud.
+- [ ] The application starts without a panic, watchdog reset, or reboot loop.
+- [ ] The PSRAM memory test passes.
+
+The existing `Incorrect size of core dump image` message is caused by stale or
+uninitialized coredump partition contents. It is not a crash unless a panic or
+reset follows it.
+
+## Phase 0: bring-up
+
+- [ ] The 480x480 panel initializes and displays the launcher.
+- [ ] GT911 is detected and reports its ID and configuration version.
+- [ ] Touch coordinates correspond to visible controls.
+- [ ] The Hello app displays a readable `HELLO WORLD` icon.
+- [ ] Tapping the Hello app opens it.
+- [ ] `Return to launcher` returns to the launcher.
+- [ ] First-frame time remains close to the recorded 1.9-second baseline.
+
+Completion gate: basic display, touch, app launch, and app return all work on
+physical hardware.
+
+## Phase 1: performance gate
+
+- [x] Two RGB framebuffers with avoid-tear direct mode remain selected.
+- [x] The benchmark app can be restored or built when a performance regression
+  needs investigation.
+- [x] The corrected display path completes 8-10 refreshes/sec under sustained
+  benchmark dragging.
+- [x] Phase 6 continues to avoid a live full-screen tracking card, dynamic blur,
+  and shadow during drag.
+- [x] The switcher uses a short snapshot fade and has passed physical-panel
+  measurement without obvious tearing.
+
+Completion gate: the measured result, corrected display mode, and simplified
+animation decision are recorded in `IMPLEMENTATION_PLAN.md`.
+
+## Phase 2: HAL
+
+- [ ] `hal().brightness` changes and reports backlight brightness.
+- [ ] Brightness is clamped to the supported maximum of 95 percent.
+- [ ] `hal().storage` can write, read, and erase a test blob in NVS.
+- [ ] `hal().wifi` starts in station mode.
+- [ ] Saved Wi-Fi configuration reconnects without credentials in source code.
+- [ ] Wi-Fi obtains an IP address.
+- [ ] PCF85063 responds on the shared I2C bus at address `0x51`.
+- [ ] A valid PCF85063 time can be read.
+- [ ] Time can be written to PCF85063 and read back.
+- [ ] `hal().touch_raw` returns coordinates and pressed/released state.
+- [ ] The host mock compiles:
+
+```bash
+clang++ -std=c++17 \
+  -Icomponents/crystal_hal/include \
+  -fsyntax-only sim/crystal_hal_mock.cpp
+```
+
+- [ ] A full LVGL SDL window builds and runs on macOS.
+
+Completion gate: the same Crystal-owned UI code runs with the device HAL and
+desktop mock. Until the SDL item passes, Phase 2 remains technically open.
+
+## Phase 3: core services
+
+- [ ] `Core services ready` appears after boot and fades out.
+- [ ] The toast does not intercept touch.
+- [ ] The log contains `toast displayed: Core services ready`.
+- [ ] An unset, invalid, or stopped RTC displays `--:--`.
+- [ ] Saved valid RTC time appears before network synchronization.
+- [ ] Wi-Fi/SNTP synchronization produces the `Time synchronized` toast.
+- [ ] Synchronized time appears in the status bar.
+- [ ] Displayed time uses Hong Kong time (`HKT-8`, UTC+08:00).
+- [ ] After SNTP, reboot without Wi-Fi and confirm the RTC supplies time.
+- [ ] Leave the device untouched for 30 seconds and confirm a gradual dim to 20
+  percent.
+- [ ] Continue to 60 seconds and confirm the backlight turns off.
+- [ ] Touch the dark screen and confirm brightness returns to 95 percent.
+- [ ] The launcher and Hello app remain responsive after waking.
+- [ ] No queue, LVGL, I2C, watchdog, or task errors appear during the test.
+
+Brightness stability follow-up (2026-09-05): direct 0%, 1%, 3%, and 5%
+backlight levels were stable during the 30-second hardware observations. The
+underlying energy-saver low-level brightness behavior remains unresolved and is
+deferred. The temporary boot brightness diagnostic has been removed; production
+behavior continues to use 0% for the `Off` state, with no wake-path experiment
+retained.
+
+Completion gate: offline RTC boot, queued toast, and dim/off/wake behavior all
+pass on physical hardware. Wake-touch suppression remains a Phase 6 gesture
+ownership requirement.
+
+## Phase 4: app framework checkpoint
+
+- [x] The launcher shows both `Hello` and `State Test` apps.
+- [x] Hello opens and returns to the launcher using the Crystal lifecycle.
+- [x] Open State Test, tap `Increment`, and confirm the saved counter changes.
+- [x] Return to the launcher, reopen State Test, and confirm the counter remains.
+- [x] Reboot, reopen State Test, and confirm the counter survives the reboot.
+- [x] Switching apps produces no LVGL or NVS errors.
+- [x] `onResume()` logs a warning when it exceeds the 80 ms budget.
+
+Completion gate: both apps use `CrystalApp`; State Test state survives
+switch-away/switch-back and reboot, and resume-time diagnostics are active.
+
+## Phase 4.5: lifecycle correctness checkpoint
+
+State Test keeps its counter in memory and writes it to NVS only from
+`onPause()`, so the following sequence exercises the documented save path.
+
+- [ ] Open State Test, tap `Increment` three times, return to the launcher,
+  reopen: the counter reads 3. Proves `onPause()` ran on the close path.
+- [ ] Increment again, return to the launcher, then reboot: the saved counter
+  remains. A hard reset while the app is open does not invoke `onPause()`.
+- [x] The serial log shows `onPause` then `onDestroy`, in that order, on every
+  return to the launcher.
+- [x] `onPause` appears exactly once per close — not twice.
+- [x] Open Hello, then State Test, then Hello, then State Test: every launch logs
+  `onCreate`, never `onResume`. Confirms `max_running_num = 1`.
+- [ ] Steady-state PSRAM after ten alternating launches matches the free heap
+  after the first, within noise. Nothing is accumulating.
+- [x] Clock's boot reconciliation runs once on its first `onCreate`, and does
+  not clear timer state on later launches in the same boot.
+- [ ] An app whose `onPause()` deliberately returns `false` is **not** killed:
+  the warning is logged and teardown continues normally.
+- [ ] `onStart`/`onStop` compile and are overridable, and no path fires them yet.
+- [ ] No LVGL, NVS, or watchdog errors across the whole sequence.
+
+Completion gate: the documented save path (`onPause()`) is the one actually
+demonstrated, every launch takes the same `onCreate()` route, and a failed
+`onPause()` no longer destroys the app.
+
+## Phase 5: registry and launcher checkpoint
+
+- [x] Boot logs show `hello` and `state_test` installed in slots 0 and 1.
+- [x] In State Test, choose `Disable Hello next boot`, then return to the
+  launcher and reboot.
+- [x] Hello is absent after reboot and the log reports `disabled: hello`.
+- [x] Choose `Enable Hello next boot`, return to the launcher, and reboot.
+- [x] Hello returns after reboot.
+- [x] Choose `State Test first next boot`, return to the launcher, and reboot.
+- [x] State Test precedes Hello in launcher order and the install logs show its
+  lower saved slot.
+- [x] Restore `Hello first next boot` and reboot to return to the default order.
+- [x] No disabled app is constructed and no NVS or launcher errors occur.
+
+Checkpoint gate: enabled state and launcher order both persist across reboot.
+The final Manage Apps interface and immediate launcher updates remain Phase 13.
+
+## Phase 5.5: Clock app
+
+- [ ] Clock shows local time, date, and Hong Kong timezone.
+- [ ] Timer presets select 30 seconds through 30 minutes and update the ring.
+- [ ] Start, pause, resume, and reset update the timer state correctly.
+- [ ] Start a 3-minute timer, leave Clock, reopen it, and confirm the remaining
+  time continues from the saved absolute end instant.
+- [ ] Leave Clock entirely and confirm expiry produces the `Timer finished` toast
+  and the timer indicator clears.
+- [ ] Confirm timer expiry also plays the short three-tone alert through the board
+  speaker.
+- [ ] Stopwatch start/pause/resume/reset work and laps are listed newest first.
+- [ ] Stopwatch elapsed time and laps survive leaving and reopening Clock.
+- [ ] Reboot clears a running timer, as defined for v1.
+
+Checkpoint gate: timer expiry is service-owned and visible outside Clock; Clock
+state survives app destruction without requiring a resident app.
+
+## Phase 6: card shell
+
+- [x] Firmware builds with the `crystal_shell` component.
+- [x] Boot opens the saved card by stable app ID, falling back to slot 0.
+- [x] Reboot restores the last-viewed card.
+- [x] Left/right card order follows launcher slots and does not wrap.
+- [x] A card switch performs `onPause()` then `onDestroy()` before the next
+  card's `onCreate()`.
+- [x] Hardware log confirms `Hello -> State Test -> Clock -> State Test -> Hello`.
+- [x] Destination snapshots are cropped to 90% about the centre **of the app area**
+  and downsampled to half the app resolution per axis (240x220 on this panel, so
+  the app's aspect ratio is preserved and one zoom factor serves both axes),
+  then magnified to cover the app area and centred inside a container clipped to
+  that area, so no rounding overshoot can paint over the status bar.
+- [x] A swipe switches with no live drag tracking: the outgoing app does not
+  follow the finger, and the transition is the snapshot fade after the switch
+  completes.
+- [x] Physical-panel measurement confirms the simplified app-area-sized
+  snapshot fade transition.
+
+These two items describe an **interim fallback**, not a design decision. The 50%
+visual crossover is required by `DESIGN.md` §5; Phase 6.5 corrected the unintended
+display mode, re-ran the gate, and landed below the continuation threshold, so
+snap-and-fade stays only until the render cost is fixed. See
+`PHASE_6_5_CROSSOVER.md` for the measurements and Phase 7.5 below for the items
+that retire these two. Nothing in this checklist authorises keeping snap-and-fade
+as the final interaction.
+
+### Phase 6.5 re-gate
+
+- [x] Single-buffer instrumentation recorded render and flush time separately.
+  **Not reproducible from the tree:** the instrumentation was not committed. Nothing
+  in `components/` or `main/` splits render from flush today — `perf_spike` only logs
+  `lv_refr_get_fps_avg()`. Re-add the timing hooks before trusting or re-running the
+  49-96 ms / 15-34 ms figures, and commit them this time.
+- [x] Generated `sdkconfig` retains two RGB buffers, avoid-tear, and direct mode.
+- [x] Direct mode reduces synchronous flush from 15-34 ms to 3-10 ms.
+- [x] Sustained drag completes about 8-10 refresh cycles/sec with render time at
+  91-106 ms, below the 12 FPS continuation gate.
+- [x] Physical-panel testing confirms no more obvious snapshot tearing.
+- [x] The 50% crossover is deferred to Phase 7.5 with a measured reason, and the
+  snap/fade baseline is recorded as interim rather than final.
+
+Completion gate for the current shell increment: direct card boot, deterministic
+switching, and the app-area-sized snapshot transition pass on hardware. Full
+gesture arbitration remains Phase 7.
+
+## Phase 7: gesture arbiter and indicator bar
+
+- [x] The firmware contains one explicit `NONE`/`APP_SWITCH`/`QUICK_SETTINGS`/`APP`
+  owner, claimed at the 12px direction lock and reset only on release.
+- [x] Brookesia's eager edge mask is disabled; Crystal raises the full-screen input
+  mask only for an OS-owned gesture.
+- [x] Left/right edge bands are 24px and the quick-settings arm band is 20px tall.
+- [ ] Phase 8.5: the arm band is also bounded to the right 120px, so a top-band
+  drag at left or centre reaches the app.
+- [x] Quick-settings, keyboard, Settings, and modal lock APIs are present for their
+  owning phases to drive.
+- [x] The off-screen wake touch is masked until release.
+- [x] The status path updates Wi-Fi, AXP2101 percentage/charging at no less than a
+  30-second interval, and fixed-order page dots.
+- [x] The legacy once-per-minute RTC diagnostic poll is removed.
+- [x] ESP-IDF 6.1 compilation succeeds.
+- [x] With RTC unset and Wi-Fi disconnected, start a countdown, switch away and
+  back, and confirm the monotonic fallback keeps counting and expires normally.
+- [x] On hardware, dragging horizontally in the middle of an app still reaches the
+  app, while an outward edge drag does not leak a click or scroll event.
+- [x] On hardware, a vertical drag in a scrolled app remains app-owned unless it
+  starts in the top 20px band.
+- [x] On hardware, first/last-card boundary swipes are swallowed without wrapping.
+- [x] On hardware, the first touch after display-off wakes the panel but activates
+  no app control.
+- [x] With Wi-Fi disconnected and time unset, the status bar renders the
+  disconnected state, battery icon/percentage, page dots, and `--:--` clock.
+- [x] Page-dot selection follows card changes.
+- [ ] With a battery connected, verify percentage accuracy and charging-state
+  indication. No battery was available for the current hardware test.
+
+Completion gate: passed on the available no-battery hardware. Battery percentage
+accuracy and charging indication remain a deferred hardware follow-up.
+
+## Phase 7.5: 50% visual crossover
+
+- [x] The incoming icon card follows the finger while the outgoing app is stationary.
+- [x] The incoming card is created at direction lock, without a blank or blocked
+  frame during the drag.
+- [x] Visited and unvisited apps use the same destination identity card without
+  constructing the target app during the drag.
+- [ ] At 10% the icon's entering edge begins to appear; the name alone fades to
+  full opacity at 50%, with both centred in the exposed card area at 50%.
+- [x] Crossing 10% has no lifecycle effect; release at or beyond 50% commits the
+  destination live app behind the icon card.
+- [x] Releasing before 50% cancels without changing the active app.
+- [x] Releasing after 50% completes the switch and destroys the outgoing app.
+- [x] Touch transfers only after the destination is live; no event leaks across
+  gesture owners.
+- [x] App-area clipping keeps the icon card below the status bar at every offset.
+- [ ] The physical panel shows smooth motion and no obvious tearing throughout
+  drag and settle after removal of capture, preview rendering, and SPIFFS I/O.
+- [x] Existing `/spiffs/crystal_preview_*.bin` files are ignored without reads,
+  writes, deletion, or migration.
+
+## Phase 9.6: Calculator app
+
+- [x] Calculator opens from launcher slot 4 and all controls respond on the
+  physical panel.
+- [x] Addition, subtraction, multiplication, division, percentages, and decimal
+  input produce the expected results.
+- [x] Clear and backspace update the formula and result correctly.
+- [x] An in-progress formula survives switching to another card and returning.
+- [x] The firmware builds successfully and fits the smallest OTA partition.
+
+Completion gate: arithmetic and controls work on hardware, and calculator state
+survives the destroy-on-switch lifecycle. Phase 9.6 closed on 2026-09-07.
+
+## Phase 10: Keyboard overlay
+
+- [ ] Every key is comfortably tappable; check the outer columns and the
+  four-row bottom controls specifically.
+- [ ] Typing near the bottom row does not trigger Brookesia's bottom navigation
+  gesture.
+- [ ] A covered field animates to the available area's midpoint in about 250 ms,
+  ease-out, once, with no double-scroll or overshoot.
+- [ ] A field that is already fully visible does not move at all.
+- [ ] The WiFi dialog lifts only as far as the keyboard band requires, and the
+  Connect and Cancel buttons remain visible without scrolling the dialog.
+- [ ] Opening and closing the keyboard ten times from the WiFi dialog leaves no
+  orphaned keyboard or dimmed background and restores viewport height and
+  scrollability every time.
+- [ ] Switching among abc, ABC, 123, and #+= never moves Delete, Space, the
+  cursor arrows, or Done.
+- [ ] Back over Clock, Weather, and Calculator dismisses one layer per press and
+  leaves the app running until all shell layers are gone.
+- [ ] Quick Settings opens over the keyboard; dismissing the panel reveals the
+  keyboard still open with its caret and typed text intact.
+
+Before evaluating these visual checks, confirm the generated `sdkconfig`
+contains the intended display options.
+
+## Phase 11: Settings and power
+
+Device pass run 2026-09-10 on the physical panel. The five V3 fixes were
+implemented and build-verified on 2026-09-11. The V3 rerun passed the network,
+time, location, shared-keyboard, and disabled-Recents regressions. The final timer
+alert-policy test passed on 2026-09-11.
+
+- [x] The ESP-IDF firmware builds and fits the smallest OTA partition.
+- [x] The standalone host HAL mock compiles against the current interfaces.
+  (Syntax-only: `g++ -fsyntax-only` against `crystal_hal/include`. There is still
+  no simulator build target, so this checks the mock, not a running simulator.)
+- [x] Back from each subpage returns to its parent; only Back from the root
+  returns to the card.
+- [x] A committed bottom swipe closes the whole Settings stack and restores the
+  app Settings was opened from, while a tap in the bottom band does nothing and a
+  bare-card swipe reaches the launcher. (The pill is Home, not Back — see
+  `PHASE_11_SETTINGS.md` §2.1 for why the two differ.)
+- [x] Long-pressing the quick-panel WiFi tile opens WiFi Networks with Network
+  and Settings beneath it.
+- [x] A validated static IP, gateway, mask, and primary DNS survive reboot and
+  Weather still resolves hostnames; invalid and incomplete forms never apply.
+  **V3 bugs 1 and 2 passed:** DHCP applies immediately and persists only the mode,
+  while the stored static tuple is retained and can be applied again without
+  retyping it.
+- [x] Dim and off timeouts work with Energy Saving off. With it on, the effective
+  timeouts are halved and current draw is measurably lower.
+- [x] Auto Dimming off holds the panel at the user's brightness whatever the
+  timeout dropdowns say, and turning it back on restores those values (D8).
+- [x] Quick Settings and Settings mirror brightness, volume, and Energy Saving
+  in both directions, including restoring saved brightness after Energy Saving.
+- [x] Every timezone choice applies to the status bar without reboot and survives
+  reboot; DST-observing entries cross a known transition correctly.
+- [x] Automatic/manual time and location modes persist, manual time updates the
+  RTC, and a manual location triggers an immediate Weather refresh.
+  **V3 bugs 3 and 4 passed:** the manual-time row remains bound as its state
+  changes, both forms report actionable validation failures, the RTC restores
+  manual time offline, manual Location refreshes Weather, and saved Location
+  values repopulate the form when it is re-entered.
+- [x] Timer alert policy and Test Sound behave independently as specified. On the
+  physical panel, timer expiry chimed with alerts enabled, remained silent with
+  alerts disabled, and Test Sound remained available independently.
+- [x] About, Legal, Device Status refresh, and restart confirmation work without
+  adding a battery polling timer.
+
+The focused V3 rerun also confirms saved values appear when Location is re-entered,
+the cursor remains with the selected field while the keyboard moves the viewport,
+and the disabled-Recents side-switch paths remain stable.
+
+Completion gate: all hardware-dependent rows above pass on the physical panel.
+All Phase 11 rows and V3 regressions pass. Phase 11 is closed.
+
+## Post-cleanup checklist (2026-09-05)
+
+### Phase 7
+
+- [x] Temporary brightness diagnostic code is removed from production startup.
+- [x] Production `Off` brightness target remains 0%; no 5% floor was added.
+- [x] The experimental wake-touch inactivity reset was reverted.
+- [x] Existing gesture ownership, status-bar, timer, and wake-touch behavior is
+  unchanged by the cleanup.
+- [x] No stale diagnostic symbols or log messages remain.
+
+### Phase 7.5
+
+- [x] Icon-card/lifecycle state machine remains unchanged by the cleanup.
+- [x] Dragging remains identity-only; no lifecycle callbacks occur during drag.
+- [x] Release below 50% cancels; release at or above 50% commits after cover.
+- [x] Preview capture, cache, loading, and persistence are absent from the drag path.
+- [ ] Re-test icon-card transitions after an app-only production flash.
+
+Phase 7.5's original preview implementation passed hardware validation. The
+icon-only replacement retains open physical-panel checks above.
+
+### Deferred
+
+- [ ] Determine the root cause of any low-brightness energy-saver fluctuation if
+  it reappears; do not change the production brightness floor without evidence.
+
+## Regression command sequence
+
+```bash
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
+idf.py -p /dev/cu.usbmodem101 flash monitor -b 2000000
+```
+
+Use `idf.py fullclean` only after configuration or dependency changes, or when
+investigating stale build output.

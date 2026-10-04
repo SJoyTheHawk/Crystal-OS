@@ -1,0 +1,751 @@
+{
+  "source_directory": "reference/Crystal-OS-bus-app-development",
+  "comparison_branch": "bus-app-development",
+  "comparison_commit": "fc20cf7d1c205991bb15a45a269ecbbd7b74ec0a",
+  "files": [
+    {
+      "path": "LICENSE.md",
+      "bytes": 4928,
+      "sha256": "54b871921bafcfddebe012078ee77563c2975dfd4f3004bc84a5132d48fdc7e1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "NOTICE",
+      "bytes": 464,
+      "sha256": "551f31ca41f35b23e988260cd798eedc1fa53bde9cb6608be505a014f65d54c5",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/ctb-stops.bsc",
+      "bytes": 127,
+      "sha256": "a8a634c882412f9000d8e8984b265fa36f9b0ca6019b0214289108b747c7d982",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/full/ctb-stops.bsc",
+      "bytes": 258706,
+      "sha256": "c89bf6a1bfec782c097c9241062bc0b832196a54f907f1a0f4f23a43ab459410",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/full/kmb-stops.bsc",
+      "bytes": 685020,
+      "sha256": "6fa8f9e3896d1464f3ecb646b732e8095c78e8168c78749055cbaa5f638d10b4",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/full/manifest.json",
+      "bytes": 2232,
+      "sha256": "133bc65860b37ecea800fcc8c0f678eec00f9eaecb88d5b6712d09c610a1e39e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/kmb-stops.bsc",
+      "bytes": 141,
+      "sha256": "3770be718c886d63df14b40a9806b9ab7e6b1c7a2b9b4052b922dab7cce3f816",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/manifest.json",
+      "bytes": 1774,
+      "sha256": "8885377799abbc7a7ddffee125d41f5a140790da914bd5ff814a30a14e99a02e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/measurements.json",
+      "bytes": 6888,
+      "sha256": "a9e604b2ffa8572b71d77dd9ab1354c4dac4b0702e815b1b5610751133c7668d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz",
+      "bytes": 1697200,
+      "sha256": "2c434f2f75177bf8474b3f1af3169d5164e83c60f0bf841c7d756a0ad05cc136",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "artifacts/bus_catalog/sources/kmb-stop-20261002.json.gz",
+      "bytes": 313178,
+      "sha256": "bb6829cddee4160a51b60aff649cad6dae81880895bbcb1252063b8738df9a0d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_app/BUS_APP_REFERENCE.md",
+      "bytes": 15543,
+      "sha256": "62e54cab465d187f2b6b9691c7d44d240e1ee3aa84edb9b30306173214c06bb8",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_app/CMakeLists.txt",
+      "bytes": 167,
+      "sha256": "416918c4e30f54e77ca8d3b87bd2bdf67bd1a898e18c33ade8f994389e3d2865",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_app/include/bus_app.hpp",
+      "bytes": 4573,
+      "sha256": "8f83ce98ffdc33471b5373194000fe40e04cb57d8533cca558c542db2e4549fb",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_app/src/bus_app.cpp",
+      "bytes": 77741,
+      "sha256": "13ea8b2480f27aa24a5a0b9a90b103e64ef3019c495cd0595f6e3b33f6e5dce1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_app/src/bus_icon.c",
+      "bytes": 569,
+      "sha256": "da53e26b67415dd051bfa50e4a914894a65a62e939545f0e9712489282c5daa0",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/CMakeLists.txt",
+      "bytes": 2806,
+      "sha256": "37e72d06155b9481d380de9fc0f9f140af078313e6ce89d6c58835af29742cf2",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_stops_empty.json",
+      "bytes": 40,
+      "sha256": "e9314246962756fd1950078f6d9592c1adb691afe692cce021eb1fcf5a720e86",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_stops_invalid_record.json",
+      "bytes": 267,
+      "sha256": "8569904457b95559e87acacba2e04338ffb2129ff4b57dfd7efd2c2db649028d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_stops_malformed.json",
+      "bytes": 54,
+      "sha256": "1c63dee3703bd548f76319c182837d4f1ed72269dafb08cfda8f02c67b91cb5e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_stops_missing_data.json",
+      "bytes": 46,
+      "sha256": "b4f2c9af3c6014edb16c9ac811d1ab894244e5a627c6a87aa657ab3ac034983a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_stops_valid.json",
+      "bytes": 269,
+      "sha256": "8e244b9895b6739156a35a253badc3b5260f9f16e089ea697bba958a4c3c17e7",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_duplicate.json",
+      "bytes": 402,
+      "sha256": "2c9464c8eb983071fcbfc8ddf4b1f98bc4a7e5c9bbff5b510955d3b67cfa80ce",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_empty.json",
+      "bytes": 99,
+      "sha256": "17ef1ef8964f4536801549ab0092923a1bcb28917afdef6f54aa7d2e16bd14d6",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_invalid_record.json",
+      "bytes": 429,
+      "sha256": "46814abb8df8f55d245c50d9d033b98debe9e80a97c00ca058597e934dbea2a1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_malformed.json",
+      "bytes": 54,
+      "sha256": "d9a605b7e5896bf900e274b7f8324202afa664bc38b729ba86a6ab1106da3be7",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_missing_data.json",
+      "bytes": 46,
+      "sha256": "3f0b65cce564ff642a099a8b29338d3a552afd2574740e0ca393f79916904527",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_nonarray_data.json",
+      "bytes": 67,
+      "sha256": "21d87f15c2508c69cc1505880ec964691bc83b8bdbfc2a6a4d50307543fa24bf",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_oversized.json",
+      "bytes": 492,
+      "sha256": "1eadb9896d714c9197223c2e08df7ed24fe0ba0eb43caac18294f48d2b5d639f",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_schema.json",
+      "bytes": 711,
+      "sha256": "6a7d5fb3fce28b1711e19aabf97343229bb3d17883834950e36e0348a1e8af31",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_route_variants_valid.json",
+      "bytes": 503,
+      "sha256": "39b67fa3b47c102a59de5e5a5a00bb9231445f61b22b308d71197860c2b58eb0",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_stop_detail_missing_en.json",
+      "bytes": 93,
+      "sha256": "385d1c30b3cf67a6db8d907b7fb0d17456d7a7ffc40b24c4a5841f2346f3ea84",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/ctb_stop_detail_valid.json",
+      "bytes": 109,
+      "sha256": "f87b67ced9b5289977033c6a1de8df414cc9a31193f4f7fdaad3349af61c0dc9",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/kmb_stop_detail_missing_tc_invalid_coords.json",
+      "bytes": 90,
+      "sha256": "d2731be1c05bbba4cd7a975b664c318cd6a7c9431f0a869565fb5a8637ca4bb1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/kmb_stop_detail_valid.json",
+      "bytes": 108,
+      "sha256": "2f0f9d25bc571540f754216941c0dfa7bb719ddbe0343e2904faa141486211ff",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/stop_detail_duplicate_ids.json",
+      "bytes": 130,
+      "sha256": "6e746886a101502bea3781350d9c8b11d5aeda493a941e59336a6b8ab5c47e28",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/stop_detail_empty.json",
+      "bytes": 12,
+      "sha256": "25ac29823ea32c588d7536a57d86d5eca0f9a65b9f951dabc9de7e8c6560ad90",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/fixtures/stop_detail_provider_qualified_ids.json",
+      "bytes": 145,
+      "sha256": "8ad9f94ef34be48e6580dc050ac07a1d5c76c438adcdb5d339aea02cb8504af3",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/idf_component.yml",
+      "bytes": 84,
+      "sha256": "177b4afd79d48b132bd31932e9b46e5a01fa3c0b4d1586ab762c15e385f9ba8a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/include/bus_routes.h",
+      "bytes": 1405,
+      "sha256": "b921a09562e8928671eadce2ea198dfcad2b4a81cacf1fad7f65b7d02d0315c0",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/include/bus_service.h",
+      "bytes": 8685,
+      "sha256": "2c115dc9ebd5363377101eecad4d1a99b3864cad492f3fd994a04aa2f5919482",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/include/bus_stop_catalog.h",
+      "bytes": 1704,
+      "sha256": "450817c87617339d72c53c437cf9d71c3459796059e6795ab17af36cdf3c7b5d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_catalog_sync.c",
+      "bytes": 27660,
+      "sha256": "105d517093af4fc86c310e5f89758c0b3119adf0f6269dec1d9c117986d4737e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_catalog_sync.h",
+      "bytes": 296,
+      "sha256": "f4a7f611782a735538a3d92f040b83e909ddb1b7ed22ee9e3b702a0ffad5f141",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_index_data.c",
+      "bytes": 630,
+      "sha256": "5b9d930f8a90f70abfa6192403524147311e00176f83c06a27bb0a7d450f3e49",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_normalize.c",
+      "bytes": 2369,
+      "sha256": "707a4821f492c68bde3cb66d74a81d36682798f6344707a804a0830204ec7c04",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_normalize.h",
+      "bytes": 982,
+      "sha256": "285c3d1262653628542a816d020184203988e24d550631260ca85414c3dd4ff8",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_ctb.c",
+      "bytes": 16817,
+      "sha256": "6168cb030bce11dd44cfb702f987904e34ba10e96b7d3aeeb1d909e497300645",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_ctb.h",
+      "bytes": 2094,
+      "sha256": "7d1ec0a6f2b9da155d3a0ee1c3e3adae7ae40f168babe27b5410fa44dd59145d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_ctb_stop.c",
+      "bytes": 503,
+      "sha256": "4dcda4ecb3d2eccffa42ce2ea4bf054c2e11baa90aa34889e2c8685784771193",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_ctb_stop.h",
+      "bytes": 495,
+      "sha256": "1a51d6a8eb8f66b0e0436dda884f7689eae2b9b3411fe23e9247af5beb0234db",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_kmb.c",
+      "bytes": 498,
+      "sha256": "f9e271fd6a7e72feee5d2f28bd7cd67536a464fb0d0411dcb1e29f417cb5f103",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_provider_kmb.h",
+      "bytes": 570,
+      "sha256": "947109501fd7cdede80243a41d0a187281275ba86743e7edd24c532f7bf02044",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_routes.c",
+      "bytes": 4482,
+      "sha256": "bf0b01f02268c23cac3eaa25392e881e2e35884436100911058ba23dbb781d1c",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_service.c",
+      "bytes": 104866,
+      "sha256": "91207ef9b56855a4248ebe95c36fa2489f479644fe109782361018dba153a966",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_stop_catalog.c",
+      "bytes": 29986,
+      "sha256": "171c934a5c18905fc532ad8c06df28f871cd80c39dd1a4b70cfb72e2c6809485",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_stop_discovery.c",
+      "bytes": 2525,
+      "sha256": "ff47fc853efe32189cc41e92dd521cb66df1019e21f82ab8d7f6ff954609b7f7",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_stop_metadata_common.c",
+      "bytes": 5559,
+      "sha256": "9dac1f83996b963074c82ea60d34f36e884fe4e3e38843779c9248fea3b9064f",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "components/bus_service/src/bus_stop_metadata_common.h",
+      "bytes": 684,
+      "sha256": "c3c9efb61c780deb89d0ac74edd2473dd7187b41f650646d859bfce9162e498e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/Incremental-Global-HTTPS:TLS-plan.md",
+      "bytes": 17278,
+      "sha256": "8fcb982f880a6cc365bea8143aed2ae797628fc0dce0ec54247a4474cd2609a6",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase1-implementation.md",
+      "bytes": 10568,
+      "sha256": "33fbe7ab3edf303ab054d8598d807f0a7e0269eef793c9c161e780d07a3f1f68",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase2-validation.md",
+      "bytes": 5585,
+      "sha256": "ee463d72128d1f105b7f1e6452b60213498d1460088335901bf19476e3bd8ce5",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-kmb-catalog.md",
+      "bytes": 8947,
+      "sha256": "ce2a06a543e208241c516b3564015f5624ad817323236c11a8d96fb86672d583",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step0-baseline.md",
+      "bytes": 5843,
+      "sha256": "df899eccdae0f0d5b0f5ddefc8af169088cc73d1530ba80d846b538dc917b0fb",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step1-handoff.md",
+      "bytes": 1908,
+      "sha256": "3c52d13b6af9cec0591ba31059d6136d74a75240bb7582269de3e948caf41f09",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step2-submission.md",
+      "bytes": 2420,
+      "sha256": "fa1e5b2ce4bbd8dc50b5aae31f8d215987f96be62ecdace32168b62015a0ce0d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step3-handoff.md",
+      "bytes": 1888,
+      "sha256": "e703cd1615883175ccd7f66fa9bc2a3f6fc3ac15a08637be81f9c3909eed038a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step4-parser.md",
+      "bytes": 947,
+      "sha256": "1b002789bc30705921d9da263038ebb704225f417d833b21516672c41e2ff87e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step5-sequencing.md",
+      "bytes": 979,
+      "sha256": "929c3df98178a12835a80bb5cb38ad7dedf439df0563bb9843af7ae2d3f129dd",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step6-retries.md",
+      "bytes": 2264,
+      "sha256": "ca46bb9fe03f9ca0e661a334ad6067b6c569543868ef8d74d1b63e3e5b4f138a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step7-direct-client.md",
+      "bytes": 1919,
+      "sha256": "6d392c2cfd8217f8d47b265cc468d8015cf360fae8492d05b6b6dbd5980df733",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase3-step8-failure-lifetime.md",
+      "bytes": 4684,
+      "sha256": "d3a607ca2f3d1cdf1be35d65ce86e486af51c898a01b05ce6e27eb62240e7b02",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-kmb-stops.md",
+      "bytes": 16072,
+      "sha256": "e3070f62c1e71e619b95f4a5052b1e963b445a9353db6fc6bbfff747c8f87a57",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step0-baseline.md",
+      "bytes": 3648,
+      "sha256": "676a707ed1d252eef607818ed7c296841a8cf2ce67fa59da0cda43adfc1b58ca",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step1-handoff.md",
+      "bytes": 1884,
+      "sha256": "d27659ea72cbe86ad6b9206e78d3da6b334b6421c79cbc1612f3ac3fe8d690a8",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step2-submission.md",
+      "bytes": 2345,
+      "sha256": "ee5fe7516f806c9a23e4d2526a6dad49564148166ff26b441a781d85bc013cfa",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step3-handoff.md",
+      "bytes": 1100,
+      "sha256": "aebcaffe4e7b50cdfd7a1c851e7c05080663272f0d9eea6825741e49710443d4",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step4-parser.md",
+      "bytes": 1444,
+      "sha256": "8533a065d33d2ab05cab3027f0ba53f3531b9f695bf86e412aca149c06d835b4",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step6-cancellation.md",
+      "bytes": 2289,
+      "sha256": "5b9d670e5da517c7ea01c2e5e5dd6121a1832928c7b1cfb7d52543029091a19b",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step7-direct-client-removal.md",
+      "bytes": 1992,
+      "sha256": "cf21c64afb2287f5f335e36032c3712545dc2818148c21af0d5b866289900339",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step8-failure-lifetime.md",
+      "bytes": 6278,
+      "sha256": "68a915208b1f1b0c6b1224efa457cd66660cf8278cb116071d9335dac72af960",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/archive/crystal-http-phase4-step9-repeatability.md",
+      "bytes": 3152,
+      "sha256": "4def5fc6140f8c2f2abbe85f755b564ba6113df3e13fe9fb241700d3aeceace4",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-code-guide.md",
+      "bytes": 28288,
+      "sha256": "38f31df60b524631466f7a41c8436fcbb7028da995704b88c8c4f5cf878fdf2a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-completion-roadmap.md",
+      "bytes": 9866,
+      "sha256": "4012dc19138180d1225c5597e7e61a09334868129c5c6f2a947bbc97e0fe1421",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-icon-spec.md",
+      "bytes": 8251,
+      "sha256": "126e9c405534febe25da38b9f9a924b1bc8e835d06785772849d3d7a1011869f",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-integration-plan.md",
+      "bytes": 23723,
+      "sha256": "13dfa2d17d3103e627fab91ce9cd843f3bf1bf9e790f490d0c6f48e5665b53d4",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-memory-analysis.md",
+      "bytes": 21794,
+      "sha256": "9a24be54dd4ae461a874d97d9ba92362a50fdc83741f99c718f29cdf175f6a34",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-simplified-slice4-code-guide.md",
+      "bytes": 16606,
+      "sha256": "08fd8adfe548595e142b486bea94792d7757fd1e44b064966188fd2529788236",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-simplified-slice4-completion.md",
+      "bytes": 7904,
+      "sha256": "5b3cf40d99e8ddd53275bb133f30b5ffed6cea60a9157ced4a80e4bbdebe97e3",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-simplified-slice5-7-code-guide.md",
+      "bytes": 31226,
+      "sha256": "0c5b8c720a826b95ea8686c3005bb73a6af198819ba5ec6a0509a95aacdf19cc",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-simplified-slice5-7-plan.md",
+      "bytes": 13955,
+      "sha256": "9ae5eeffa932af6e1326227d10a7ccddbcf5197af144b5d2157b90d592e27a3d",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-ui-design.md",
+      "bytes": 31657,
+      "sha256": "07443dd30b051028f3edbb0e8206644899654f435897a178ded5e675ab088fd1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/bus-app-workflow.md",
+      "bytes": 15716,
+      "sha256": "e70c9aacceec3a0ce81d07e2da2c29fb032895a108d2e0d88a5142031cfb0f33",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-ctb-route-variants-code-guide.md",
+      "bytes": 6371,
+      "sha256": "cb5e75567cba31fc468f008e947584f63cce9ba4977c3d6a8e52c3fe0d8d6061",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-ctb-route-variants-plan.md",
+      "bytes": 5954,
+      "sha256": "74685c3186c8fd8ca9b37fea81b45accd3c719f8704ca8652b25e6a0ade26a68",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-step0-schema.md",
+      "bytes": 3178,
+      "sha256": "510212d8eb5afc97fecc7c8db121b9c5b2ffd2ce7b787e4de8c5508d3300c1fa",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-step2-3.md",
+      "bytes": 2933,
+      "sha256": "dfac6312eda8113b9c6f7c29074e16abe23a518357683af2f121663a72db9350",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-step2-4.md",
+      "bytes": 2888,
+      "sha256": "e2149cba6377e4a5471a0870ea2164357e131951b2f354b0f2e0226ad2dfa9cd",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice2-step2-5.md",
+      "bytes": 2939,
+      "sha256": "629e8e08b6990be717abb9cb27deadc0a92368c1320ad025a2f7e7fd38f07da0",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice3-normalized-route-metadata-code-guide.md",
+      "bytes": 8898,
+      "sha256": "a9a9090e10c2835b8db0aef255496e7656e104863ff01a666ee700483ee05dc1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice3-normalized-route-metadata-plan.md",
+      "bytes": 9286,
+      "sha256": "425da0e57b1742d7690525e6b14105ae3d64a28c700f562588eb4c3588936812",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice4-stop-fixtures.md",
+      "bytes": 3138,
+      "sha256": "b5083a4561d3e0a9afab932e57c4c0c62295b75742e6ec9872dfaebe423dbc05",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice4-stop-picker-code-guide.md",
+      "bytes": 15272,
+      "sha256": "3c00cf8e7c69613bd3e5bf31b708e5e2e3c17d363f234f459aa716a2ab82895a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice4-stop-picker-plan.md",
+      "bytes": 10692,
+      "sha256": "5f75ab206d3011399af0aaf2ed21967cb7897617f1449290c0c433746f0ef80c",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice4r-host-catalog-evidence.md",
+      "bytes": 18916,
+      "sha256": "1658bed5a3518b946cecf75ee3bb1b1f250086eb88f240f264b3619b7dae2c62",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice4r2-device-test.md",
+      "bytes": 7432,
+      "sha256": "c1861a3495143338d837d14d84d5ee729cf10df75427b692cb46104a716d8974",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice5-stop-picker-code-guide.md",
+      "bytes": 7639,
+      "sha256": "c3c4b5cb24b1803d9d5ac1bd990e33e56376a3ee9fff350a11d661afe39e0e4c",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-slice5-stop-picker-plan.md",
+      "bytes": 3196,
+      "sha256": "cb7ad928aab00f0c306ad28acec2469a8e1221b0021b5848e5df9199cf3d7eae",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-step0-ctb-baseline.md",
+      "bytes": 2901,
+      "sha256": "b5b771e076402d5723325f804661caada2fa06ce666f010dbe86b2732fe2fdfb",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-step7-slice1-code-guide.md",
+      "bytes": 15433,
+      "sha256": "2babee2f4909115cad0f513c61a81907a15eb93906534c575e91c5fa0b40a42a",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-phase5-step7-slice1.md",
+      "bytes": 3865,
+      "sha256": "e9226e331aeb272ea97831cc223cbc0ea03f9be9aed08d75d82a728cf2676500",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-tls-aes-fix-procedure.md",
+      "bytes": 7032,
+      "sha256": "c09b6cf373733a713d1cec83612eb4875896090d6609f0af27a2201540c1c459",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/crystal-http-tls-aes-memory-fix.md",
+      "bytes": 1523,
+      "sha256": "191b605fbd9971a228ae3457e6cafab5d483249c072c5c848326bab3e3e7644e",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "docs/fix-esp-err-no-mem-implementation-guide.md",
+      "bytes": 12770,
+      "sha256": "cddfbcb5ead2695c55e5423ad2d9630d9b73a64a01ed65a60c004e5a5ee59383",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/bus_catalog/build_stop_catalogs.py",
+      "bytes": 9735,
+      "sha256": "2e351c9b49134ab13e275ab928cc49098f765a9546ad63d15b0e81eb91815a44",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/bus_catalog/fixtures/ctb_snapshot.json",
+      "bytes": 330,
+      "sha256": "7dbf9b324912eb8cead8a51ec04d289495f2a2475bb1467316b33e2cfe9f02e1",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/bus_catalog/fixtures/kmb_bulk.json",
+      "bytes": 236,
+      "sha256": "493703276ab251433e644f229dec5357e0e8049e7eed0575f1783b577389f6e0",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/bus_catalog/test_stop_catalogs.py",
+      "bytes": 5807,
+      "sha256": "839450945bd1455aba0c275ddd08445a917349f5d26efca053dc3d3256114c8b",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/ctb_parser_check.c",
+      "bytes": 3177,
+      "sha256": "7baaddc410dcba0ef56b03d22f10da3c6542e2fa78dbcedc5809fb2f9b0a1e81",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "tools/ctb_route_variant_check.c",
+      "bytes": 7145,
+      "sha256": "98853666ff961243a56677ff219873dbdde9673e1deaaaeabf1fecef3e8f321c",
+      "matches_branch_checkpoint": true
+    },
+    {
+      "path": "integration/main/main.cpp",
+      "source_path": "main/main.cpp",
+      "bytes": 6859,
+      "sha256": "56b71e21857295e69aeff549ef3a56305a17198969330d5690e3591653212655"
+    },
+    {
+      "path": "integration/main/CMakeLists.txt",
+      "source_path": "main/CMakeLists.txt",
+      "bytes": 1413,
+      "sha256": "bf6621089c7456742c2ebc102f1ebc7fe634bd3f9a564f829acde15cb6decbfa"
+    },
+    {
+      "path": "integration/sdkconfig.defaults",
+      "source_path": "sdkconfig.defaults",
+      "bytes": 3360,
+      "sha256": "f5a7a6eb3db497c7123085f0fb9fb63a64221fb9b2f52f437135ca640270dea4"
+    },
+    {
+      "path": "integration/partitions.csv",
+      "source_path": "partitions.csv",
+      "bytes": 374,
+      "sha256": "19b38b9e83118ed623504c3844cd714290864491a44613a9de867511750b4ea7"
+    }
+  ]
+}

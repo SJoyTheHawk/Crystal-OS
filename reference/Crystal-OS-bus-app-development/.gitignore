@@ -1,0 +1,20 @@
+/build/
+/managed_components/
+/.vscode/
+/sdkconfig
+/sdkconfig.old
+/dependencies.lock
+/.cache/
+*.elf
+*.log
+*.trace
+.DS_Store
+
+# Host-built fixture checker binaries.
+/tools/ctb_parser_check
+/tools/ctb_route_variant_check
+
+# Registry integrity metadata no longer matches this locally patched component.
+# Keep the vendored source itself tracked as Crystal's durable Brookesia override.
+/components/esp-brookesia/.component_hash
+/components/esp-brookesia/CHECKSUMS.json

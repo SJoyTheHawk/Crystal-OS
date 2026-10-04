@@ -1,0 +1,8 @@
+{
+  "source": "hk-bus-crawling-pinned-fixture",
+  "routes": [{"co": "CTB", "route": "969", "stops": ["002536", "002554"]}],
+  "stopList": {
+    "002536": {"name_en": "Central", "name_tc": "中環", "lat": 22.2819, "lon": 114.1582},
+    "002554": {"name_en": "Wan Chai", "name_tc": "灣仔", "lat": 22.2774, "lon": 114.1728}
+  }
+}
