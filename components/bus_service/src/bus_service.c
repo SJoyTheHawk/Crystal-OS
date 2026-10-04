@@ -931,6 +931,11 @@ void bus_service_init(void)
         return;
     }
 
+    ESP_LOGI(TAG, "Worker init heap internal=%u largest=%u psram=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
     BaseType_t ret = xTaskCreatePinnedToCore(
         bus_worker_task,
         "bus_worker",
@@ -952,6 +957,18 @@ void bus_service_init(void)
     }
 }
 
+static bool bus_service_worker_ready(void)
+{
+    if (s_request_queue == NULL || s_worker_task == NULL) {
+        bus_service_init();
+    }
+    if (s_request_queue == NULL || s_worker_task == NULL) {
+        ESP_LOGW(TAG, "Bus worker unavailable; request deferred until resources recover");
+        return false;
+    }
+    return true;
+}
+
 void bus_service_set_listener(bus_listener_t cb, void *user_data)
 {
     s_listener = cb;
@@ -960,9 +977,7 @@ void bus_service_set_listener(bus_listener_t cb, void *user_data)
 
 uint32_t bus_service_request_route(const char *route_name)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
+    if (!bus_service_worker_ready()) return 0;
 
     bus_request_t req = {0};
     req.type = REQ_TYPE_ROUTE;
@@ -981,9 +996,7 @@ uint32_t bus_service_request_route(const char *route_name)
 
 uint32_t bus_service_request_route_catalog(void)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
+    if (!bus_service_worker_ready()) return 0;
 
     const time_t now = time(NULL);
     if (bus_route_catalog_count() > 0 && s_route_cache_fetched_at > 0 &&
@@ -1053,9 +1066,7 @@ uint32_t bus_service_request_stops(const char *route,
                                      char bound,
                                      uint8_t service_type)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
+    if (!bus_service_worker_ready()) return 0;
 
     bus_request_t req = {0};
     req.type = REQ_TYPE_STOPS;
@@ -1089,12 +1100,7 @@ static void process_stop_catalog_request(const bus_request_t *req)
 
 uint32_t bus_service_request_stop_catalog_sync(void)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
-    if (s_worker_task == NULL) {
-        return 0;
-    }
+    if (!bus_service_worker_ready()) return 0;
     if (!bus_catalog_sync_request(true)) return 0;
     return s_next_request_id++;
 }
@@ -1104,9 +1110,7 @@ uint32_t bus_service_request_stop_detail(const char *stop_id,
                                          char bound,
                                          uint8_t service_type)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
+    if (!bus_service_worker_ready()) return 0;
 
     bus_request_t req = {0};
     req.type = REQ_TYPE_STOP_DETAIL;
@@ -1130,9 +1134,7 @@ uint32_t bus_service_request_eta(const char *stop_id,
                                    char bound,
                                    uint8_t service_type)
 {
-    if (s_request_queue == NULL) {
-        bus_service_init();
-    }
+    if (!bus_service_worker_ready()) return 0;
 
     bus_request_t req = {0};
     req.type = REQ_TYPE_ETA;

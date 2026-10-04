@@ -2,6 +2,7 @@
 #include "bus_routes.h"
 #include "bus_stop_catalog.h"
 #include "crystal_network.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <cstring>
 #include <cstdio>
@@ -30,6 +31,15 @@ constexpr uint32_t kAccent = 0x38BDF8;
 constexpr lv_coord_t kPad = 16;
 constexpr lv_coord_t kGap = 12;
 constexpr uint16_t kMaxRenderedStops = 128;
+
+void logUiHeap(const char *stage)
+{
+    ESP_LOGI(TAG, "%s: internal=%u largest_internal=%u psram=%u",
+             stage,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+}
 
 struct StopRowContext {
     bus_stop_t stop;
@@ -180,9 +190,12 @@ bool BusApp::onCreate()
     // Build UI
     const lv_coord_t tab_bar_height = 48;
     buildTabBar(width);
+    logUiHeap("before Favorites UI");
     buildFavoritesTab(width, height, tab_bar_height);
-    buildSearchTab(width, height, tab_bar_height);
-    buildStopPage(width, height);
+    logUiHeap("after Favorites UI");
+    // Search and stop-picker controls are created on first use. Keeping the
+    // initial Favorites screen small leaves internal DRAM available for WiFi
+    // and the framework's first HTTPS request during app crossover.
 
     catalog_bootstrap_timer_ = lv_timer_create(onCatalogBootstrapTimer, 500, this);
     evaluateCatalogBootstrap();
@@ -467,6 +480,10 @@ void BusApp::rebuildFavoritesView()
 
 void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_bar_height)
 {
+    if (search_tab_ != nullptr) {
+        return;
+    }
+
     search_tab_ = lv_obj_create(root_);
     lv_obj_remove_style_all(search_tab_);
     lv_obj_set_size(search_tab_, width, height - tab_bar_height);
@@ -542,6 +559,10 @@ void BusApp::buildSearchTab(lv_coord_t width, lv_coord_t height, lv_coord_t tab_
 
 void BusApp::buildStopPage(lv_coord_t width, lv_coord_t height)
 {
+    if (stop_page_ != nullptr) {
+        return;
+    }
+
     stop_page_ = lv_obj_create(root_);
     lv_obj_remove_style_all(stop_page_);
     lv_obj_set_size(stop_page_, width, height);
@@ -584,7 +605,15 @@ void BusApp::buildStopPage(lv_coord_t width, lv_coord_t height)
 
 void BusApp::showStopPage(const bus_route_variant_t &variant)
 {
-    if (stop_page_ == nullptr || search_tab_ == nullptr) {
+    if (root_ == nullptr || search_tab_ == nullptr) {
+        return;
+    }
+    if (stop_page_ == nullptr) {
+        logUiHeap("before Stop picker UI");
+        buildStopPage(lv_obj_get_width(root_), lv_obj_get_height(root_));
+        logUiHeap("after Stop picker UI");
+    }
+    if (stop_page_ == nullptr) {
         return;
     }
     const char *operator_name = variant.op == BUS_OP_CTB ? "CTB" :
@@ -1620,10 +1649,21 @@ void BusApp::onTabChanged(lv_event_t *e)
     if (tab_idx == 0) {
         // Show favorites
         lv_obj_clear_flag(app->favorites_tab_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
+        if (app->search_tab_ != nullptr) {
+            lv_obj_add_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
+        }
         app->updateTabAppearance(0);
     } else {
         // Show search
+        if (app->search_tab_ == nullptr && app->root_ != nullptr) {
+            logUiHeap("before Search UI");
+            app->buildSearchTab(lv_obj_get_width(app->root_),
+                                lv_obj_get_height(app->root_), 48);
+            logUiHeap("after Search UI");
+        }
+        if (app->search_tab_ == nullptr) {
+            return;
+        }
         lv_obj_add_flag(app->favorites_tab_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(app->search_tab_, LV_OBJ_FLAG_HIDDEN);
         // Re-apply the retained query when Search becomes visible. The app
