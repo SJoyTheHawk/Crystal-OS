@@ -3,7 +3,7 @@
 ## Branches and scope
 
 - `bus-app-development`: preserved bus development checkpoint `fc20cf7`.
-- `main`: left at the same checkpoint.
+- `main`: the no-bus firmware, promoted from `baseline/no-bus`.
 - `baseline/no-bus`: this experiment, derived from that checkpoint.
 
 This is the current OS with the bus workload removed, not a rollback to an older
