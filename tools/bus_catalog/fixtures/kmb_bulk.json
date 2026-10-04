@@ -1,6 +1,0 @@
-{
-  "data": [
-    {"stop": "KMB-001", "name_en": "Central Station", "name_tc": "中環站", "lat": 22.2819, "long": 114.1582},
-    {"stop": "KMB-002", "name_en": "Admiralty", "name_tc": "金鐘", "lat": 22.2798, "long": 114.1650}
-  ]
-}

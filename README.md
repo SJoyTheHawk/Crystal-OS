@@ -5,6 +5,13 @@
 Crystal OS is an ESP32-S3 touch-device shell and app framework built on
 LVGL and Espressif's `esp-brookesia` phone UI.
 
+## No-bus baseline branch
+
+This branch removes the Bus app and its service/catalog workload from the current
+firmware. Bus development is preserved on `bus-app-development` at `fc20cf7`.
+See [baseline testing](docs/NO_BUS_BASELINE.md) for build, flash, and comparison steps.
+Bus planning documents below `docs/` are historical and do not describe this build.
+
 ## Project goal
 
 Crystal OS standardizes touch-screen apps on ESP32 with a shared shell,
