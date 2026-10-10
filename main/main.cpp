@@ -123,6 +123,27 @@ extern "C" void app_main(void)
         display->driver->rounder_cb = my_rounder_cb;
     }
 
+    // Subscribe the LVGL task to the watchdog because touch I2C reads can block
+    // for several seconds in critical sections, starving the IDLE task.
+    TaskHandle_t lvgl_task = xTaskGetHandle("taskLVGL");
+    if (lvgl_task != nullptr) {
+        esp_err_t wdt_err = esp_task_wdt_add(lvgl_task);
+        if (wdt_err == ESP_OK) {
+            ESP_LOGI(TAG, "Subscribed LVGL task to watchdog");
+            // Create an LVGL timer to reset the watchdog from the LVGL task context
+            lv_timer_t *wdt_timer = lv_timer_create([](lv_timer_t *) {
+                esp_task_wdt_reset();
+            }, 1000, nullptr);
+            if (wdt_timer == nullptr) {
+                ESP_LOGW(TAG, "Failed to create watchdog reset timer");
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to subscribe LVGL task to watchdog: %s", esp_err_to_name(wdt_err));
+        }
+    } else {
+        ESP_LOGW(TAG, "Could not find LVGL task to subscribe to watchdog");
+    }
+
     bsp_display_lock(0);
 
     auto *phone = new ESP_Brookesia_Phone(display);
