@@ -51,3 +51,5 @@ void crystal_keyboard_set_state_cb(crystal_keyboard_state_cb_t callback, void *u
 // Called on the LVGL task when the WiFi adapter posts a state/scan event.
 void crystal_shell_wifi_event(uint8_t event);
 void crystal_shell_weather_event(const CrystalWeatherReading *reading);
+// Called on the LVGL task when the OTA worker publishes a state change.
+void crystal_shell_ota_event();

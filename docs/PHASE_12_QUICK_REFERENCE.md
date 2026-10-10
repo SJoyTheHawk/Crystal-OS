@@ -147,6 +147,34 @@ idf.py flash monitor
 - **Check:** Manifest JSON valid? (use jsonlint.com)
 - **Check:** Manifest size < 2 KiB?
 
+### Issue: `task_wdt` reports `IDLE0` while checking for updates
+- **Cause:** A synchronous HTTPS/TLS handshake in `ota_worker` can keep Core 0
+  busy in mbedTLS ECDH long enough to starve the idle task.
+- **Required fix:** Keep the OTA HTTP client in asynchronous mode and yield
+  between `ESP_ERR_HTTP_EAGAIN` retries for manifest and binary reads.
+- **Expected result:** The request may still take several seconds, but no
+  `IDLE0` watchdog warning appears and the update dialog continues normally.
+- **Do not:** Fix this by only increasing the watchdog timeout or disabling the
+  watchdog; that hides CPU starvation during OTA.
+
+### Issue: `IDLE0` watchdog during download, with repeated progress logs
+
+- **Observed:** Watchdog reports show `taskLVGL` running while `IDLE0` has not
+  been scheduled. This identifies CPU starvation, but does not by itself prove
+  which task consumed the whole watchdog interval.
+- **Mitigation:** Post download progress only when the integer percentage
+  changes, suppress duplicate shell redraws/logs, and block the OTA worker for
+  10 ms after each successfully written chunk (including buffered reads).
+  The redundant core per-event log has been removed. Watchdog settings remain
+  unchanged. Confirm the result on the device; a successful build is not a
+  watchdog validation.
+- **Testing:** Flash the fixed baseline before testing OTA. Uploading a fixed
+  target image does not change the downloader currently running on the device.
+  Use the ELF matching that running baseline when decoding a download-time
+  backtrace, not the ELF from a newer target build.
+- **Expected:** One progress log per observed percentage, plus state transitions;
+  no repeated identical download percentages or `task_wdt` warnings.
+
 ### Issue: "Version not newer"
 - **Check:** Manifest version > running version? (SemVer comparison)
 - **Check:** Version format correct? (MAJOR.MINOR.PATCH, no prerelease)

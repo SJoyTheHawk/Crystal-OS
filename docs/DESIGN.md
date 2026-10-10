@@ -89,8 +89,9 @@ Rules that follow from the ordering:
 - **The pill is re-fronted, not just unhidden.** System pages are created on
   `lv_layer_top()` after it and cover it on z-order alone, so `update_home_pill()`
   calls `lv_obj_move_foreground()` and runs at the end of `system_page_push()` and
-  `system_page_pop()`. Dialogs and toasts are created later still and are meant to
-  cover it, which is why nothing re-fronts it there.
+  `system_page_pop()`. Dialogs are created later and naturally cover it. Toasts
+  are initialized earlier by Crystal Core, so `show_toast()` explicitly moves
+  them to the foreground before displaying them.
 - **The bottom swipe commits at `kHomeSwipeTravel = 80`px**, not half the screen.
   It is a flick with no drag animation, so there is no midpoint to cross. The floor
   is the stylesheet's `direction_vertical = 50`: below that the direction never

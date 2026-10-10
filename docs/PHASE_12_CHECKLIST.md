@@ -8,19 +8,27 @@
 
 ## Progress Overview
 
-- [ ] 12.1 Version Infrastructure (2h)
-- [ ] 12.2 Coredump NVS Infrastructure (3h)
-- [ ] 12.3 Crash Recovery Toast (2h)
-- [ ] 12.4 Signed Builds (4h)
-- [ ] 12.5 Update State Machine Stub (3h)
-- [ ] 12.6 Manifest Parsing (3h)
-- [ ] 12.7 OTA Worker Thread (2h)
-- [ ] 12.8 Download Progress UI (3h)
-- [ ] 12.9 Flash Write + Reboot (4h)
+- [x] 12.1 Version Infrastructure (2h)
+- [x] 12.2 Coredump NVS Infrastructure (3h)
+- [x] 12.3 Crash Recovery Toast (2h)
+- [x] 12.4 Signed Builds (4h)
+- [x] 12.5 Update State Machine Stub (3h)
+- [x] 12.6 Manifest Parsing (3h)
+- [x] 12.7 OTA Worker Thread (2h)
+- [x] 12.8 Download Progress UI (3h)
+- [~] 12.9 Flash Write + Reboot (4h) — implementation complete; real 0.12.8 → 0.12.9 validation pending
 - [ ] 12.10 Rollback Detection (3h)
 - [ ] 12.11 Primary/Mirror Fallback (2h)
 - [ ] 12.12 USB Recovery Tool (4h)
 - [ ] 12.13 Full Validation Suite (6h)
+
+**Current status (2026-10-11):** Phases 12.1–12.8 are implemented and
+device-checked. Phase 12.9 now has signed HTTPS download, SHA-256 verification,
+inactive-slot flash, reboot selection, and delayed boot confirmation. A same-version
+check against the hosted 0.12.8 manifest was also verified. The remaining 12.9
+Install/Cancel confirmation is now implemented. OTA HTTPS now uses asynchronous
+HTTP polling with short yields so software TLS ECDH does not starve `IDLE0`; the
+real OTA checkpoint will use a device running 0.12.8 and a hosted 0.12.9 image.
 
 **Total: ~41 hours (~1 week)**
 

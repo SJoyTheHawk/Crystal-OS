@@ -1885,6 +1885,31 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Goal
 Replace stub download with real `esp_https_ota`, write to flash, verify, reboot to new image.
 
+### Important watchdog note
+
+The OTA worker is pinned to Core 0. A synchronous `esp_http_client_open()` or
+`esp_http_client_read()` can spend several seconds in software mbedTLS ECDH
+(`mbedtls_ecp_mul`) while holding that core. The task watchdog then reports
+`IDLE0` starvation even though the HTTPS request may eventually succeed.
+
+Use `esp_http_client_config_t.is_async = true` for both the manifest and binary
+client. Poll operations that return `ESP_ERR_HTTP_EAGAIN`, yielding with a short
+`vTaskDelay()` between attempts and enforcing an overall timeout. This keeps the
+idle task schedulable during TLS and network waits. Increasing the watchdog
+timeout or disabling the watchdog is not a substitute for yielding.
+
+Validation symptom before the fix:
+
+```text
+task_wdt: - IDLE0 (CPU 0)
+task_wdt: CPU 0: ota_worker
+mbedtls_ecp_mul_restartable
+esp_http_client_open
+```
+
+After the fix, the manifest can still take several seconds over HTTPS, but the
+watchdog warning is absent and the OTA state reaches `AVAILABLE` or `CURRENT`.
+
 ### Changes
 
 1. **Update crystal_update.c** to use esp_https_ota:

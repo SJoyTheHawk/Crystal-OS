@@ -7,7 +7,9 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "bsp/display.h"
@@ -102,7 +104,14 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(err);
 
     crystal_crash_init();
-    crystal_update_init();
+
+    const esp_partition_t *running_partition = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+    if (running_partition != nullptr &&
+            esp_ota_get_state_partition(running_partition, &ota_state) == ESP_OK &&
+            ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGI(TAG, "First boot after OTA; image pending confirmation");
+    }
 
     crystal_time_init();
     ESP_ERROR_CHECK(bsp_spiffs_mount());
@@ -157,6 +166,10 @@ extern "C" void app_main(void)
                           update_status_battery, phone),
         "Failed to start Crystal core services"
     );
+    // Start the OTA worker after the UI/event queue and core services exist.
+    // Starting it during early boot can race queue users while app_main is
+    // still bringing up the display and LVGL.
+    crystal_update_init();
     if (crystal_crash_should_notify()) {
         (void)crystal_ui_post(UI_EVT_CRASH_RECOVERED);
         crystal_crash_mark_displayed();

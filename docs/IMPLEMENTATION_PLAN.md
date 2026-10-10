@@ -725,10 +725,11 @@ closed as of 2026-09-11.
 
 ### Phase 12 — Reliability
 
-The next phase. Nothing in it is built yet: the coredump options are in
-`sdkconfig.defaults` but nothing reads a dump, `esp_reset_reason()` is only rendered
-as a Device Status string, and the dual OTA slots are unused. Full shapes in
-`CODE_GUIDE.md` §"Phase 12 — reliability"; user-facing behaviour in `DESIGN.md` §8.5.
+Implementation is in progress. Phases 12.1–12.8 are implemented and
+device-checked. Phase 12.9 has real signed HTTPS download, SHA-256 verification,
+inactive-slot writing, reboot selection, and delayed boot confirmation. Full
+shapes are in `CODE_GUIDE.md` §"Phase 12 — reliability"; user-facing behaviour
+is in `DESIGN.md` §8.5.
 
 Three independent pieces, in this order.
 
@@ -744,20 +745,19 @@ The `coredump` partition is plaintext regardless of `NVS_ENCRYPTION`, so a dump 
 contain credentials that were in a stack buffer at crash time. Erasing at boot is the
 mitigation; know it before handing a crashed unit to anyone.
 
-**2. Rollback.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is **missing from
-`sdkconfig.defaults`** and is a prerequisite, not a detail — without it the
-bootloader never marks an image `PENDING_VERIFY` and the phase's rollback exit
-criterion cannot be met. Confirm validity from `service_task` after the shell and
-first frame are up, never from the end of `app_main`: a firmware that links and then
-wedges the LVGL task would otherwise confirm itself and become unrecoverable.
+**2. Rollback.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is enabled in
+`sdkconfig.defaults`. The running image is confirmed from `service_task` after
+the display/core settling interval, never from the end of `app_main`: a firmware
+that links and then wedges the LVGL task must remain eligible for rollback.
 
 **3. OTA.** Settings › System › Software Update, one `system_page_push()` page in
 `crystal_shell`. An HTTPS JSON manifest (version, URL, notes) at a compiled-in
 default URL that the page exposes and lets the user edit; `esp_https_ota` with the
 existing certificate bundle. Manual check, manual install — an unattended data
-display must not reboot itself into new firmware. Both check and write run on
-`crystal_service`; progress reaches the page through two new queued event types
-carrying a small POD, never a string.
+display must not reboot itself into new firmware. The current 12.9 implementation
+has the real write/reboot path and an Install/Cancel confirmation dialog. Real
+0.12.8 → 0.12.9 hardware validation remains before the phase can be closed.
+Progress reaches the page through the OTA UI event and a small snapshot.
 
 Three page responsibilities that the OTA library does not cover: suppress auto-dim
 for the duration and restore it on every exit path, take
@@ -780,7 +780,10 @@ it burns efuses and permanently prevents installing an older image on that unit.
 - The USB wrapper stays the recovery transport: same image, two paths.
 
 Watch `CONFIG_ESP_TASK_WDT_TIMEOUT_S=5` (panic disabled): a slow `onResume()`
-holding the LVGL lock is the likeliest way to trip it.
+holding the LVGL lock is one way to trip it. OTA has a separate watchdog trap:
+the Core-0 worker must use asynchronous HTTP polling with short yields around
+TLS and body reads; synchronous mbedTLS ECDH can starve `IDLE0` and emit a
+`task_wdt` warning even when the request eventually succeeds.
 
 Exit: a deliberate crash produces a symbolised backtrace and one quiet toast on the
 next boot with detail in Device Status; a good OTA installs, confirms itself after

@@ -24,6 +24,7 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_TOAST,
     UI_EVT_WEATHER,
     UI_EVT_CRASH_RECOVERED,
+    UI_EVT_OTA_CHANGED,
 };
 
 struct CrystalWeatherReading {
@@ -45,6 +46,8 @@ struct CrystalTimerState {
 };
 
 bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len = 0);
+// C-compatible bridge for background C workers that need to wake the LVGL task.
+extern "C" bool crystal_ui_post_ota_changed(void);
 void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 // Requests one throttled Open-Meteo fetch on the crystal service task.
 void crystal_weather_request();

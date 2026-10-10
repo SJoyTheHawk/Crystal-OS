@@ -234,6 +234,116 @@ This verifies the complete host HAL contract, including WiFi, power, and system
 information mocks. It does not build the LVGL/SDL simulator; see
 [`SIMULATOR.md`](SIMULATOR.md) for its current scope.
 
+## 11. Prepare and host an OTA test release
+
+Use this workflow to test **0.12.8 → OTA update → 0.12.9** with one device.
+The version numbers are an example: the hosted version must be newer than the
+version running on the device.
+
+### Prepare the device baseline
+
+Set the root `CMakeLists.txt` version to:
+
+```cmake
+project(crystal_os VERSION 0.12.8)
+```
+
+Build and flash the baseline containing the latest Phase 12.9 fixes:
+
+```bash
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+./scripts/build_dev.sh
+idf.py -p /dev/cu.usbmodem101 flash monitor -b 2000000
+```
+
+Confirm Settings → System → Device Status reports `0.12.8`, and Wi-Fi connects.
+Exit the monitor with `Ctrl+]`. If this baseline is already on the device,
+continue directly to packaging.
+
+### Build and package the newer release
+
+Change the root `CMakeLists.txt` version to:
+
+```cmake
+project(crystal_os VERSION 0.12.9)
+```
+
+Run from the repository root in an ESP-IDF terminal:
+
+```bash
+./scripts/prepare_ota_release.sh --build ~/Desktop/crystal-os-ota
+espsecure signature-info-v2 build/crystal_os.bin
+```
+
+`--build` runs `scripts/build_dev.sh` before packaging. Use the same signing key
+as the baseline. Expect `Signature block 0 is valid (RSA)`.
+
+The packaging script reads the version from `CMakeLists.txt`, copies the signed
+binary, and writes `manifest.json` with its version, byte size, SHA-256, target,
+channel, download URLs, and notes. It produces:
+
+```text
+~/Desktop/crystal-os-ota/
+├── rockyroad.studio/apps/crystal-os/
+│   ├── stable/manifest.json
+│   └── releases/0.12.9/crystal_os.bin
+└── updates.bubstal.com/crystal-os/
+    ├── stable/manifest.json
+    └── releases/0.12.9/crystal_os.bin
+```
+
+Each run replaces these generated host trees in the output directory. The
+script packages files locally; upload them separately. Keep the matching ELF
+in a local archive for decoding logs or crashes; it is not included in the
+generated hosting tree.
+
+### Upload to the hosting directory
+
+Using your hosting file manager or SFTP, merge the contents under
+`rockyroad.studio/` into that domain's document root. If already inside the
+server's `apps/crystal-os/` directory, copy the generated `stable/` and
+`releases/` contents there. Keep existing release directories.
+
+Upload the binary first, then replace the stable manifest so it only advertises
+an image that is already available. The public URLs for this example are:
+
+```text
+https://rockyroad.studio/apps/crystal-os/releases/0.12.9/crystal_os.bin
+https://rockyroad.studio/apps/crystal-os/stable/manifest.json
+```
+
+For mirror testing, also upload the contents under `updates.bubstal.com/` to
+that domain's document root, using the same binary-first order.
+
+Verify the primary manifest and binary are reachable:
+
+```bash
+curl --fail --show-error --silent \
+  https://rockyroad.studio/apps/crystal-os/stable/manifest.json
+curl --fail --head \
+  https://rockyroad.studio/apps/crystal-os/releases/0.12.9/crystal_os.bin
+```
+
+The manifest should report version `0.12.9` and match the generated local
+manifest's size and SHA-256. If hosting uses a cache/CDN, refresh its manifest
+cache when publishing.
+
+### Test on the device
+
+Leave the device running `0.12.8`; the new `0.12.9` build is for hosting, so do
+not USB-flash it before this test.
+
+1. Open Settings → System → Check for Updates.
+2. Confirm the **Update Available** dialog shows `0.12.9`.
+3. Tap **Cancel** to verify dismissal, then check again and tap **Download**.
+4. Check that download progress appears, installation finishes, and the device
+   reboots. Watch for any `task_wdt` warning during checks and download.
+5. Confirm Device Status now reports `0.12.9`. Check again: the expected result
+   is the **System is up to date** toast.
+
+For OTA watchdog diagnostics, see the
+[Phase 12 quick reference](PHASE_12_QUICK_REFERENCE.md#issue-task_wdt-reports-idle0-while-checking-for-updates).
+
 ## Quick reference
 
 ```bash

@@ -11,6 +11,7 @@
 
 #include "crystal_hal.hpp"
 #include "crystal_http.h"
+#include "crystal_update_view.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -19,6 +20,7 @@
 #include "esp_pm.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +29,7 @@
 
 extern void crystal_shell_wifi_event(uint8_t event);
 extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
+extern void crystal_shell_ota_event();
 
 namespace {
 constexpr size_t kQueueDepth = 12;
@@ -381,7 +384,19 @@ void hide_toast(lv_timer_t *)
 
 void show_toast(const char *message)
 {
-    if (s_toast == nullptr || s_toast_label == nullptr || message == nullptr) return;
+    if (s_toast == nullptr || s_toast_label == nullptr || message == nullptr) {
+        ESP_LOGW(TAG, "show_toast() early return: s_toast=%p s_toast_label=%p message=%p",
+                 s_toast, s_toast_label, message);
+        return;
+    }
+
+    ESP_LOGI(TAG, "show_toast() displaying: %s", message);
+
+    // Toasts are created during core initialization, before Settings and other
+    // system pages are pushed onto lv_layer_top().  Those pages would otherwise
+    // be later siblings and draw over the toast.  Re-front it for every message
+    // so notifications remain visible from any Settings page or dialog.
+    lv_obj_move_foreground(s_toast);
 
     if (s_toast_hide_timer != nullptr) {
         lv_timer_del(s_toast_hide_timer);
@@ -477,6 +492,21 @@ void drain_event_queue(lv_timer_t *)
         } else if (message.type == UI_EVT_CRASH_RECOVERED) {
             show_toast("Recovered from an error");
             ESP_LOGI(TAG, "crash recovery toast displayed");
+        } else if (message.type == UI_EVT_OTA_CHANGED) {
+            crystal_update_snapshot_t snapshot = {};
+            crystal_update_snapshot(&snapshot);
+            if (snapshot.state == UPDATE_STATE_CURRENT) {
+                show_toast("System is up to date");
+            } else if (snapshot.state == UPDATE_STATE_FAILED && snapshot.error_message[0] != '\0') {
+                if (strcmp(snapshot.error_message, "Update check cancelled") == 0) {
+                    show_toast("Update check cancelled");
+                } else if (strstr(snapshot.error_message, "cancelled") != nullptr) {
+                    show_toast("Update cancelled");
+                } else {
+                    show_toast(snapshot.error_message);
+                }
+            }
+            crystal_shell_ota_event();
         } else if (message.type == UI_EVT_WEATHER && message.length == sizeof(CrystalWeatherReading)) {
             crystal_shell_weather_event(reinterpret_cast<const CrystalWeatherReading *>(message.data));
         } else if (message.type == UI_EVT_BATTERY &&
@@ -679,6 +709,20 @@ void sntp_synced(struct timeval *tv)
 void service_task(void *)
 {
     vTaskDelay(pdMS_TO_TICKS(1200));
+    // Rollback-enabled OTA images boot as PENDING_VERIFY. Confirm only after
+    // the display/core settling interval so an early boot failure can still
+    // trigger the bootloader's automatic rollback.
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+    if (running != nullptr && esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
+            ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_err_t confirm_err = esp_ota_mark_app_valid_cancel_rollback();
+        if (confirm_err == ESP_OK) {
+            ESP_LOGI(TAG, "OTA image confirmed after 1.2s settling");
+        } else {
+            ESP_LOGE(TAG, "OTA image confirmation failed: %s", esp_err_to_name(confirm_err));
+        }
+    }
     static constexpr char kReadyMessage[] = "Core services ready";
     (void)crystal_ui_post(UI_EVT_TOAST, kReadyMessage, sizeof(kReadyMessage) - 1);
 
@@ -1144,6 +1188,11 @@ bool crystal_ui_post(crystal_evt_t type, const void *data, size_t len)
     message.length = static_cast<uint8_t>(len);
     if (len != 0) memcpy(message.data, data, len);
     return xQueueSend(s_queue, &message, 0) == pdTRUE;
+}
+
+extern "C" bool crystal_ui_post_ota_changed(void)
+{
+    return crystal_ui_post(UI_EVT_OTA_CHANGED);
 }
 
 bool crystal_core_consume_wake_touch()

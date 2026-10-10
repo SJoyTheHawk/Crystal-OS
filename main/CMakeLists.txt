@@ -1,7 +1,7 @@
 idf_component_register(
-    SRCS "main.cpp" "crystal_version.c" "crystal_crash.c" "crystal_update.c"
+    SRCS "main.cpp" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
     INCLUDE_DIRS "."
-    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_shell esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer espcoredump
+    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_shell esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)

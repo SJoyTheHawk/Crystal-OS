@@ -11,6 +11,9 @@
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_registry.hpp"
+#include "crystal_update_view.h"
+
+extern "C" void crystal_update_snapshot(crystal_update_snapshot_t *out);
 #include "weather_app.hpp"
 #include "esp_brookesia.hpp"
 #include "esp_heap_caps.h"
@@ -22,6 +25,162 @@
 static const char *TAG = "crystal_shell";
 
 extern "C" int crystal_update_check(void);
+
+static lv_obj_t *s_ota_modal = nullptr;
+static lv_obj_t *s_ota_message = nullptr;
+static lv_obj_t *s_ota_progress = nullptr;
+static lv_obj_t *s_ota_percent = nullptr;
+static lv_obj_t *s_update_dialog = nullptr;
+
+static void update_dialog_close()
+{
+    if (s_update_dialog != nullptr) {
+        lv_obj_del(s_update_dialog);
+        s_update_dialog = nullptr;
+    }
+    crystal_shell_set_modal_open(false);
+}
+
+static void update_dialog_build(const crystal_update_snapshot_t &snapshot)
+{
+    update_dialog_close();
+    s_update_dialog = lv_obj_create(lv_layer_top());
+    if (s_update_dialog == nullptr) return;
+    lv_obj_set_size(s_update_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_update_dialog, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_update_dialog, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_update_dialog, 0, 0);
+    lv_obj_clear_flag(s_update_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_update_dialog);
+    lv_obj_set_size(card, 360, 280);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 24, 0);
+    lv_obj_center(card);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_label_set_text(title, "Update Available");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *version = lv_label_create(card);
+    char version_text[64];
+    snprintf(version_text, sizeof(version_text), "Crystal OS %s", snapshot.available_version);
+    lv_label_set_text(version, version_text);
+    lv_obj_set_style_text_color(version, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_font(version, &lv_font_montserrat_16, 0);
+    lv_obj_align(version, LV_ALIGN_TOP_MID, 0, 32);
+
+    lv_obj_t *size = lv_label_create(card);
+    char size_text[32];
+    snprintf(size_text, sizeof(size_text), "%.1f MB", snapshot.download_size / (1024.0f * 1024.0f));
+    lv_label_set_text(size, size_text);
+    lv_obj_set_style_text_color(size, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(size, &lv_font_montserrat_14, 0);
+    lv_obj_align(size, LV_ALIGN_TOP_MID, 0, 58);
+
+    lv_obj_t *notes = lv_label_create(card);
+    lv_obj_set_width(notes, 312);
+    lv_obj_set_height(notes, 80);
+    lv_label_set_long_mode(notes, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(notes, snapshot.notes[0] != '\0' ? snapshot.notes : "A new Crystal OS update is available.");
+    lv_obj_set_style_text_color(notes, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_font(notes, &lv_font_montserrat_14, 0);
+    lv_obj_align(notes, LV_ALIGN_TOP_LEFT, 0, 90);
+
+    lv_obj_t *cancel = lv_btn_create(card);
+    lv_obj_set_size(cancel, 140, 44);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x424852), 0);
+    lv_obj_t *cancel_label = lv_label_create(cancel);
+    lv_label_set_text(cancel_label, "Cancel");
+    lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(cancel, [](lv_event_t *) {
+        crystal_update_cancel_check();
+        update_dialog_close();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *download = lv_btn_create(card);
+    lv_obj_set_size(download, 140, 44);
+    lv_obj_align(download, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(download, lv_color_hex(0x3b82f6), 0);
+    lv_obj_t *download_label = lv_label_create(download);
+    lv_label_set_text(download_label, "Download");
+    lv_obj_center(download_label);
+    lv_obj_add_event_cb(download, [](lv_event_t *) {
+        if (crystal_update_start_download() == ESP_OK) {
+            ESP_LOGI(TAG, "User confirmed download");
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+
+    crystal_shell_set_modal_open(true);
+}
+
+static void ota_modal_build()
+{
+    if (s_ota_modal != nullptr) return;
+    s_ota_modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_ota_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_ota_modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_ota_modal, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(s_ota_modal, 0, 0);
+    lv_obj_clear_flag(s_ota_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_ota_modal);
+    lv_obj_set_size(card, 360, 180);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 24, 0);
+    lv_obj_center(card);
+
+    s_ota_message = lv_label_create(card);
+    lv_obj_set_width(s_ota_message, 312);
+    lv_obj_set_style_text_color(s_ota_message, lv_color_white(), 0);
+    lv_obj_set_style_text_align(s_ota_message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(s_ota_message, "Checking for updates...");
+    lv_obj_align(s_ota_message, LV_ALIGN_TOP_MID, 0, 12);
+
+    s_ota_progress = lv_bar_create(card);
+    lv_obj_set_size(s_ota_progress, 300, 14);
+    lv_obj_align(s_ota_progress, LV_ALIGN_CENTER, 0, 4);
+    lv_bar_set_range(s_ota_progress, 0, 100);
+    lv_bar_set_value(s_ota_progress, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_ota_progress, lv_color_hex(0x424852), 0);
+    lv_obj_set_style_bg_color(s_ota_progress, lv_color_hex(0x3b82f6), LV_PART_INDICATOR);
+
+    s_ota_percent = lv_label_create(card);
+    lv_obj_set_style_text_color(s_ota_percent, lv_color_hex(0xcbd5e1), 0);
+    lv_label_set_text(s_ota_percent, "0%");
+    lv_obj_align(s_ota_percent, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void ota_modal_update(const crystal_update_snapshot_t &snapshot)
+{
+    // Checking remains cancellable and non-modal. The modal is reserved for the
+    // transfer phase, when navigation must not interrupt the progress display.
+    if (snapshot.state == UPDATE_STATE_CHECKING || snapshot.state == UPDATE_STATE_READY ||
+            snapshot.state == UPDATE_STATE_FAILED || snapshot.state == UPDATE_STATE_CURRENT) {
+        if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+        crystal_shell_set_modal_open(false);
+        return;
+    }
+    ota_modal_build();
+    lv_obj_clear_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+    crystal_shell_set_modal_open(true);
+    const char *message = "Checking for updates...";
+    if (snapshot.state == UPDATE_STATE_DOWNLOADING) message = "Updating firmware...";
+    else if (snapshot.state == UPDATE_STATE_INSTALLING) message = "Installing update...";
+    else if (snapshot.state == UPDATE_STATE_READY) message = "Update ready to install";
+    else if (snapshot.state == UPDATE_STATE_FAILED) message = snapshot.error_message;
+    lv_label_set_text(s_ota_message, message);
+    lv_bar_set_value(s_ota_progress, snapshot.progress_percent, LV_ANIM_OFF);
+    char percent[8];
+    snprintf(percent, sizeof(percent), "%u%%", snapshot.progress_percent);
+    lv_label_set_text(s_ota_percent, percent);
+}
 
 void wifi_page_open();
 void wifi_page_close();
@@ -544,9 +703,10 @@ void update_home_pill()
     }
     lv_obj_clear_flag(s_home_pill, LV_OBJ_FLAG_HIDDEN);
     // System pages are created on lv_layer_top() after the pill, so they cover
-    // it on z-order alone. Re-front it whenever it should be showing. Dialogs and
-    // toasts are created later still and are meant to cover it (DESIGN.md layers
-    // 5 and 6), so this is only called where the pill must be on top.
+    // it on z-order alone. Re-front it whenever it should be showing. Dialogs
+    // and toasts are kept above it by their own foreground handling
+    // (DESIGN.md layers 5 and 6), so this is only called where the pill must be
+    // on top.
     lv_obj_move_foreground(s_home_pill);
 }
 
@@ -2609,6 +2769,11 @@ bool shell_consume_back()
         system_dialog_close();
         return true;
     }
+    if (s_update_dialog != nullptr) {
+        crystal_update_cancel_check();
+        update_dialog_close();
+        return true;
+    }
     if (s_system_page_depth > 0) {
         // At the Settings root (depth 1), close Settings entirely instead of
         // popping. The back button shows LV_SYMBOL_CLOSE at depth 1 to signal
@@ -2767,3 +2932,49 @@ void crystal_shell_set_keyboard_open(bool open)
     update_home_pill();
 }
 void crystal_shell_set_modal_open(bool open) { s_modal_open = open; }
+
+void crystal_shell_ota_event()
+{
+    crystal_update_snapshot_t snapshot = {};
+    crystal_update_snapshot(&snapshot);
+    // Queued notifications read the latest snapshot, so multiple notifications
+    // can observe the same percentage. Avoid duplicate logs and redraws.
+    static int last_logged_state = -1;
+    static int last_logged_progress = -1;
+    const bool state_changed = static_cast<int>(snapshot.state) != last_logged_state;
+    const bool progress_changed = static_cast<int>(snapshot.progress_percent) != last_logged_progress;
+
+    // Early return for duplicate DOWNLOADING progress events
+    if (snapshot.state == UPDATE_STATE_DOWNLOADING && !state_changed && !progress_changed) return;
+
+    if (state_changed) {
+        ESP_LOGI(TAG, "OTA notification state=%d", snapshot.state);
+        last_logged_state = snapshot.state;
+    }
+    if (snapshot.state == UPDATE_STATE_IDLE) {
+        update_dialog_close();
+        if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+        crystal_shell_set_modal_open(false);
+        return;
+    }
+    if (snapshot.state == UPDATE_STATE_AVAILABLE) {
+        update_dialog_build(snapshot);
+        if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (snapshot.state == UPDATE_STATE_CHECKING || snapshot.state == UPDATE_STATE_CURRENT ||
+            snapshot.state == UPDATE_STATE_FAILED) {
+        update_dialog_close();
+        if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+        crystal_shell_set_modal_open(false);
+        return;
+    }
+
+    // DOWNLOADING or INSTALLING state - show modal
+    update_dialog_close();
+    ota_modal_update(snapshot);
+    if (state_changed || progress_changed) {
+        ESP_LOGI(TAG, "OTA modal state=%d progress=%u", snapshot.state, snapshot.progress_percent);
+        last_logged_progress = snapshot.progress_percent;
+    }
+}
