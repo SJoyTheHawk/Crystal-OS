@@ -474,6 +474,9 @@ void drain_event_queue(lv_timer_t *)
             ESP_LOGI(TAG, "toast displayed: %s", text);
         } else if (message.type == UI_EVT_TIMER_EXPIRED) {
             show_toast("Timer finished");
+        } else if (message.type == UI_EVT_CRASH_RECOVERED) {
+            show_toast("Recovered from an error");
+            ESP_LOGI(TAG, "crash recovery toast displayed");
         } else if (message.type == UI_EVT_WEATHER && message.length == sizeof(CrystalWeatherReading)) {
             crystal_shell_weather_event(reinterpret_cast<const CrystalWeatherReading *>(message.data));
         } else if (message.type == UI_EVT_BATTERY &&

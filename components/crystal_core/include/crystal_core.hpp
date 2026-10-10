@@ -23,6 +23,7 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_BATTERY,
     UI_EVT_TOAST,
     UI_EVT_WEATHER,
+    UI_EVT_CRASH_RECOVERED,
 };
 
 struct CrystalWeatherReading {

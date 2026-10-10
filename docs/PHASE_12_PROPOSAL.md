@@ -13,11 +13,11 @@ bus app memory constraints (documented in `APP_PLATFORM_BUS_LESSONS.md`) inform 
 ## Update Contract
 
 - Production source:
-  - Primary: `https://updates.rockyroad.studio/crystal-os/stable/manifest.json`
+  - Primary: `https://rockyroad.studio/apps/crystal-os/stable/manifest.json`
   - Mirror: `https://updates.bubstal.com/crystal-os/stable/manifest.json`
   - UI label: `Stable`
 - Development source:
-  - `https://updates.rockyroad.studio/crystal-os/staging/manifest.json`
+  - `https://rockyroad.studio/apps/crystal-os/staging/manifest.json`
   - No channel label in the UI.
 - Development and production builds use the same `MAJOR.MINOR.PATCH` version, but different source configurations and RSA-3072 signing keys.
 - Accept only a strictly newer three-part SemVer. Reject equal, older, malformed, prerelease, wrong-target, or manifest/image-version mismatches.
@@ -34,7 +34,7 @@ Use this bounded JSON schema:
   "size": 2810392,
   "sha256": "<SHA-256 of exact signed binary>",
   "urls": [
-    "https://updates.rockyroad.studio/crystal-os/releases/0.12.0/crystal_os.bin",
+    "https://rockyroad.studio/apps/crystal-os/releases/0.12.0/crystal_os.bin",
     "https://updates.bubstal.com/crystal-os/releases/0.12.0/crystal_os.bin"
   ],
   "notes": "Reliability and recovery update"

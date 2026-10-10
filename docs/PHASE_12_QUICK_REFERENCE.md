@@ -1,0 +1,230 @@
+# Phase 12 Quick Reference
+
+**One-page summary of Phase 12 sub-phases with visible checkpoints.**
+
+---
+
+## Sub-Phase Quick View
+
+| # | Name | Checkpoint | Time |
+|---|------|-----------|------|
+| 12.1 | Version Infrastructure | Device Status shows "0.11.0" | 2h |
+| 12.2 | Coredump NVS | Device Status shows "Last Crash: None" | 3h |
+| 12.3 | Crash Toast | Toast after deliberate crash | 2h |
+| 12.4 | Signed Builds | `espsecure.py` verifies signatures | 4h |
+| 12.5 | Update Stub | Button logs "Checking for updates (stub)" | 3h |
+| 12.6 | Manifest Parse | Unit tests pass | 3h |
+| 12.7 | OTA Worker | Boot log shows "OTA worker on Core 0" | 2h |
+| 12.8 | Progress UI | Modal shows 0% → 100% | 3h |
+| 12.9 | Flash + Reboot | Device reboots to 0.12.0 | 4h |
+| 12.10 | Rollback | Toast "Update failed, rolled back" | 3h |
+| 12.11 | Fallback | Mirror succeeds when primary fails | 2h |
+| 12.12 | USB Recovery | Script shows menu, flashes firmware | 4h |
+| 12.13 | Full Validation | All test cases pass | 6h |
+
+---
+
+## Key Commands
+
+### Build
+```bash
+# Dev build (for testing)
+./scripts/build_dev.sh
+
+# Production build (for release)
+./scripts/build_prod.sh
+
+# Regular build
+idf.py build
+```
+
+### Flash
+```bash
+# Standard flash
+idf.py flash monitor
+
+# USB recovery (preserve data)
+./tools/crystal_recovery.py --port /dev/cu.usbserial-0001 --firmware build/ --preserve
+
+# USB recovery (factory reset)
+./tools/crystal_recovery.py --port /dev/cu.usbserial-0001 --firmware build/ --factory-reset
+```
+
+### Testing
+```bash
+# Unit tests (in monitor)
+test "[update]"
+
+# Verify signature
+espsecure.py signature_info_v2 build/crystal_os.bin
+
+# Check file size
+ls -lh build/crystal_os.bin
+
+# Calculate SHA-256
+shasum -a 256 build/crystal_os.bin
+
+# Extract coredump
+./tools/crystal_recovery.py --port /dev/cu.usbserial-0001 --extract-coredump coredump.bin
+
+# Decode coredump
+esp-coredump.py info_corefile -t raw build/crystal_os.elf coredump.bin
+```
+
+---
+
+## OTA Test Server Setup
+
+### Production Server Structure
+
+The OTA hosting is at `https://rockyroad.studio/apps/crystal-os/`:
+- Primary manifest: `https://rockyroad.studio/apps/crystal-os/stable/manifest.json`
+- Mirror manifest: `https://updates.bubstal.com/crystal-os/stable/manifest.json`
+- Binaries: `https://rockyroad.studio/apps/crystal-os/releases/{version}/crystal_os.bin`
+
+### Quick Test Setup
+
+```bash
+# 1. Build firmware as 0.12.0
+# Edit CMakeLists.txt: project(crystal_os VERSION 0.12.0)
+./scripts/build_dev.sh
+
+# 2. Create manifest
+cat > manifest.json <<EOF
+{
+  "schema": 1,
+  "target": "waveshare-esp32-s3-touch-lcd-4b",
+  "channel": "stable",
+  "version": "0.12.0",
+  "size": $(stat -f%z build/crystal_os.bin),
+  "sha256": "$(shasum -a 256 build/crystal_os.bin | awk '{print $1}')",
+  "urls": [
+    "https://rockyroad.studio/apps/crystal-os/releases/0.12.0/crystal_os.bin",
+    "https://updates.bubstal.com/crystal-os/releases/0.12.0/crystal_os.bin"
+  ],
+  "notes": "Test OTA"
+}
+EOF
+
+# 3. Upload to server
+# Upload manifest.json to stable/ directory
+# Upload crystal_os.bin to releases/0.12.0/ directory
+
+# 4. URLs in main/crystal_update.c should use:
+# Primary: https://rockyroad.studio/apps/crystal-os/stable/manifest.json
+# Mirror: https://updates.bubstal.com/crystal-os/stable/manifest.json
+
+# 5. Flash 0.11.0 to device
+# Edit CMakeLists.txt: project(crystal_os VERSION 0.11.0)
+./scripts/build_dev.sh
+idf.py flash monitor
+
+# 6. Test OTA
+# Device Settings › Check for Updates
+```
+
+---
+
+## Troubleshooting
+
+### Issue: OTA fails with "Network error"
+- **Check:** Wi-Fi connected? (Settings › Network)
+- **Check:** Server URL reachable? (ping/curl from dev machine)
+- **Check:** HTTPS certificate valid?
+
+### Issue: Signature verification fails
+- **Check:** Built with correct script? (build_dev.sh or build_prod.sh)
+- **Check:** Key file exists? (~/.crystal_keys/dev_signing_key.pem)
+- **Check:** CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y in sdkconfig?
+
+### Issue: Rollback doesn't trigger
+- **Check:** Crash occurred BEFORE 1.2s settling interval?
+- **Check:** Image marked as pending? (logs show "ESP_OTA_IMG_PENDING_VERIFY")
+- **Check:** Coredump enabled? (CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y)
+
+### Issue: "Cannot fetch manifest"
+- **Check:** Both primary and mirror URLs correct in code?
+- **Check:** Manifest JSON valid? (use jsonlint.com)
+- **Check:** Manifest size < 2 KiB?
+
+### Issue: "Version not newer"
+- **Check:** Manifest version > running version? (SemVer comparison)
+- **Check:** Version format correct? (MAJOR.MINOR.PATCH, no prerelease)
+
+---
+
+## Files Modified by Phase
+
+### Core C Files
+- `main/crystal_version.{h,c}` ← Version accessors
+- `main/crystal_crash.{h,c}` ← Coredump tracking
+- `main/crystal_update.{h,c}` ← OTA state machine
+- `main/crystal_update_manifest.{h,c}` ← Manifest parser
+- `main/main.cpp` ← Init calls, OTA confirmation
+
+### UI Files
+- `main/ui/shell.{h,cpp}` ← Event handling, OTA confirmation
+- `main/ui/ota_modal.{h,cpp}` ← Progress UI
+- `main/ui/settings/settings_main_screen.cpp` ← Check for Updates button
+- `main/ui/settings/device_status_overlay.cpp` ← Version/crash display
+
+### Test Files
+- `main/test/test_update_manifest.c` ← Unit tests
+
+### Build Files
+- `scripts/build_dev.sh` ← Dev build profile
+- `scripts/build_prod.sh` ← Production build profile
+- `tools/crystal_recovery.py` ← USB recovery tool
+- `tools/README.md` ← Recovery tool docs
+
+### Config Files
+- `sdkconfig` ← Signed apps, coredump settings
+- `main/CMakeLists.txt` ← New source files
+
+---
+
+## Validation Checklist
+
+### Quick Pre-Flight (before starting Phase 12)
+- [ ] Phase 11 complete and stable
+- [ ] Device boots reliably
+- [ ] Wi-Fi connects successfully
+- [ ] Settings navigation works
+- [ ] No memory leaks in current build
+
+### Quick Post-Flight (after completing Phase 12)
+- [ ] Version shown in Device Status
+- [ ] Crash recovery toast works
+- [ ] OTA updates successfully
+- [ ] Rollback works on faulty image
+- [ ] USB recovery restores firmware
+- [ ] All Phase 11 features still work
+
+---
+
+## Commit Template
+
+```
+Phase 12.X: <Sub-phase name>
+
+<What changed>
+
+Checkpoint: <Visible validation result>
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+```
+
+---
+
+## Support Documents
+
+- **Full guide:** `PHASE_12_DETAILED_GUIDE.md` (step-by-step implementation)
+- **Checklist:** `PHASE_12_CHECKLIST.md` (progress tracking)
+- **Original proposal:** `PHASE_12_PROPOSAL.md` (requirements and design)
+- **This doc:** `PHASE_12_QUICK_REFERENCE.md` (one-page summary)
+
+---
+
+**Version:** 1.0  
+**Date:** 2026-10-11  
+**Status:** Ready for implementation

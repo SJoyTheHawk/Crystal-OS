@@ -9,6 +9,11 @@
 *.log
 *.trace
 .DS_Store
+*.pem
+
+# Release binaries are generated artifacts; keep source checksums/manifests.
+/releases/*/crystal_os*.bin
+/releases/*/crystal_os*.elf
 
 # Registry integrity metadata no longer matches this locally patched component.
 # Keep the vendored source itself tracked as Crystal's durable Brookesia override.

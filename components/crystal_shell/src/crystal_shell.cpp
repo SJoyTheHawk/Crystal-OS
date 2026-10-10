@@ -21,6 +21,8 @@
 
 static const char *TAG = "crystal_shell";
 
+extern "C" int crystal_update_check(void);
+
 void wifi_page_open();
 void wifi_page_close();
 void settings_open();
@@ -2474,6 +2476,12 @@ void settings_push_status()
     if (content == nullptr) return;
     ISystemInfo *info = hal().system_info;
     char value[64] = "Unavailable";
+    (void)settings_row(content, "Firmware Version",
+                       info != nullptr && info->app_version() != nullptr
+                           ? info->app_version() : "Unknown");
+    (void)settings_row(content, "Last Crash",
+                       info != nullptr && strcmp(info->reset_reason(), "Software crash") == 0
+                           ? "Crash recovered" : "None");
     if (info != nullptr) { snprintf(value, sizeof(value), "%lu seconds", static_cast<unsigned long>(info->uptime_seconds())); (void)settings_row(content, "Uptime", value); }
     (void)settings_row(content, "WiFi", hal().wifi != nullptr && hal().wifi->has_ip() ? hal().wifi->last_ssid() : "Not connected");
     IWifi::IpConfig ip = {};
@@ -2518,6 +2526,11 @@ void settings_push_system()
 {
     lv_obj_t *content = system_page_push("System");
     if (content == nullptr) return;
+    lv_obj_t *updates = settings_row(content, "Check for Updates", "Check for a newer Crystal OS firmware");
+    lv_obj_add_event_cb(updates, [](lv_event_t *) {
+        ESP_LOGI("settings", "Check for Updates tapped");
+        (void)crystal_update_check();
+    }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *about = settings_row(content, "About", "Device, software, and attribution");
     lv_obj_add_event_cb(about, [](lv_event_t *) { settings_push_about(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *status = settings_row(content, "Device Status", "Network, battery, memory, and storage");

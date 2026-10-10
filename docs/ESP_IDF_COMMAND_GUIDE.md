@@ -76,7 +76,48 @@ idf.py build
 `fullclean` removes the generated `build/` directory; it does not erase the
 board.
 
-## 4. Find the USB serial port
+## 4. Signed development builds
+
+The ESP-IDF export command is needed once in every new terminal session. It is
+not necessary to regenerate the signing key for every build.
+
+Generate the development RSA-3072 key once, outside the repository:
+
+```bash
+mkdir -p ~/.crystal_keys
+espsecure generate-signing-key \
+  --version 2 \
+  --scheme rsa3072 \
+  ~/.crystal_keys/dev_signing_key.pem
+```
+
+Enable RSA signing once per checkout (or whenever `sdkconfig` is recreated):
+
+```bash
+idf.py menuconfig
+```
+
+Choose **Security features → Require signed app images → App Signing Scheme →
+RSA**, save, and exit. The setting should be present in `sdkconfig` as:
+
+```text
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+```
+
+For each signed development build, source ESP-IDF if the terminal is new and
+run:
+
+```bash
+./scripts/build_dev.sh
+espsecure signature-info-v2 build/crystal_os.bin
+```
+
+The verification output should say `Signature block 0 is valid (RSA)`. Keep
+the private `.pem` files outside Git. The public key digest printed by
+`signature-info-v2` can be recorded with a release manifest, but does not need
+to be memorized.
+
+## 5. Find the USB serial port
 
 On macOS, list likely USB serial devices before connecting and after connecting
 the board:
@@ -89,7 +130,7 @@ The port commonly looks like `/dev/cu.usbmodem101` or `/dev/cu.usbmodem1101`.
 Use the `/dev/cu.*` device for this project rather than a Bluetooth or tty
 device. Close other serial tools before flashing or monitoring.
 
-## 5. Flash the board
+## 6. Flash the board
 
 Flash the application, bootloader, partition table, and required data images:
 
@@ -124,7 +165,7 @@ idf.py -p /dev/cu.usbmodem101 flash monitor -b 2000000
 The configured console rate is 2,000,000 baud. Press `Ctrl+]` to exit the
 monitor. `Ctrl+T` then `Ctrl+R` resets the board while the monitor is open.
 
-## 6. Monitor and reset without reflashing
+## 7. Monitor and reset without reflashing
 
 Open a monitor for an already-flashed image:
 
@@ -142,7 +183,7 @@ idf.py -p /dev/cu.usbmodem101 reset
 To capture a repeatable boot log, start the monitor, reset the board, exercise
 the launcher/apps, then exit with `Ctrl+]`.
 
-## 7. Erase and recovery operations
+## 8. Erase and recovery operations
 
 Erase all application flash when a stale partition/NVS state is preventing a
 valid test, then rebuild and flash:
@@ -159,7 +200,7 @@ The first boot with NVS encryption may provision the configured HMAC eFuse key
 slot (`CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0`). This is a one-time irreversible
 hardware operation. Never use an eFuse erase command for routine recovery.
 
-## 8. Coredump diagnostics
+## 9. Coredump diagnostics
 
 When the monitor reports a panic and a coredump is present, keep the matching
 ELF and run:
@@ -179,7 +220,7 @@ An `Incorrect size of core dump image` message on a first boot is commonly
 stale/uninitialized coredump-partition contents; treat it as a warning unless
 it is followed by a panic or reset loop.
 
-## 9. Host-side smoke check
+## 10. Host-side smoke check
 
 The standalone HAL mock can be checked without ESP-IDF or hardware:
 

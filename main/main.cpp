@@ -18,6 +18,8 @@
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_crash.h"
+#include "crystal_update.h"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
 #include "crystal_shell.hpp"
@@ -99,6 +101,9 @@ extern "C" void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    crystal_crash_init();
+    crystal_update_init();
+
     crystal_time_init();
     ESP_ERROR_CHECK(bsp_spiffs_mount());
 
@@ -152,6 +157,10 @@ extern "C" void app_main(void)
                           update_status_battery, phone),
         "Failed to start Crystal core services"
     );
+    if (crystal_crash_should_notify()) {
+        (void)crystal_ui_post(UI_EVT_CRASH_RECOVERED);
+        crystal_crash_mark_displayed();
+    }
 
     require_boot_step(
         crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0])),
