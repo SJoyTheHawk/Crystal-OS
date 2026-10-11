@@ -1,4 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(crystal_os VERSION 0.12.9)
+project(crystal_os VERSION 0.12.12)

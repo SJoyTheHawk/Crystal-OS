@@ -30,6 +30,7 @@ typedef struct {
 } crystal_update_snapshot_t;
 
 void crystal_update_snapshot(crystal_update_snapshot_t *out);
+void crystal_update_clear_attempted_version(void);
 esp_err_t crystal_update_check(void);
 esp_err_t crystal_update_start_download(void);
 void crystal_update_cancel_check(void);

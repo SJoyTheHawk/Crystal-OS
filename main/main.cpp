@@ -105,11 +105,38 @@ extern "C" void app_main(void)
 
     crystal_crash_init();
 
-    const esp_partition_t *running_partition = esp_ota_get_running_partition();
-    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
-    if (running_partition != nullptr &&
-            esp_ota_get_state_partition(running_partition, &ota_state) == ESP_OK &&
-            ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+    // Log detailed OTA partition state for rollback investigation
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+    const esp_partition_t *last_invalid = esp_ota_get_last_invalid_partition();
+
+    esp_ota_img_states_t running_state = ESP_OTA_IMG_UNDEFINED;
+    esp_ota_img_states_t boot_state = ESP_OTA_IMG_UNDEFINED;
+    if (running != nullptr) esp_ota_get_state_partition(running, &running_state);
+    if (boot != nullptr) esp_ota_get_state_partition(boot, &boot_state);
+
+    ESP_LOGI(TAG, "=== OTA Partition State at Boot ===");
+    ESP_LOGI(TAG, "Running: %s @ 0x%lx state=%d",
+             running ? running->label : "NULL",
+             running ? (unsigned long)running->address : 0UL,
+             running_state);
+    ESP_LOGI(TAG, "Boot: %s @ 0x%lx state=%d",
+             boot ? boot->label : "NULL",
+             boot ? (unsigned long)boot->address : 0UL,
+             boot_state);
+    ESP_LOGI(TAG, "Next update slot: %s @ 0x%lx",
+             next ? next->label : "NULL",
+             next ? (unsigned long)next->address : 0UL);
+    ESP_LOGI(TAG, "Last invalid: %s @ 0x%lx",
+             last_invalid ? last_invalid->label : "NULL",
+             last_invalid ? (unsigned long)last_invalid->address : 0UL);
+    ESP_LOGI(TAG, "Rollback possible: %s",
+             esp_ota_check_rollback_is_possible() ? "YES" : "NO");
+
+    if (running != nullptr &&
+            esp_ota_get_state_partition(running, &running_state) == ESP_OK &&
+            running_state == ESP_OTA_IMG_PENDING_VERIFY) {
         ESP_LOGI(TAG, "First boot after OTA; image pending confirmation");
     }
 
@@ -201,6 +228,12 @@ extern "C" void app_main(void)
         "Failed to install app registry"
     );
     require_boot_step(crystal_shell_init(phone), "Failed to start card shell");
+    // The update subsystem checks the bootloader result before UI creation.
+    // Queue the one-shot rollback notification only after the shell exists.
+    if (crystal_update_did_rollback()) {
+        ESP_LOGW(TAG, "Posting OTA rollback notification");
+        (void)crystal_ui_post(UI_EVT_OTA_ROLLED_BACK);
+    }
 
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;

@@ -492,6 +492,9 @@ void drain_event_queue(lv_timer_t *)
         } else if (message.type == UI_EVT_CRASH_RECOVERED) {
             show_toast("Recovered from an error");
             ESP_LOGI(TAG, "crash recovery toast displayed");
+        } else if (message.type == UI_EVT_OTA_ROLLED_BACK) {
+            show_toast("Update failed, rolled back");
+            ESP_LOGW(TAG, "rollback toast displayed");
         } else if (message.type == UI_EVT_OTA_CHANGED) {
             crystal_update_snapshot_t snapshot = {};
             crystal_update_snapshot(&snapshot);
@@ -716,9 +719,18 @@ void service_task(void *)
     esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
     if (running != nullptr && esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
             ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGI(TAG, "Confirming OTA image after 1.2s settling period");
+        ESP_LOGI(TAG, "Partition: %s @ 0x%lx", running->label,
+                 static_cast<unsigned long>(running->address));
         const esp_err_t confirm_err = esp_ota_mark_app_valid_cancel_rollback();
         if (confirm_err == ESP_OK) {
-            ESP_LOGI(TAG, "OTA image confirmed after 1.2s settling");
+            crystal_update_clear_attempted_version();
+            ESP_LOGI(TAG, "OTA image confirmed and rollback cancelled");
+            // Log the state after confirmation
+            esp_ota_img_states_t confirmed_state = ESP_OTA_IMG_UNDEFINED;
+            if (esp_ota_get_state_partition(running, &confirmed_state) == ESP_OK) {
+                ESP_LOGI(TAG, "Post-confirmation state: %d", confirmed_state);
+            }
         } else {
             ESP_LOGE(TAG, "OTA image confirmation failed: %s", esp_err_to_name(confirm_err));
         }

@@ -2,6 +2,7 @@
 #include "crystal_update_manifest.h"
 #include "crystal_version.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_crt_bundle.h"
@@ -12,6 +13,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "psa/crypto.h"
 
 static const char *TAG = "update";
@@ -29,6 +31,8 @@ static TaskHandle_t s_ota_worker_task;
 static volatile bool s_cancel_requested;
 static volatile bool s_check_requested;
 static volatile bool s_download_requested;
+static bool s_rollback_occurred;
+static char s_rollback_attempted_version[32];
 // These buffers are owned by the single OTA worker. Keep them out of its task
 // stack because the manifest remains live while install_image() uses the I/O
 // buffer and the HTTPS/OTA call frames are active.
@@ -123,6 +127,54 @@ static void set_error(const char *message)
     notify_ota_ui();
 }
 
+static esp_err_t persist_attempted_version(const char *version)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("ota", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(handle, "attempted_ver", version);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+void crystal_update_clear_attempted_version(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open("ota", NVS_READWRITE, &handle) != ESP_OK) return;
+    (void)nvs_erase_key(handle, "attempted_ver");
+    (void)nvs_commit(handle);
+    nvs_close(handle);
+}
+
+static bool check_rollback_at_boot(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open("ota", NVS_READONLY, &handle) != ESP_OK) return false;
+    size_t length = sizeof(s_rollback_attempted_version);
+    const esp_err_t read_err = nvs_get_str(handle, "attempted_ver",
+                                           s_rollback_attempted_version, &length);
+    nvs_close(handle);
+    if (read_err != ESP_OK || s_rollback_attempted_version[0] == '\0') return false;
+
+    const bool rolled_back = strcmp(crystal_version_string(), s_rollback_attempted_version) != 0;
+    if (rolled_back) {
+        ESP_LOGW(TAG, "Rollback detected: attempted %s, running %s",
+                 s_rollback_attempted_version, crystal_version_string());
+        s_rollback_occurred = true;
+    } else {
+        ESP_LOGI(TAG, "OTA image pending confirmation: running %s",
+                 crystal_version_string());
+    }
+
+    // A rollback consumes the marker immediately. For a matching version,
+    // retain it until the delayed OTA confirmation succeeds; if this image
+    // crashes while still pending, the bootloader will roll back and the
+    // previous image can report the failed attempt.
+    if (rolled_back) crystal_update_clear_attempted_version();
+    return rolled_back;
+}
+
 static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
 {
     esp_http_client_config_t config = {
@@ -174,6 +226,8 @@ static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
 
 static esp_err_t install_image(const update_manifest_t *manifest)
 {
+    ESP_LOGI(TAG, "Downloading OTA image url=%s expected_size=%u",
+             manifest->urls[0], (unsigned)manifest->size);
     esp_http_client_config_t config = {
         .url = manifest->urls[0], .timeout_ms = 30000, .crt_bundle_attach = esp_crt_bundle_attach,
         .is_async = true,
@@ -186,6 +240,7 @@ static esp_err_t install_image(const update_manifest_t *manifest)
     psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
     size_t received = 0;
     bool began = false;
+    bool hash_ready = false;
     if (err == ESP_OK) {
         int64_t content_length = 0;
         err = ota_http_fetch_headers_async(client, config.timeout_ms, &content_length);
@@ -195,7 +250,14 @@ static esp_err_t install_image(const update_manifest_t *manifest)
             partition = esp_ota_get_next_update_partition(NULL);
             if (partition == NULL) err = ESP_ERR_NOT_FOUND;
             else err = esp_ota_begin(partition, manifest->size, &ota);
-            if (err == ESP_OK) { began = true; if (psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS) err = ESP_FAIL; }
+            if (err == ESP_OK) {
+                began = true;
+                if (psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS) {
+                    err = ESP_FAIL;
+                } else {
+                    hash_ready = true;
+                }
+            }
         }
         while (err == ESP_OK && received < manifest->size && !s_cancel_requested) {
             esp_err_t read_err = ESP_OK;
@@ -221,8 +283,27 @@ static esp_err_t install_image(const update_manifest_t *manifest)
     }
     uint8_t digest[32] = {};
     size_t digest_len = 0;
-    (void)psa_hash_finish(&hash, digest, sizeof(digest), &digest_len);
-    if (err == ESP_OK && memcmp(digest, manifest->sha256, sizeof(digest)) != 0) err = ESP_ERR_INVALID_CRC;
+    if (hash_ready) {
+        const psa_status_t hash_err = psa_hash_finish(&hash, digest, sizeof(digest), &digest_len);
+        if (err == ESP_OK && (hash_err != PSA_SUCCESS || digest_len != sizeof(digest))) {
+            ESP_LOGE(TAG, "SHA-256 calculation failed: status=%ld length=%u",
+                     (long)hash_err, (unsigned)digest_len);
+            err = ESP_FAIL;
+        }
+    }
+    if (err == ESP_OK && memcmp(digest, manifest->sha256, sizeof(digest)) != 0) {
+        char expected_hex[sizeof(digest) * 2 + 1];
+        char actual_hex[sizeof(digest) * 2 + 1];
+        for (size_t i = 0; i < sizeof(digest); ++i) {
+            snprintf(expected_hex + i * 2, 3, "%02x", manifest->sha256[i]);
+            snprintf(actual_hex + i * 2, 3, "%02x", digest[i]);
+        }
+        expected_hex[sizeof(expected_hex) - 1] = '\0';
+        actual_hex[sizeof(actual_hex) - 1] = '\0';
+        ESP_LOGE(TAG, "Downloaded image SHA-256 mismatch: expected=%s actual=%s",
+                 expected_hex, actual_hex);
+        err = ESP_ERR_INVALID_CRC;
+    }
     if (began) {
         esp_err_t end_err = esp_ota_end(ota);
         if (err == ESP_OK) err = end_err;
@@ -294,9 +375,33 @@ static void ota_worker_task(void *arg)
         s_snapshot.state = UPDATE_STATE_DOWNLOADING; notify_ota_ui();
         esp_err_t err = install_image(&cached_manifest);
         have_manifest = false;
-        if (err != ESP_OK) { set_error(s_cancel_requested ? "Update cancelled" : "Update failed, nothing changed"); continue; }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA install failed: %s (0x%x), received=%u/%u",
+                     esp_err_to_name(err), (unsigned)err,
+                     (unsigned)s_snapshot.downloaded_bytes,
+                     (unsigned)cached_manifest.size);
+            if (s_cancel_requested) {
+                set_error("Update cancelled");
+            } else if (err == ESP_ERR_INVALID_CRC) {
+                set_error("Downloaded image hash mismatch");
+            } else if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
+                set_error("Downloaded image failed validation");
+            } else if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+                set_error("Previous update is still pending confirmation");
+            } else {
+                set_error("Update failed, nothing changed");
+            }
+            continue;
+        }
         s_snapshot.state = UPDATE_STATE_INSTALLING; s_snapshot.progress_percent = 100;
         strlcpy(s_snapshot.error_message, "Restarting to apply update", sizeof(s_snapshot.error_message)); notify_ota_ui();
+        const esp_err_t persist_err = persist_attempted_version(cached_manifest.version);
+        if (persist_err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not persist attempted OTA version: %s", esp_err_to_name(persist_err));
+            set_error("Could not prepare update reboot");
+            continue;
+        }
+        ESP_LOGI(TAG, "Persisted attempted OTA version %s", cached_manifest.version);
         ESP_LOGI(TAG, "OTA successful, rebooting in 2 seconds...");
         vTaskDelay(pdMS_TO_TICKS(2000));
         esp_restart();
@@ -306,6 +411,9 @@ static void ota_worker_task(void *arg)
 void crystal_update_init(void)
 {
     memset(&s_snapshot, 0, sizeof(s_snapshot)); s_snapshot.state = UPDATE_STATE_IDLE;
+    s_rollback_occurred = false;
+    memset(s_rollback_attempted_version, 0, sizeof(s_rollback_attempted_version));
+    (void)check_rollback_at_boot();
     s_check_requested = false;
     s_download_requested = false;
     // Async reads legitimately retry with EAGAIN while the TLS transport waits
@@ -318,6 +426,13 @@ void crystal_update_init(void)
         return;
     }
     ESP_LOGI(TAG, "OTA worker initialized on Core %d", OTA_WORKER_CORE);
+}
+
+bool crystal_update_did_rollback(void)
+{
+    const bool occurred = s_rollback_occurred;
+    s_rollback_occurred = false;
+    return occurred;
 }
 
 esp_err_t crystal_update_check(void)

@@ -16,19 +16,23 @@
 - [x] 12.6 Manifest Parsing (3h)
 - [x] 12.7 OTA Worker Thread (2h)
 - [x] 12.8 Download Progress UI (3h)
-- [~] 12.9 Flash Write + Reboot (4h) — implementation complete; real 0.12.8 → 0.12.9 validation pending
-- [ ] 12.10 Rollback Detection (3h)
+- [x] 12.9 Flash Write + Reboot (4h) — signed OTA update completed on device
+- [x] 12.10 Rollback Detection (3h) — validated on device; clean firmware flashed after test
 - [ ] 12.11 Primary/Mirror Fallback (2h)
 - [ ] 12.12 USB Recovery Tool (4h)
 - [ ] 12.13 Full Validation Suite (6h)
 
-**Current status (2026-10-11):** Phases 12.1–12.8 are implemented and
-device-checked. Phase 12.9 now has signed HTTPS download, SHA-256 verification,
-inactive-slot flash, reboot selection, and delayed boot confirmation. A same-version
-check against the hosted 0.12.8 manifest was also verified. The remaining 12.9
-Install/Cancel confirmation is now implemented. OTA HTTPS now uses asynchronous
+**Current status (2026-10-12):** Phases 12.1–12.8 are implemented and
+device-checked. Phase 12.9 has been validated with a signed HTTPS download,
+SHA-256 verification, inactive-slot flash, reboot selection, and delayed boot
+confirmation. A same-version check against the hosted 0.12.8 manifest was also
+verified. The 12.9 Install/Cancel confirmation is implemented. OTA HTTPS uses asynchronous
 HTTP polling with short yields so software TLS ECDH does not starve `IDLE0`; the
-real OTA checkpoint will use a device running 0.12.8 and a hosted 0.12.9 image.
+latest build also persists the attempted version and detects a bootloader rollback.
+Phase 12.10 has been validated with a signed 0.12.12 OTA, automatic rollback to
+ota_0, last-invalid partition reporting, rollback detection, and the one-shot
+notification; the temporary fault-injection block was then removed and clean
+0.12.12 firmware was flashed over USB.
 
 **Total: ~41 hours (~1 week)**
 
@@ -315,37 +319,75 @@ Checkpoint: Real OTA completes, device reboots to new version
 
 ## Sub-Phase 12.10: Rollback Detection ✓ / ✗
 
+### Context
+
+ESP32 OTA rollback requires a bootloader built with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`. **OTA updates DO NOT update the bootloader**. The bootloader on your device must be flashed via USB before testing rollback.
+
+Automatic rollback works by counting consecutive failed boots (typically 3+). A "failed boot" means the app crashes or reboots before calling `esp_ota_mark_app_valid_cancel_rollback()`.
+
 ### Tasks
-- [ ] Persist attempted version in NVS before reboot (already in 12.9)
-- [ ] Add `crystal_update_check_rollback()` function
-- [ ] Detect rollback (current != attempted) at boot
-- [ ] Add `UI_EVT_OTA_ROLLED_BACK` event
-- [ ] Post event from shell if rollback detected
-- [ ] Show "Update failed, rolled back" toast
-- [ ] Clear rollback flag after display
+- [x] Persist attempted version in NVS before reboot (already in 12.9)
+- [x] Add `crystal_update_check_rollback()` function
+- [x] Detect rollback (current != attempted) at boot
+- [x] Add `UI_EVT_OTA_ROLLED_BACK` event
+- [x] Post event from shell if rollback detected
+- [x] Show "Update failed, rolled back" toast
+- [x] Clear rollback flag after display
+- [x] Add comprehensive OTA partition state logging
+- [x] Use temporary fault injection for rollback testing, then remove it
 
 ### Validation Checkpoints
-- [ ] Create fault-injection build (crash before OTA confirm)
-- [ ] Build as 0.12.0, serve as OTA
-- [ ] Flash 0.11.0 to device
-- [ ] Perform OTA to faulty 0.12.0
-- [ ] Device reboots, crashes before confirmation
-- [ ] Automatic rollback occurs (second reboot)
-- [ ] Logs show "Rollback detected: attempted 0.12.0, running 0.11.0"
-- [ ] Toast "Update failed, rolled back" appears
-- [ ] Device Status shows "Firmware Version: 0.11.0"
-- [ ] Reboot again, toast does NOT appear
+
+**IMPORTANT:** Follow the detailed procedure in `docs/PHASE_12_10_TEST_PROCEDURE.md`
+
+#### Pre-Test Setup
+- [x] Flash bootloader via USB: `idf.py flash`
+- [x] Verify baseline boots successfully from ota_0
+- [x] Confirm boot logs show: `Rollback possible: NO` (expected at baseline)
+
+#### OTA Rollback Test
+- [x] Perform OTA update to trigger fault injection
+- [x] First boot shows: `Running: ota_1 @ 0x530000 state=1` (PENDING_VERIFY)
+- [x] First boot shows: `Rollback possible: YES`
+- [x] Fault injection crashes the app
+- [x] After 3+ crash/reboot cycles, device rolls back to ota_0
+- [x] Boot log shows: `Last invalid: ota_1 @ 0x530000`
+- [x] Boot log shows: `Rollback detected: attempted X.Y.Z, running X.Y.W`
+- [x] Toast notification: "Update failed, rolled back"
+- [x] Device is stable on previous firmware
+- [x] `attempted_ver` cleared from NVS
+- [x] Reboot again, toast does NOT appear
+
+#### Post-Test Cleanup
+- [x] Remove the temporary fault-injection block from `main.cpp`
+- [x] Build and flash clean firmware: `idf.py flash`
+
+### Troubleshooting
+
+**Device keeps crashing, no rollback:**
+- Root cause: Bootloader doesn't have rollback support
+- Fix: Flash via USB (`idf.py flash`)
+
+**Previous firmware not available:**
+- Root cause: ota_0 was empty or invalid
+- Fix: Let baseline run stable before OTA test
 
 ### Commit Message
 ```
-Phase 12.10: Add rollback detection and toast
+Phase 12.10: Implement OTA rollback detection and validation
 
-- Persist attempted version in NVS before reboot
-- Detect rollback (current != attempted) at next boot
-- Show 'Update failed, rolled back' toast once
-- Clear rollback flag after display
+- Persist attempted OTA version before reboot
+- Detect rollback when running version differs from attempted
+- Add comprehensive OTA partition state logging
+- Use temporary fault injection for rollback testing, then remove it
+- Clear attempted version marker after successful confirmation
 
-Checkpoint: Faulty image rolls back, toast confirms failure
+Validation procedure: docs/PHASE_12_10_TEST_PROCEDURE.md
+Investigation notes: docs/PHASE_12_10_ROLLBACK_INVESTIGATION.md
+
+Checkpoint: Rollback detection logs and toasts correctly; automatic rollback
+was validated and the temporary fault injection was removed afterward.
+
 ```
 
 ---
