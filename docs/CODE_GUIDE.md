@@ -273,6 +273,13 @@ void crystal_toast(const char *msg)   // LVGL task only; others post UI_EVT_TOAS
 }
 ```
 
+The production toast sizes itself to the label's content with 18px horizontal
+padding, capped at the display width minus 16px margins so long messages wrap.
+The active toast owns its full fade-in, 2500ms hold, and fade-out lifecycle;
+additional messages enter a FIFO queue with 12 pending slots and are shown one
+at a time after the current fade-out. A full queue drops and logs the newest
+message.
+
 Use toasts for outcomes ("Connected to MyNetwork"), dialogs for input. The WiFi
 success path in Phase 9 is a toast, not a dialog.
 

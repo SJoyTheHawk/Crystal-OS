@@ -872,7 +872,10 @@ Type: three Montserrat sizes — **16 small, 20 medium, 28 large** — plus the
 indicator bar size. Trim the reference's ~20 compiled sizes to these; each unused
 one is dead flash. English only in v1.
 
-Toast hold: 2500ms.
+Toasts size to their text with 18px horizontal padding and wrap at the display
+width minus 16px margins. Each toast has a 150ms fade-in, a 2500ms hold, and a
+200ms fade-out. Toasts raised while one is visible wait in a FIFO queue of up to
+12 pending messages; when full, the newest message is dropped and logged.
 
 ## 11. States to design for
 

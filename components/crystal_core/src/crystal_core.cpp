@@ -34,6 +34,12 @@ extern void crystal_shell_ota_event();
 namespace {
 constexpr size_t kQueueDepth = 12;
 constexpr size_t kEventDataMax = 64;
+constexpr size_t kToastQueueDepth = 12;
+constexpr uint32_t kToastFadeInMs = 150;
+constexpr uint32_t kToastHoldMs = 2500;
+constexpr uint32_t kToastFadeOutMs = 200;
+constexpr lv_coord_t kToastHorizontalPad = 18;
+constexpr lv_coord_t kToastScreenMargin = 16;
 constexpr uint8_t kFullBrightness = 95;
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
@@ -90,7 +96,12 @@ lv_obj_t *s_toast = nullptr;
 lv_obj_t *s_toast_label = nullptr;
 lv_obj_t *s_clock_placeholder = nullptr;
 lv_obj_t *s_timer_indicator = nullptr;
-lv_timer_t *s_toast_hide_timer = nullptr;
+lv_timer_t *s_toast_phase_timer = nullptr;
+lv_timer_t *s_toast_finish_timer = nullptr;
+char s_toast_queue[kToastQueueDepth][kEventDataMax + 1] = {};
+size_t s_toast_queue_head = 0;
+size_t s_toast_queue_count = 0;
+bool s_toast_active = false;
 TaskHandle_t s_service_task = nullptr;
 lv_disp_t *s_display = nullptr;
 crystal_clock_update_cb_t s_clock_update = nullptr;
@@ -374,23 +385,51 @@ uint8_t saved_brightness()
     return value;
 }
 
-void hide_toast(lv_timer_t *)
+void show_toast(const char *message);
+void display_toast(const char *message);
+
+void start_toast_hold(lv_timer_t *)
 {
-    if (s_toast != nullptr) {
-        lv_obj_fade_out(s_toast, 200, 0);
+    s_toast_phase_timer = nullptr;
+    if (!s_toast_active) return;
+    s_toast_phase_timer = lv_timer_create([](lv_timer_t *) {
+        s_toast_phase_timer = nullptr;
+        if (!s_toast_active || s_toast == nullptr) return;
+        lv_obj_fade_out(s_toast, kToastFadeOutMs, 0);
+        s_toast_finish_timer = lv_timer_create([](lv_timer_t *) {
+            s_toast_finish_timer = nullptr;
+            if (s_toast == nullptr) return;
+            lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+            s_toast_active = false;
+
+            if (s_toast_queue_count == 0) return;
+            char next[kEventDataMax + 1] = {};
+            memcpy(next, s_toast_queue[s_toast_queue_head], sizeof(next));
+            s_toast_queue_head = (s_toast_queue_head + 1) % kToastQueueDepth;
+            --s_toast_queue_count;
+
+            // The next message starts only after the previous toast's fade-out
+            // has completed, preserving FIFO order without cutting in.
+            display_toast(next);
+        }, kToastFadeOutMs, nullptr);
+        if (s_toast_finish_timer != nullptr) {
+            lv_timer_set_repeat_count(s_toast_finish_timer, 1);
+        }
+    }, kToastHoldMs, nullptr);
+    if (s_toast_phase_timer != nullptr) {
+        lv_timer_set_repeat_count(s_toast_phase_timer, 1);
     }
-    s_toast_hide_timer = nullptr;
 }
 
-void show_toast(const char *message)
+void display_toast(const char *message)
 {
     if (s_toast == nullptr || s_toast_label == nullptr || message == nullptr) {
-        ESP_LOGW(TAG, "show_toast() early return: s_toast=%p s_toast_label=%p message=%p",
+        ESP_LOGW(TAG, "display_toast() early return: s_toast=%p s_toast_label=%p message=%p",
                  s_toast, s_toast_label, message);
         return;
     }
 
-    ESP_LOGI(TAG, "show_toast() displaying: %s", message);
+    ESP_LOGI(TAG, "toast displayed: %s", message);
 
     // Toasts are created during core initialization, before Settings and other
     // system pages are pushed onto lv_layer_top().  Those pages would otherwise
@@ -398,24 +437,54 @@ void show_toast(const char *message)
     // so notifications remain visible from any Settings page or dialog.
     lv_obj_move_foreground(s_toast);
 
-    if (s_toast_hide_timer != nullptr) {
-        lv_timer_del(s_toast_hide_timer);
-        s_toast_hide_timer = nullptr;
-    }
     lv_label_set_text(s_toast_label, message);
+    const lv_coord_t display_width = lv_disp_get_hor_res(nullptr);
+    const lv_coord_t max_toast_width = display_width > 2 * kToastScreenMargin
+        ? static_cast<lv_coord_t>(display_width - 2 * kToastScreenMargin) : 0;
+    const lv_coord_t max_label_width = max_toast_width > 2 * kToastHorizontalPad + 2
+        ? static_cast<lv_coord_t>(max_toast_width - 2 * kToastHorizontalPad - 2) : 0;
+    lv_obj_set_width(s_toast, LV_SIZE_CONTENT);
+    lv_obj_set_width(s_toast_label, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(s_toast, max_toast_width, 0);
+    lv_obj_set_style_max_width(s_toast_label, max_label_width, 0);
+    lv_obj_update_layout(s_toast);
     lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_fade_in(s_toast, 150, 0);
-    s_toast_hide_timer = lv_timer_create(hide_toast, 2500, nullptr);
-    if (s_toast_hide_timer != nullptr) {
-        lv_timer_set_repeat_count(s_toast_hide_timer, 1);
+    lv_obj_fade_in(s_toast, kToastFadeInMs, 0);
+    s_toast_active = true;
+    s_toast_phase_timer = lv_timer_create(start_toast_hold, kToastFadeInMs, nullptr);
+    if (s_toast_phase_timer != nullptr) {
+        lv_timer_set_repeat_count(s_toast_phase_timer, 1);
     }
+}
+
+void show_toast(const char *message)
+{
+    if (message == nullptr || s_toast == nullptr || s_toast_label == nullptr) {
+        ESP_LOGW(TAG, "show_toast() early return: s_toast=%p s_toast_label=%p message=%p",
+                 s_toast, s_toast_label, message);
+        return;
+    }
+    if (!s_toast_active && s_toast_queue_count == 0) {
+        display_toast(message);
+        return;
+    }
+    if (s_toast_queue_count >= kToastQueueDepth) {
+        ESP_LOGW(TAG, "toast queue full; dropping newest message: %s", message);
+        return;
+    }
+    const size_t tail = (s_toast_queue_head + s_toast_queue_count) % kToastQueueDepth;
+    strncpy(s_toast_queue[tail], message, kEventDataMax);
+    s_toast_queue[tail][kEventDataMax] = '\0';
+    ++s_toast_queue_count;
+    ESP_LOGI(TAG, "toast queued (%u pending): %s",
+             static_cast<unsigned>(s_toast_queue_count), message);
 }
 
 bool init_toast()
 {
     s_toast = lv_obj_create(lv_layer_top());
     if (s_toast == nullptr) return false;
-    lv_obj_set_size(s_toast, 360, LV_SIZE_CONTENT);
+    lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(s_toast, 52, 0);
     lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(s_toast, LV_OPA_90, 0);
@@ -430,7 +499,7 @@ bool init_toast()
 
     s_toast_label = lv_label_create(s_toast);
     if (s_toast_label == nullptr) return false;
-    lv_obj_set_width(s_toast_label, LV_PCT(100));
+    lv_obj_set_width(s_toast_label, LV_SIZE_CONTENT);
     lv_obj_set_style_text_color(s_toast_label, lv_color_white(), 0);
     lv_obj_set_style_text_align(s_toast_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_toast_label, LV_LABEL_LONG_WRAP);
@@ -486,15 +555,12 @@ void drain_event_queue(lv_timer_t *)
             char text[kEventDataMax + 1] = {};
             memcpy(text, message.data, message.length);
             show_toast(text);
-            ESP_LOGI(TAG, "toast displayed: %s", text);
         } else if (message.type == UI_EVT_TIMER_EXPIRED) {
             show_toast("Timer finished");
         } else if (message.type == UI_EVT_CRASH_RECOVERED) {
             show_toast("Recovered from an error");
-            ESP_LOGI(TAG, "crash recovery toast displayed");
         } else if (message.type == UI_EVT_OTA_ROLLED_BACK) {
             show_toast("Update failed, rolled back");
-            ESP_LOGW(TAG, "rollback toast displayed");
         } else if (message.type == UI_EVT_OTA_CHANGED) {
             crystal_update_snapshot_t snapshot = {};
             crystal_update_snapshot(&snapshot);
