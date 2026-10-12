@@ -4,7 +4,7 @@
 
 /* PROJECT_VER is generated from project(crystal_os VERSION ...). */
 #ifndef PROJECT_VER
-#define PROJECT_VER "0.12.13"
+#define PROJECT_VER "0.12.14"
 #endif
 #define CRYSTAL_VERSION_STRING PROJECT_VER
 

@@ -672,7 +672,7 @@ States, and none of them is a spinner:
 | Offline | installed version, "Connect to WiFi to check" pointing at Network |
 | Manifest unreachable or malformed | installed version, "Update source unavailable" |
 | Installing | percentage, modal, screen held on |
-| Failed mid-write | the failure, and the fact that the running firmware is unchanged |
+| Failed mid-write | a blocking result dialog explains the failure and says the running firmware is unchanged |
 
 That last row is the one worth building deliberately. A failed write leaves the
 *inactive* slot corrupt and the running slot untouched, so the honest message is
@@ -681,7 +681,10 @@ That last row is the one worth building deliberately. A failed write leaves the
 **A bad image that boots and then fails is a separate mechanism.** The bootloader
 holds a new image as unconfirmed and reverts on the next reset unless the firmware
 confirms itself after the UI is genuinely up. The user sees their previous version
-come back; there is no dialog, because there is nothing for them to decide.
+come back, together with a blocking "Update failed, rolled back" result dialog and
+an OK button. The dialog remains until acknowledged so the result cannot disappear
+before the user sees it. A successful update uses the same result-dialog pattern
+with "Update successful" and an OK button.
 
 **What is authenticated is the host, not the image.** HTTPS with the certificate
 bundle stops anyone on the network from substituting firmware. It does not stop

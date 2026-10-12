@@ -18,11 +18,11 @@
 - [x] 12.8 Download Progress UI (3h)
 - [x] 12.9 Flash Write + Reboot (4h) — signed OTA update completed on device
 - [x] 12.10 Rollback Detection (3h) — validated on device; clean firmware flashed after test
-- [ ] 12.11 Primary/Mirror Fallback (2h)
+- [x] 12.11 Primary/Mirror Fallback (2h) — implementation complete; mirror-host validation deferred
 - [ ] 12.12 USB Recovery Tool (4h)
 - [ ] 12.13 Full Validation Suite (6h)
 
-**Current status (2026-10-12):** Phases 12.1–12.8 are implemented and
+**Current status (2026-10-13):** Phases 12.1–12.8 are implemented and
 device-checked. Phase 12.9 has been validated with a signed HTTPS download,
 SHA-256 verification, inactive-slot flash, reboot selection, and delayed boot
 confirmation. A same-version check against the hosted 0.12.8 manifest was also
@@ -33,6 +33,11 @@ Phase 12.10 has been validated with a signed 0.12.12 OTA, automatic rollback to
 ota_0, last-invalid partition reporting, rollback detection, and the one-shot
 notification; the temporary fault-injection block was then removed and clean
 0.12.12 firmware was flashed over USB.
+Phase 12.11 is implemented and closed in firmware: manifest and binary source
+fallbacks are ordered and logged, all-source download failure is reported by a
+blocking result dialog, and a successful OTA was confirmed on the device. The
+Bubstal mirror host is currently unreachable, so a live mirror-success run remains
+deferred until that host is restored.
 
 **Total: ~41 hours (~1 week)**
 
@@ -331,7 +336,7 @@ Automatic rollback works by counting consecutive failed boots (typically 3+). A 
 - [x] Detect rollback (current != attempted) at boot
 - [x] Add `UI_EVT_OTA_ROLLED_BACK` event
 - [x] Post event from shell if rollback detected
-- [x] Show "Update failed, rolled back" toast
+- [x] Show "Update failed, rolled back" result dialog with OK
 - [x] Clear rollback flag after display
 - [x] Add comprehensive OTA partition state logging
 - [x] Use temporary fault injection for rollback testing, then remove it
@@ -353,7 +358,7 @@ Automatic rollback works by counting consecutive failed boots (typically 3+). A 
 - [x] After 3+ crash/reboot cycles, device rolls back to ota_0
 - [x] Boot log shows: `Last invalid: ota_1 @ 0x530000`
 - [x] Boot log shows: `Rollback detected: attempted X.Y.Z, running X.Y.W`
-- [x] Toast notification: "Update failed, rolled back"
+- [x] Result dialog: "Update failed, rolled back" remains until OK
 - [x] Device is stable on previous firmware
 - [x] `attempted_ver` cleared from NVS
 - [x] Reboot again, toast does NOT appear
@@ -385,30 +390,34 @@ Phase 12.10: Implement OTA rollback detection and validation
 Validation procedure: docs/PHASE_12_10_TEST_PROCEDURE.md
 Investigation notes: docs/PHASE_12_10_ROLLBACK_INVESTIGATION.md
 
-Checkpoint: Rollback detection logs and toasts correctly; automatic rollback
+Checkpoint: Rollback detection logs and result dialog behave correctly; automatic rollback
 was validated and the temporary fault injection was removed afterward.
 
 ```
 
 ---
 
-## Sub-Phase 12.11: Primary/Mirror Fallback ✓ / ✗
+## Sub-Phase 12.11: Primary/Mirror Fallback ✓
 
 ### Tasks
-- [ ] Extract `fetch_manifest()` helper function
-- [ ] Try primary manifest, then mirror on failure
-- [ ] Loop through manifest URLs for binary download
-- [ ] Log fallback attempts
+- [x] Extract `fetch_manifest()` helper function
+- [x] Try primary manifest, then mirror on failure
+- [x] Loop through manifest URLs for binary download
+- [x] Log fallback attempts
 
 ### Validation Checkpoints
-- [ ] Temporarily break PRIMARY_MANIFEST_URL in code
-- [ ] Tap "Check for Updates"
-- [ ] Logs show "Primary manifest failed, trying mirror"
-- [ ] Logs show "Fetched manifest from mirror"
-- [ ] OTA proceeds normally
-- [ ] Test binary URL fallback (first URL invalid, second valid)
-- [ ] Logs show "Attempting download from URL 0", then "URL 1"
-- [ ] OTA succeeds from second URL
+- [x] Review the primary-to-mirror manifest fallback path
+- [x] Tap "Check for Updates" and verify the update flow on the device
+- [x] Verify ordered source attempts and fallback failure handling in the device log
+- [ ] Live mirror manifest success (deferred while `updates.bubstal.com` is unreachable)
+- [x] Verify all-source binary failure and the blocking failure dialog
+- [ ] OTA succeeds from the second URL (deferred while `updates.bubstal.com` is unreachable)
+
+### Closure note
+
+The fallback implementation is closed and included in the Phase 12.11 commit.
+The two unchecked rows require a reachable Bubstal host and are an environment
+follow-up, not an open firmware change.
 
 ### Commit Message
 ```

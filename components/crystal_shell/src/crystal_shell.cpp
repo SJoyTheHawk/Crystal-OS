@@ -31,6 +31,76 @@ static lv_obj_t *s_ota_message = nullptr;
 static lv_obj_t *s_ota_progress = nullptr;
 static lv_obj_t *s_ota_percent = nullptr;
 static lv_obj_t *s_update_dialog = nullptr;
+static lv_obj_t *s_update_failure_dialog = nullptr;
+
+static void update_failure_dialog_close()
+{
+    if (s_update_failure_dialog != nullptr) {
+        lv_obj_del(s_update_failure_dialog);
+        s_update_failure_dialog = nullptr;
+    }
+    crystal_shell_set_modal_open(false);
+}
+
+static void update_result_dialog_build(const char *title_text, const char *message)
+{
+    if (title_text == nullptr || title_text[0] == '\0' || message == nullptr ||
+            message[0] == '\0' || s_update_failure_dialog != nullptr) return;
+
+    s_update_failure_dialog = lv_obj_create(lv_layer_top());
+    if (s_update_failure_dialog == nullptr) return;
+    lv_obj_set_size(s_update_failure_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_update_failure_dialog, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_update_failure_dialog, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_update_failure_dialog, 0, 0);
+    lv_obj_add_flag(s_update_failure_dialog, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_update_failure_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_update_failure_dialog);
+    lv_obj_set_size(card, 360, 230);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x59636e), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 24, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(card);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, title_text);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *detail = lv_label_create(card);
+    lv_obj_set_width(detail, 312);
+    lv_obj_set_height(detail, 90);
+    lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(detail, message);
+    lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 48);
+
+    lv_obj_t *ok = lv_btn_create(card);
+    lv_obj_set_size(ok, 140, 44);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(0x3b82f6), 0);
+    lv_obj_t *ok_label = lv_label_create(ok);
+    lv_label_set_text(ok_label, "OK");
+    lv_obj_center(ok_label);
+    lv_obj_add_event_cb(ok, [](lv_event_t *) {
+        update_failure_dialog_close();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_move_foreground(s_update_failure_dialog);
+    crystal_shell_set_modal_open(true);
+}
+
+static void update_failure_dialog_build(const char *message)
+{
+    update_result_dialog_build("Update Failed", message);
+}
 
 static void update_dialog_close()
 {
@@ -2774,6 +2844,10 @@ bool shell_consume_back()
         update_dialog_close();
         return true;
     }
+    if (s_update_failure_dialog != nullptr) {
+        // The failure acknowledgement is explicit; Back and swipes cannot dismiss it.
+        return true;
+    }
     if (s_system_page_depth > 0) {
         // At the Settings root (depth 1), close Settings entirely instead of
         // popping. The back button shows LV_SYMBOL_CLOSE at depth 1 to signal
@@ -2962,11 +3036,17 @@ void crystal_shell_ota_event()
         if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    if (snapshot.state == UPDATE_STATE_CHECKING || snapshot.state == UPDATE_STATE_CURRENT ||
-            snapshot.state == UPDATE_STATE_FAILED) {
+    if (snapshot.state == UPDATE_STATE_CHECKING || snapshot.state == UPDATE_STATE_CURRENT) {
         update_dialog_close();
         if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
         crystal_shell_set_modal_open(false);
+        return;
+    }
+    if (snapshot.state == UPDATE_STATE_FAILED) {
+        update_dialog_close();
+        if (s_ota_modal != nullptr) lv_obj_add_flag(s_ota_modal, LV_OBJ_FLAG_HIDDEN);
+        crystal_shell_set_modal_open(false);
+        update_failure_dialog_build(snapshot.error_message);
         return;
     }
 
@@ -2977,4 +3057,14 @@ void crystal_shell_ota_event()
         ESP_LOGI(TAG, "OTA modal state=%d progress=%u", snapshot.state, snapshot.progress_percent);
         last_logged_progress = snapshot.progress_percent;
     }
+}
+
+void crystal_shell_update_failure_event(const char *message)
+{
+    update_failure_dialog_build(message);
+}
+
+void crystal_shell_update_success_event()
+{
+    update_result_dialog_build("Update Successful", "Crystal OS has been updated successfully.");
 }

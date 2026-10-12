@@ -19,7 +19,7 @@
 | 12.7 | OTA worker thread | Log shows dedicated Core-0 OTA worker alive | 2h |
 | 12.8 | Download progress UI | Modal shows "Downloading: 45%" | 3h |
 | 12.9 | Flash write + reboot | Real OTA completes, device reboots to new version | 4h |
-| 12.10 | Rollback detection + toast | Faulty image rolls back, toast shows "Update failed" | 3h |
+| 12.10 | Rollback detection + result dialog | Faulty image rolls back, dialog shows "Update failed" with OK | 3h |
 | 12.11 | Primary/mirror fallback | Manifest fetch tries mirror after primary fails | 2h |
 | 12.12 | USB recovery tool | Python script restores firmware, shows menu | 4h |
 | 12.13 | Full validation suite | All test cases pass, regressions clean | 6h |
@@ -2138,10 +2138,11 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Sub-Phase 12.10: Rollback Detection + Toast
+## Sub-Phase 12.10: Rollback Detection + Result Dialog
 
 ### Goal
-Boot faulty image that crashes before confirmation, verify automatic rollback, show toast.
+Boot faulty image that crashes before confirmation, verify automatic rollback, and
+show a blocking result dialog that stays visible until the user taps OK.
 
 ### Changes
 
@@ -2267,7 +2268,7 @@ if (crystal_update_did_rollback()) {
 6. **Handle rollback event** (`main/ui/shell.cpp`):
 ```cpp
 case UI_EVT_OTA_ROLLED_BACK: {
-    showToast("Update failed, rolled back", 4000);
+    showResultDialog("Update failed", "Update failed, rolled back", "OK");
     break;
 }
 ```
@@ -2348,7 +2349,7 @@ idf.py flash monitor
    W (1234) update: Rollback detected: attempted 0.12.0, running 0.11.0
    W (1235) update: Update to 0.12.0 failed, rolled back
    ```
-   - **Checkpoint**: Toast "Update failed, rolled back" appears
+   - **Checkpoint**: Result dialog "Update failed, rolled back" appears and remains until OK
    - Navigate to Settings → Device Status
    - **Checkpoint**: "Firmware Version: 0.11.0" (rolled back)
 
@@ -2357,14 +2358,14 @@ idf.py flash monitor
 7. **Commit**:
 ```bash
 git add main/crystal_update.{h,c} main/ui/shell.{h,cpp} main/ui/settings/device_status_overlay.cpp
-git commit -m "Phase 12.10: Add rollback detection and toast
+git commit -m "Phase 12.10: Add rollback detection and result dialog
 
 - Persist attempted version in NVS before reboot
 - Detect rollback (current != attempted) at next boot
-- Show 'Update failed, rolled back' toast once
+- Show 'Update failed, rolled back' result dialog until OK
 - Clear rollback flag after display
 
-Checkpoint: Faulty image rolls back, toast confirms failure
+Checkpoint: Faulty image rolls back, result dialog confirms failure
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -2912,7 +2913,7 @@ Run comprehensive test matrix, verify all OTA/recovery scenarios, re-run Phase 1
 | Unknown battery state | Blocked with error | |
 | Not charging and <40% | Blocked with error | |
 | **Rollback** | | |
-| Faulty image (crash before confirm) | Auto-rollback, toast shown | |
+| Faulty image (crash before confirm) | Auto-rollback, result dialog shown until OK | |
 | Faulty image (reboot loop) | Auto-rollback after 3 attempts | |
 | Second boot after rollback | No toast, history in Device Status | |
 | **USB Recovery** | | |
@@ -3028,7 +3029,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 7. **OTA worker** — Dedicated Core-0 thread for network operations
 8. **Download progress** — Real esp_https_ota with live progress updates
 9. **Flash write** — OTA partition update, reboot, confirmation after settling
-10. **Rollback detection** — Auto-rollback on crash, toast notification
+10. **Rollback detection** — Auto-rollback on crash, blocking result dialog
 11. **Fallback logic** — Primary/mirror for manifest and binary
 12. **USB recovery** — Python tool for preserve/factory-reset
 13. **Full validation** — All test cases passed, regressions clean

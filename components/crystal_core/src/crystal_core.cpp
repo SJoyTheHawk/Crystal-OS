@@ -30,6 +30,8 @@
 extern void crystal_shell_wifi_event(uint8_t event);
 extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 extern void crystal_shell_ota_event();
+extern void crystal_shell_update_failure_event(const char *message);
+extern void crystal_shell_update_success_event();
 
 namespace {
 constexpr size_t kQueueDepth = 12;
@@ -560,20 +562,17 @@ void drain_event_queue(lv_timer_t *)
         } else if (message.type == UI_EVT_CRASH_RECOVERED) {
             show_toast("Recovered from an error");
         } else if (message.type == UI_EVT_OTA_ROLLED_BACK) {
-            show_toast("Update failed, rolled back");
+            crystal_shell_update_failure_event("Update failed, rolled back");
+        } else if (message.type == UI_EVT_OTA_SUCCEEDED) {
+            crystal_shell_update_success_event();
         } else if (message.type == UI_EVT_OTA_CHANGED) {
             crystal_update_snapshot_t snapshot = {};
             crystal_update_snapshot(&snapshot);
             if (snapshot.state == UPDATE_STATE_CURRENT) {
                 show_toast("System is up to date");
             } else if (snapshot.state == UPDATE_STATE_FAILED && snapshot.error_message[0] != '\0') {
-                if (strcmp(snapshot.error_message, "Update check cancelled") == 0) {
-                    show_toast("Update check cancelled");
-                } else if (strstr(snapshot.error_message, "cancelled") != nullptr) {
-                    show_toast("Update cancelled");
-                } else {
-                    show_toast(snapshot.error_message);
-                }
+                // Update failures require explicit acknowledgement in the shell.
+                crystal_shell_update_failure_event(snapshot.error_message);
             }
             crystal_shell_ota_event();
         } else if (message.type == UI_EVT_WEATHER && message.length == sizeof(CrystalWeatherReading)) {
@@ -778,6 +777,7 @@ void sntp_synced(struct timeval *tv)
 void service_task(void *)
 {
     vTaskDelay(pdMS_TO_TICKS(1200));
+    bool ota_confirmed = false;
     // Rollback-enabled OTA images boot as PENDING_VERIFY. Confirm only after
     // the display/core settling interval so an early boot failure can still
     // trigger the bootloader's automatic rollback.
@@ -792,6 +792,7 @@ void service_task(void *)
         if (confirm_err == ESP_OK) {
             crystal_update_clear_attempted_version();
             ESP_LOGI(TAG, "OTA image confirmed and rollback cancelled");
+            ota_confirmed = true;
             // Log the state after confirmation
             esp_ota_img_states_t confirmed_state = ESP_OTA_IMG_UNDEFINED;
             if (esp_ota_get_state_partition(running, &confirmed_state) == ESP_OK) {
@@ -803,6 +804,7 @@ void service_task(void *)
     }
     static constexpr char kReadyMessage[] = "Core services ready";
     (void)crystal_ui_post(UI_EVT_TOAST, kReadyMessage, sizeof(kReadyMessage) - 1);
+    if (ota_confirmed) (void)crystal_ui_post(UI_EVT_OTA_SUCCEEDED);
 
     if (hal().wifi != nullptr) {
         hal().wifi->set_event_callback(wifi_event, nullptr);

@@ -53,3 +53,5 @@ void crystal_shell_wifi_event(uint8_t event);
 void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 // Called on the LVGL task when the OTA worker publishes a state change.
 void crystal_shell_ota_event();
+void crystal_shell_update_failure_event(const char *message);
+void crystal_shell_update_success_event();

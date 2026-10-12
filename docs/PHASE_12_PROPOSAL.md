@@ -60,7 +60,7 @@ Use this bounded JSON schema:
 - Show a confirmation warning: the device will restart and unsaved app progress, including active countdown timers, may be lost. After confirmation, block navigation and cancellation during flash writing.
 - Report integer download percentage using ESP-IDF’s received/total byte APIs. On success, announce the restart, wait about two seconds, then reboot automatically.
 - Confirm a pending image only after explicit shell/first-frame readiness and the existing 1.2-second settling interval. Otherwise the next reset rolls back automatically. [ESP-IDF OTA rollback states](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/ota.html)
-- Persist the attempted/current versions before reboot. A restored image detects rollback, shows one quiet toast, and retains the result in Device Status.
+- Persist the attempted/current versions before reboot. A restored image detects rollback, shows a blocking result dialog with an OK button, and retains the result in Device Status.
 
 ## Crash and Recovery
 
@@ -80,7 +80,7 @@ Use this bounded JSON schema:
 - Test offline, malformed/stale/equal/older manifests, wrong target, mismatched embedded version, invalid signature, bad hash, truncated download, Wi-Fi loss, insufficient battery, and mirror fallback.
 - Interrupt power during writing and verify the running firmware remains unchanged.
 - Install a good OTA and verify progress, modal navigation, screen-awake behavior, announced reboot, first-frame confirmation, and reported new version.
-- Install a signed dev fault-injection image that crashes before confirmation; verify automatic rollback, the one-time rollback toast, and Device Status history.
+- Install a signed dev fault-injection image that crashes before confirmation; verify automatic rollback, the one-time rollback result dialog, and Device Status history.
 - Trigger a deliberate crash, verify the one-time recovery toast and persistent details, then decode the retained raw dump against the archived exact ELF.
 - Exercise USB recovery in both preserve and factory-reset modes, including cancellation at each prompt.
 - Re-run Phase 11 Settings, power, timer-alert, Wi-Fi, keyboard, gesture, and card-lifecycle regressions before closing Phase 12.
