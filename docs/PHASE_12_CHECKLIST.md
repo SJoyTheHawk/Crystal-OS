@@ -19,7 +19,7 @@
 - [x] 12.9 Flash Write + Reboot (4h) — signed OTA update completed on device
 - [x] 12.10 Rollback Detection (3h) — validated on device; clean firmware flashed after test
 - [x] 12.11 Primary/Mirror Fallback (2h) — implementation complete; mirror-host validation deferred
-- [ ] 12.12 USB Recovery Tool (4h)
+- [x] 12.12 USB Recovery Tool (4h) — implementation complete; preserve recovery validated; destructive checks deferred
 - [ ] 12.13 Full Validation Suite (6h)
 
 **Current status (2026-10-13):** Phases 12.1–12.8 are implemented and
@@ -38,6 +38,13 @@ fallbacks are ordered and logged, all-source download failure is reported by a
 blocking result dialog, and a successful OTA was confirmed on the device. The
 Bubstal mirror host is currently unreachable, so a live mirror-success run remains
 deferred until that host is restored.
+Phase 12.12 is implemented as `tools/crystal_recovery.py`: preserve mode,
+factory-reset mode, and metadata-driven coredump extraction are available with
+confirmation prompts. Preserve recovery was run successfully on
+`/dev/cu.usbmodem101` with image verification and a hard reset. Factory-reset
+recovery was then run on the same device: flash was erased, all generated images
+were written and verified, and the board was hard-reset. Coredump extraction
+remains conditional on having a coredump to collect.
 
 **Total: ~41 hours (~1 week)**
 
@@ -435,25 +442,31 @@ Checkpoint: Mirror fallback works for both manifest and binary
 ## Sub-Phase 12.12: USB Recovery Tool ✓ / ✗
 
 ### Tasks
-- [ ] Create `tools/crystal_recovery.py`
-- [ ] Implement preserve mode (flash bootloader/partition/app, keep NVS)
-- [ ] Implement factory reset mode (erase all, flash from scratch)
-- [ ] Implement coredump extraction
-- [ ] Add confirmation prompts
-- [ ] Create `tools/README.md` with usage examples
-- [ ] Make script executable
+- [x] Create `tools/crystal_recovery.py`
+- [x] Implement preserve mode (flash bootloader/partition/app, keep NVS)
+- [x] Implement factory reset mode (erase all, flash from scratch)
+- [x] Implement coredump extraction
+- [x] Add confirmation prompts
+- [x] Create `tools/README.md` with usage examples
+- [x] Make script executable
+- [x] Read ESP-IDF flash metadata and partition-table offsets instead of using fixed offsets
 
 ### Validation Checkpoints
-- [ ] Build firmware with `./scripts/build_dev.sh`
-- [ ] Run `./tools/crystal_recovery.py --port <port> --firmware build/ --preserve`
-- [ ] Script shows menu, asks for confirmation
-- [ ] Flash completes, shows "✅ Recovery complete!"
-- [ ] Device boots, settings are preserved
-- [ ] Run `./tools/crystal_recovery.py --port <port> --firmware build/ --factory-reset`
-- [ ] Script shows two warnings, asks twice for confirmation
-- [ ] Flash completes, all data erased
-- [ ] Device boots to factory state
-- [ ] (If coredump exists) Extract with `--extract-coredump`, decode with esp-coredump.py
+- [x] Build firmware with `idf.py build`
+- [x] `python3 -m py_compile tools/crystal_recovery.py`
+- [x] Help and cancellation paths return safely without touching the device
+- [x] Offline fake-esptool check confirms generated flash arguments and coredump offset discovery
+- [x] Run preserve recovery on `/dev/cu.usbmodem101`
+- [x] Script shows prompts, asks for confirmation, and flashes successfully
+- [x] Flash completes, verifies each image, and shows "✅ Recovery complete!"
+- [x] Device boots, settings are preserved
+- [x] Run factory-reset recovery on `/dev/cu.usbmodem101`
+- [x] Script shows two warnings and asks twice for confirmation
+- [x] Flash completes after erasing all data; every generated image is verified
+- [x] Device boots to factory state (confirm from the device UI)
+- [ ] (If coredump exists) Extract with `--extract-coredump`, decode with esp-coredump.py (conditional)
+
+Coredump extraction is only meaningful when a coredump is present; factory reset has just erased the previous crash data.
 
 ### Commit Message
 ```

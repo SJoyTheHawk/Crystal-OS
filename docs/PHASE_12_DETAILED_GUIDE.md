@@ -2556,192 +2556,25 @@ Create Python script to flash firmware over USB, with preserve/factory-reset opt
 ### Changes
 
 1. **Create recovery script** (`tools/crystal_recovery.py`, new file):
-```python
-#!/usr/bin/env python3
-"""
-Crystal OS USB Recovery Tool
 
-Restores firmware over USB with options to preserve or reset user data.
-"""
+The implementation is metadata-driven rather than using fixed flash offsets. It
+reads `build/flasher_args.json` for the bootloader, partition table, OTA data,
+application, and storage images. It reads `partition-table.bin` to locate the
+coredump partition. This matters because the current build places OTA data at
+`0x10000`, the application at `0x30000`, and the coredump at `0x13000`.
 
-import argparse
-import sys
-import subprocess
-import os
-from pathlib import Path
+The tool provides three mutually exclusive operations:
 
-BOOTLOADER_OFFSET = 0x0
-PARTITION_TABLE_OFFSET = 0x8000
-OTA_DATA_OFFSET = 0xd000
-APP_OFFSET = 0x10000
+- `--preserve`: flash bootloader, partition table, OTA metadata, and the app;
+  leave NVS, SPIFFS storage, and coredump data untouched.
+- `--factory-reset`: request two confirmations, erase the chip, and flash every
+  image listed in ESP-IDF's generated flash map.
+- `--extract-coredump FILE`: read the discovered coredump partition without
+  changing any firmware or user data.
 
-def run_esptool(args):
-    """Run esptool.py with given arguments."""
-    cmd = ["esptool.py"] + args
-    print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Error: {result.stderr}", file=sys.stderr)
-        return False
-    print(result.stdout)
-    return True
-
-def confirm(prompt):
-    """Ask user for yes/no confirmation."""
-    while True:
-        response = input(f"{prompt} [y/n]: ").lower()
-        if response in ['y', 'yes']:
-            return True
-        elif response in ['n', 'no']:
-            return False
-
-def preserve_recovery(port, firmware_dir):
-    """Recover firmware while preserving NVS and SPIFFS."""
-    print("\n=== PRESERVE MODE ===")
-    print("This will restore:")
-    print("  - Bootloader")
-    print("  - Partition table")
-    print("  - OTA data (reset to factory)")
-    print("  - Application firmware")
-    print("\nThis will KEEP:")
-    print("  - Settings (Wi-Fi, preferences)")
-    print("  - App data (favorites, timers)")
-    print("  - Crash dumps")
-    
-    if not confirm("\nProceed with preserve-mode recovery?"):
-        print("Aborted.")
-        return False
-    
-    bootloader = firmware_dir / "bootloader.bin"
-    partition_table = firmware_dir / "partition-table.bin"
-    ota_data_initial = firmware_dir / "ota_data_initial.bin"
-    app = firmware_dir / "crystal_os.bin"
-    
-    # Verify files exist
-    for file in [bootloader, partition_table, ota_data_initial, app]:
-        if not file.exists():
-            print(f"Error: {file} not found", file=sys.stderr)
-            return False
-    
-    # Flash
-    args = [
-        "-p", port,
-        "-b", "460800",
-        "--before", "default_reset",
-        "--after", "hard_reset",
-        "write_flash",
-        "--flash_mode", "dio",
-        "--flash_freq", "80m",
-        "--flash_size", "detect",
-        hex(BOOTLOADER_OFFSET), str(bootloader),
-        hex(PARTITION_TABLE_OFFSET), str(partition_table),
-        hex(OTA_DATA_OFFSET), str(ota_data_initial),
-        hex(APP_OFFSET), str(app),
-    ]
-    
-    return run_esptool(args)
-
-def factory_reset_recovery(port, firmware_dir):
-    """Recover firmware and erase all user data."""
-    print("\n=== FACTORY RESET MODE ===")
-    print("⚠️  WARNING: This will ERASE ALL DATA:")
-    print("  - Wi-Fi credentials")
-    print("  - All settings")
-    print("  - App favorites and data")
-    print("  - Crash dumps")
-    print("\nThe device will be restored to factory state.")
-    
-    if not confirm("\n⚠️  Proceed with factory reset?"):
-        print("Aborted.")
-        return False
-    
-    print("\n⚠️  FINAL CONFIRMATION: All user data will be permanently deleted.")
-    if not confirm("Type 'y' to confirm factory reset"):
-        print("Aborted.")
-        return False
-    
-    # Erase flash
-    print("\nErasing flash...")
-    if not run_esptool(["-p", port, "erase_flash"]):
-        return False
-    
-    # Flash everything
-    print("\nFlashing firmware...")
-    return preserve_recovery(port, firmware_dir)
-
-def extract_coredump(port, output_file):
-    """Extract coredump from device."""
-    print("\n=== EXTRACT COREDUMP ===")
-    
-    args = [
-        "-p", port,
-        "read_flash",
-        "0x3F0000", "0x10000",  # Coredump partition (adjust offsets as needed)
-        output_file,
-    ]
-    
-    if run_esptool(args):
-        print(f"\nCoredump saved to: {output_file}")
-        print("Decode with: esp-coredump.py info_corefile -t raw <elf_file> <coredump_file>")
-        return True
-    return False
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Crystal OS USB Recovery Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Preserve user data
-  %(prog)s --port /dev/cu.usbserial-0001 --firmware build/ --preserve
-  
-  # Factory reset
-  %(prog)s --port /dev/cu.usbserial-0001 --firmware build/ --factory-reset
-  
-  # Extract coredump
-  %(prog)s --port /dev/cu.usbserial-0001 --extract-coredump coredump.bin
-        """
-    )
-    
-    parser.add_argument("-p", "--port", required=True, help="Serial port (e.g., /dev/cu.usbserial-0001)")
-    parser.add_argument("-f", "--firmware", help="Firmware directory containing .bin files")
-    parser.add_argument("--preserve", action="store_true", help="Preserve user data (NVS, SPIFFS)")
-    parser.add_argument("--factory-reset", action="store_true", help="Erase all data and restore firmware")
-    parser.add_argument("--extract-coredump", metavar="FILE", help="Extract coredump to FILE")
-    
-    args = parser.parse_args()
-    
-    # Validate arguments
-    if args.extract_coredump:
-        if not extract_coredump(args.port, args.extract_coredump):
-            sys.exit(1)
-        sys.exit(0)
-    
-    if not args.firmware:
-        parser.error("--firmware required when not extracting coredump")
-    
-    firmware_dir = Path(args.firmware)
-    if not firmware_dir.is_dir():
-        print(f"Error: {firmware_dir} is not a directory", file=sys.stderr)
-        sys.exit(1)
-    
-    if args.factory_reset:
-        success = factory_reset_recovery(args.port, firmware_dir)
-    elif args.preserve:
-        success = preserve_recovery(args.port, firmware_dir)
-    else:
-        parser.error("Must specify --preserve or --factory-reset")
-    
-    if success:
-        print("\n✅ Recovery complete!")
-        sys.exit(0)
-    else:
-        print("\n❌ Recovery failed", file=sys.stderr)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-```
+It uses `esptool` as a subprocess with streamed progress, supports
+`CRYSTAL_ESPTOOL` for selecting a specific installation, and returns a non-zero
+status for cancellation, invalid build metadata, missing files, or flash errors.
 
 2. **Make script executable**:
 ```bash
