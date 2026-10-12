@@ -104,6 +104,10 @@ Rules that follow from the ordering:
   in place rather than dismissing it, and the corner panel covers only the part of
   it that falls inside the panel rect. On close, the keyboard is still there. Card
   switching is suppressed while the keyboard is open.
+- Keyboard keys provide immediate touch feedback: the active key grows by about 6%
+  around its center and darkens while held, then returns to its normal rectangle
+  and color when released. The feedback changes drawing only; key geometry and hit
+  targets remain fixed.
 - Dialogs are modal and block the arbiter entirely — no app switching, no
   pull-down while one is open.
 - Toasts are above dialogs so a dialog can produce one, and are always

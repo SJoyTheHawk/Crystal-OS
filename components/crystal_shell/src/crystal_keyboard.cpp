@@ -14,6 +14,8 @@ constexpr lv_coord_t kKeyboardBandHeight = 200;
 constexpr lv_coord_t kBottomSafe = 26;
 constexpr lv_coord_t kKeyboardHeight = kKeyboardBandHeight - kBottomSafe;
 constexpr uint32_t kRevealAnimMs = 250;
+constexpr uint8_t kPressedKeyScalePercent = 6;
+constexpr lv_opa_t kPressedKeyDarken = 32;
 
 #define KEY (LV_BTNMATRIX_CTRL_CLICK_TRIG | LV_BTNMATRIX_CTRL_NO_REPEAT | 1)
 #define WIDE_KEY (LV_BTNMATRIX_CTRL_CLICK_TRIG | LV_BTNMATRIX_CTRL_NO_REPEAT | 2)
@@ -123,19 +125,42 @@ void style_key_cb(lv_event_t *event)
 
     lv_obj_t *keyboard = static_cast<lv_obj_t *>(lv_event_get_target(event));
     const char *text = lv_btnmatrix_get_btn_text(keyboard, static_cast<uint16_t>(dsc->id));
+    const bool pressed = lv_obj_has_state(keyboard, LV_STATE_PRESSED) &&
+                         lv_btnmatrix_get_selected_btn(keyboard) == dsc->id;
     dsc->rect_dsc->radius = 5;
     dsc->rect_dsc->border_width = 0;
     dsc->rect_dsc->shadow_width = 1;
     dsc->rect_dsc->shadow_ofs_y = 1;
     dsc->rect_dsc->shadow_color = lv_color_hex(0x73767d);
     dsc->label_dsc->color = lv_color_hex(0x111214);
+    lv_color_t key_color;
     if (text != nullptr && !strcmp(text, LV_SYMBOL_OK)) {
-        dsc->rect_dsc->bg_color = lv_color_hex(0x087bdb);
+        key_color = lv_color_hex(0x087bdb);
         dsc->label_dsc->color = lv_color_white();
     } else if (is_control_key(text)) {
-        dsc->rect_dsc->bg_color = lv_color_hex(0xadb1b8);
+        key_color = lv_color_hex(0xadb1b8);
     } else {
-        dsc->rect_dsc->bg_color = lv_color_hex(0xf7f7f8);
+        key_color = lv_color_hex(0xf7f7f8);
+    }
+    dsc->rect_dsc->bg_color = pressed ? lv_color_darken(key_color, kPressedKeyDarken) : key_color;
+
+    if (pressed && dsc->draw_area != nullptr) {
+        lv_area_t keyboard_area{};
+        lv_obj_get_coords(keyboard, &keyboard_area);
+        const lv_coord_t width = lv_area_get_width(dsc->draw_area);
+        const lv_coord_t height = lv_area_get_height(dsc->draw_area);
+        const lv_coord_t expand_x = LV_MAX(1, static_cast<lv_coord_t>(
+            width * kPressedKeyScalePercent / 200));
+        const lv_coord_t expand_y = LV_MAX(1, static_cast<lv_coord_t>(
+            height * kPressedKeyScalePercent / 200));
+        dsc->draw_area->x1 = LV_MAX(keyboard_area.x1,
+                                    static_cast<lv_coord_t>(dsc->draw_area->x1 - expand_x));
+        dsc->draw_area->y1 = LV_MAX(keyboard_area.y1,
+                                    static_cast<lv_coord_t>(dsc->draw_area->y1 - expand_y));
+        dsc->draw_area->x2 = LV_MIN(keyboard_area.x2,
+                                    static_cast<lv_coord_t>(dsc->draw_area->x2 + expand_x));
+        dsc->draw_area->y2 = LV_MIN(keyboard_area.y2,
+                                    static_cast<lv_coord_t>(dsc->draw_area->y2 + expand_y));
     }
 }
 

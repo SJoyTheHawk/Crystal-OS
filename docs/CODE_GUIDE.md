@@ -1557,6 +1557,10 @@ Implementation details that carry the design:
   the top position while keeping keys out of Brookesia's navigation gesture zone.
 - Letter, shift, and symbol maps keep identical row geometry. LVGL still owns
   character insertion, cursor movement, deletion, and ready/cancel events.
+- `style_key_cb()` uses the selected button and `LV_STATE_PRESSED` to darken and
+  expand the active key by about 6% around its center. The draw area is clamped
+  to the keyboard bounds, so this visual feedback does not change layout or hit
+  testing; LVGL restores the normal rectangle when the press ends.
 - The WiFi password field and Dev Tester use the same overlay and both provide a
   reveal control for masked input.
 
