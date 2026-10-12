@@ -32,6 +32,7 @@ static volatile bool s_cancel_requested;
 static volatile bool s_check_requested;
 static volatile bool s_download_requested;
 static bool s_rollback_occurred;
+static bool s_all_download_urls_failed;
 static char s_rollback_attempted_version[32];
 // These buffers are owned by the single OTA worker. Keep them out of its task
 // stack because the manifest remains live while install_image() uses the I/O
@@ -175,8 +176,10 @@ static bool check_rollback_at_boot(void)
     return rolled_back;
 }
 
-static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
+static esp_err_t fetch_manifest(const char *url, update_manifest_t *out_manifest)
 {
+    size_t length = 0;
+    memset(s_manifest_json, 0, sizeof(s_manifest_json));
     esp_http_client_config_t config = {
         .url = url, .timeout_ms = 15000, .crt_bundle_attach = esp_crt_bundle_attach,
         .is_async = true,
@@ -204,7 +207,7 @@ static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
                     if (remaining > expected) remaining = expected;
                 }
                 esp_err_t read_err = ESP_OK;
-                int got = ota_http_read_async(client, body + used, (int)remaining,
+                int got = ota_http_read_async(client, s_manifest_json + used, (int)remaining,
                                               config.timeout_ms, &read_err);
                 if (got < 0) { err = read_err; break; }
                 if (got == 0) break;
@@ -212,7 +215,7 @@ static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
             }
             if (err == ESP_OK && used > 0 &&
                     (content_length <= 0 || used == (size_t)content_length)) {
-                body[used] = '\0'; *length = used;
+                s_manifest_json[used] = '\0'; length = used;
             } else if (err == ESP_OK) {
                 err = ESP_FAIL;
             }
@@ -221,15 +224,22 @@ static esp_err_t fetch_manifest(const char *url, char *body, size_t *length)
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
     if (err != ESP_OK) ESP_LOGW(TAG, "Manifest fetch failed url=%s error=%s", url, esp_err_to_name(err));
+    if (err != ESP_OK) return err;
+
+    err = crystal_update_parse_manifest(s_manifest_json, length, EXPECTED_TARGET,
+                                        EXPECTED_CHANNEL, crystal_version_string(), out_manifest);
+    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Manifest validation failed url=%s error=%s", url, esp_err_to_name(err));
+    }
     return err;
 }
 
-static esp_err_t install_image(const update_manifest_t *manifest)
+static esp_err_t install_image_from_url(const update_manifest_t *manifest, const char *url)
 {
     ESP_LOGI(TAG, "Downloading OTA image url=%s expected_size=%u",
-             manifest->urls[0], (unsigned)manifest->size);
+             url, (unsigned)manifest->size);
     esp_http_client_config_t config = {
-        .url = manifest->urls[0], .timeout_ms = 30000, .crt_bundle_attach = esp_crt_bundle_attach,
+        .url = url, .timeout_ms = 30000, .crt_bundle_attach = esp_crt_bundle_attach,
         .is_async = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -317,6 +327,31 @@ static esp_err_t install_image(const update_manifest_t *manifest)
     return err;
 }
 
+static esp_err_t install_image(const update_manifest_t *manifest)
+{
+    esp_err_t last_err = ESP_FAIL;
+    s_all_download_urls_failed = false;
+    for (uint8_t url_idx = 0; url_idx < manifest->url_count; ++url_idx) {
+        if (s_cancel_requested) return ESP_ERR_INVALID_STATE;
+
+        s_snapshot.downloaded_bytes = 0;
+        s_snapshot.progress_percent = 0;
+        notify_ota_ui();
+        ESP_LOGI(TAG, "Attempting OTA download URL %u/%u: %s",
+                 (unsigned)(url_idx + 1), (unsigned)manifest->url_count,
+                 manifest->urls[url_idx]);
+
+        last_err = install_image_from_url(manifest, manifest->urls[url_idx]);
+        if (last_err == ESP_OK) return ESP_OK;
+        if (s_cancel_requested) return last_err;
+        ESP_LOGW(TAG, "OTA download URL %u failed: %s; trying next URL",
+                 (unsigned)(url_idx + 1), esp_err_to_name(last_err));
+    }
+    ESP_LOGE(TAG, "All OTA download URLs failed");
+    s_all_download_urls_failed = true;
+    return last_err;
+}
+
 static void ota_worker_task(void *arg)
 {
     (void)arg;
@@ -330,27 +365,20 @@ static void ota_worker_task(void *arg)
             ESP_LOGI(TAG, "Processing update check request");
             s_cancel_requested = false;
             s_snapshot.state = UPDATE_STATE_CHECKING; s_snapshot.progress_percent = 0; notify_ota_ui();
-            memset(s_manifest_json, 0, sizeof(s_manifest_json));
-            size_t manifest_len = 0;
-            esp_err_t err = fetch_manifest(MANIFEST_PRIMARY, s_manifest_json, &manifest_len);
+            esp_err_t err = fetch_manifest(MANIFEST_PRIMARY, &cached_manifest);
             if (s_cancel_requested) { set_error("Update check cancelled"); continue; }
-            if (err != ESP_OK) err = fetch_manifest(MANIFEST_MIRROR, s_manifest_json, &manifest_len);
+            if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+                ESP_LOGW(TAG, "Primary manifest unavailable, trying mirror");
+                err = fetch_manifest(MANIFEST_MIRROR, &cached_manifest);
+            }
             if (s_cancel_requested) { set_error("Update check cancelled"); continue; }
-            if (err != ESP_OK) { set_error("Update source unavailable"); continue; }
-            memset(&cached_manifest, 0, sizeof(cached_manifest));
-            err = crystal_update_parse_manifest(s_manifest_json, manifest_len, EXPECTED_TARGET,
-                                                EXPECTED_CHANNEL, crystal_version_string(), &cached_manifest);
             if (err == ESP_ERR_NOT_FOUND) {
                 ESP_LOGI(TAG, "No newer firmware is available (current=%s)", crystal_version_string());
                 s_snapshot.state = UPDATE_STATE_CURRENT;
                 notify_ota_ui();
                 continue;
             }
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Manifest validation failed: %s", esp_err_to_name(err));
-                set_error("Invalid update manifest");
-                continue;
-            }
+            if (err != ESP_OK) { set_error("Update source unavailable"); continue; }
             ESP_LOGI(TAG, "Update available: %s (%lu bytes)", cached_manifest.version,
                      (unsigned long)cached_manifest.size);
             memcpy(s_snapshot.available_version, cached_manifest.version, sizeof(s_snapshot.available_version));
@@ -382,6 +410,8 @@ static void ota_worker_task(void *arg)
                      (unsigned)cached_manifest.size);
             if (s_cancel_requested) {
                 set_error("Update cancelled");
+            } else if (s_all_download_urls_failed && cached_manifest.url_count > 1) {
+                set_error("Failed to download update from all sources");
             } else if (err == ESP_ERR_INVALID_CRC) {
                 set_error("Downloaded image hash mismatch");
             } else if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
@@ -412,6 +442,7 @@ void crystal_update_init(void)
 {
     memset(&s_snapshot, 0, sizeof(s_snapshot)); s_snapshot.state = UPDATE_STATE_IDLE;
     s_rollback_occurred = false;
+    s_all_download_urls_failed = false;
     memset(s_rollback_attempted_version, 0, sizeof(s_rollback_attempted_version));
     (void)check_rollback_at_boot();
     s_check_requested = false;

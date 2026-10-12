@@ -312,8 +312,10 @@ https://rockyroad.studio/apps/crystal-os/releases/0.12.9/crystal_os.bin
 https://rockyroad.studio/apps/crystal-os/stable/manifest.json
 ```
 
-For mirror testing, also upload the contents under `updates.bubstal.com/` to
-that domain's document root, using the same binary-first order.
+For mirror testing, also upload the contents under
+`updates.bubstal.com/` to that domain's document root, using the same
+binary-first order. The directory is generated now so it can be uploaded when
+the Bubstal site becomes available.
 
 Verify the primary manifest and binary are reachable:
 

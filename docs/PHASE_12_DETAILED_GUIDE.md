@@ -1201,7 +1201,7 @@ TEST_CASE("Manifest parsing - valid", "[update]") {
         "\"version\":\"0.12.0\","
         "\"size\":2810392,"
         "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\","
-        "\"urls\":[\"https://updates.rockyroad.studio/crystal-os/releases/0.12.0/crystal_os.bin\"],"
+        "\"urls\":[\"https://rockyroad.studio/apps/crystal-os/releases/0.12.0/crystal_os.bin\"],"
         "\"notes\":\"Test update\""
         "}";
     
@@ -1672,7 +1672,7 @@ void OTAModal::showError(const char *message) {
 #include "lvgl.h"
 
 // Add manifest URLs
-#define PRIMARY_MANIFEST_URL "https://updates.rockyroad.studio/crystal-os/stable/manifest.json"
+#define PRIMARY_MANIFEST_URL "https://rockyroad.studio/apps/crystal-os/stable/manifest.json"
 #define MIRROR_MANIFEST_URL "https://updates.bubstal.com/crystal-os/stable/manifest.json"
 #define EXPECTED_TARGET "waveshare-esp32-s3-touch-lcd-4b"
 #define EXPECTED_CHANNEL "stable"
@@ -2376,6 +2376,12 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Goal
 Retry manifest fetch from mirror if primary fails; retry binary download from mirror if primary fails.
 
+The mirror remains the separate Bubstal host at `updates.bubstal.com`. The
+hosting site is currently unreachable, so the release script still generates
+the complete `updates.bubstal.com/crystal-os/` tree for later upload. Until the
+host is available, hardware tests can exercise binary fallback with a local or
+temporary HTTPS endpoint substituted in the manifest.
+
 ### Changes
 
 1. **Update crystal_update.c** to add fallback logic:
@@ -2473,7 +2479,7 @@ for (uint8_t url_idx = 0; url_idx < manifest.url_count && !ota_started; url_idx+
 if (!ota_started) {
     ESP_LOGE(TAG, "All download URLs failed");
     s_snapshot.state = UPDATE_STATE_FAILED;
-    strncpy(s_snapshot.error_message, "Download failed from all mirrors", 
+    strncpy(s_snapshot.error_message, "Failed to download update from all sources",
             sizeof(s_snapshot.error_message) - 1);
     lv_async_call(post_ota_changed_event, NULL);
 }
@@ -2897,7 +2903,7 @@ Run comprehensive test matrix, verify all OTA/recovery scenarios, re-run Phase 1
 | Primary manifest fails, mirror succeeds | Downloads from mirror | |
 | Both manifests fail | Error: "Cannot fetch manifest" | |
 | Primary binary fails, mirror succeeds | Downloads from mirror | |
-| All binary URLs fail | Error: "Download failed from all mirrors" | |
+| All binary URLs fail | Error: "Failed to download update from all sources" | |
 | **OTA Workflow** | | |
 | Full successful OTA | Progress 0→100%, reboot, new version | |
 | Cancel during download | Download stopped, state reset | |

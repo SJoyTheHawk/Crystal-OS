@@ -14,7 +14,7 @@ bus app memory constraints (documented in `APP_PLATFORM_BUS_LESSONS.md`) inform 
 
 - Production source:
   - Primary: `https://rockyroad.studio/apps/crystal-os/stable/manifest.json`
-  - Mirror: `https://updates.bubstal.com/crystal-os/stable/manifest.json`
+  - Mirror: `https://updates.bubstal.com/crystal-os/stable/manifest.json` (currently unreachable; hosting deferred)
   - UI label: `Stable`
 - Development source:
   - `https://rockyroad.studio/apps/crystal-os/staging/manifest.json`

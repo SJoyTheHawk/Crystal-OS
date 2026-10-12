@@ -79,7 +79,7 @@ esp-coredump.py info_corefile -t raw build/crystal_os.elf coredump.bin
 
 The OTA hosting is at `https://rockyroad.studio/apps/crystal-os/`:
 - Primary manifest: `https://rockyroad.studio/apps/crystal-os/stable/manifest.json`
-- Mirror manifest: `https://updates.bubstal.com/crystal-os/stable/manifest.json`
+- Mirror manifest: `https://updates.bubstal.com/crystal-os/stable/manifest.json` (hosting deferred)
 - Binaries: `https://rockyroad.studio/apps/crystal-os/releases/{version}/crystal_os.bin`
 
 ### Quick Test Setup

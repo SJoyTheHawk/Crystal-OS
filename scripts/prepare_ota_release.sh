@@ -46,13 +46,13 @@ fi
 SIZE="$(stat -f%z "${BUILD_IMAGE}")"
 
 ROCKY_ROOT="${OUTPUT_ROOT}/rockyroad.studio/apps/crystal-os"
-BUBSTAL_ROOT="${OUTPUT_ROOT}/updates.bubstal.com/crystal-os"
-rm -rf "${ROCKY_ROOT}" "${BUBSTAL_ROOT}"
+MIRROR_ROOT="${OUTPUT_ROOT}/updates.bubstal.com/crystal-os"
+rm -rf "${ROCKY_ROOT}" "${MIRROR_ROOT}"
 mkdir -p "${ROCKY_ROOT}/stable" "${ROCKY_ROOT}/releases/${VERSION}"
-mkdir -p "${BUBSTAL_ROOT}/stable" "${BUBSTAL_ROOT}/releases/${VERSION}"
+mkdir -p "${MIRROR_ROOT}/stable" "${MIRROR_ROOT}/releases/${VERSION}"
 
 cp "${BUILD_IMAGE}" "${ROCKY_ROOT}/releases/${VERSION}/crystal_os.bin"
-cp "${BUILD_IMAGE}" "${BUBSTAL_ROOT}/releases/${VERSION}/crystal_os.bin"
+cp "${BUILD_IMAGE}" "${MIRROR_ROOT}/releases/${VERSION}/crystal_os.bin"
 
 cat > "${ROCKY_ROOT}/stable/manifest.json" <<EOF_MANIFEST
 {
@@ -69,9 +69,9 @@ cat > "${ROCKY_ROOT}/stable/manifest.json" <<EOF_MANIFEST
   "notes": "Crystal OS ${VERSION}"
 }
 EOF_MANIFEST
-cp "${ROCKY_ROOT}/stable/manifest.json" "${BUBSTAL_ROOT}/stable/manifest.json"
+cp "${ROCKY_ROOT}/stable/manifest.json" "${MIRROR_ROOT}/stable/manifest.json"
 
 printf 'OTA release prepared: %s\n' "${OUTPUT_ROOT}"
 printf 'Version: %s\nSize: %s bytes\nSHA-256: %s\n' "${VERSION}" "${SIZE}" "${SHA256}"
 printf '\nUpload %s/rockyroad.studio/* to the rockyroad.studio document root.\n' "${OUTPUT_ROOT}"
-printf 'Upload %s/updates.bubstal.com/* to the updates.bubstal.com document root.\n' "${OUTPUT_ROOT}"
+printf 'Upload %s/updates.bubstal.com/* to the updates.bubstal.com document root when it is available.\n' "${OUTPUT_ROOT}"
