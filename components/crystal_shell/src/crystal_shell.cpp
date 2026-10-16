@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 
 #include "crystal_shell.hpp"
+#include "manage_apps_page.h"
 
 #include <cmath>
 #include <stdlib.h>
@@ -2752,6 +2753,12 @@ void open_restart_confirm()
     crystal_shell_set_modal_open(true);
 }
 
+void manage_apps_page_open()
+{
+    lv_obj_t *content = system_page_push("Manage Apps");
+    if (content != nullptr) crystal_manage_apps_page_build(content);
+}
+
 void settings_push_system()
 {
     lv_obj_t *content = system_page_push("System");
@@ -2801,6 +2808,8 @@ void settings_open()
     lv_obj_t *region = settings_row(content, "Region & Time", current_timezone_label());
     s_root_region_row = region;
     lv_obj_add_event_cb(region, [](lv_event_t *) { settings_push_region_time(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *manage = settings_row(content, "Manage Apps", "View installed and available apps");
+    lv_obj_add_event_cb(manage, [](lv_event_t *) { manage_apps_page_open(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *system = settings_row(content, "System", hal().system_info != nullptr ? hal().system_info->app_version() : "About and status");
     lv_obj_add_event_cb(system, [](lv_event_t *) { settings_push_system(); }, LV_EVENT_CLICKED, nullptr);
 }

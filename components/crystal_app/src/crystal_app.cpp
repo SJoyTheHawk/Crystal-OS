@@ -5,10 +5,12 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 #include "crystal_hal.hpp"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "nvs.h"
 
 static const char *TAG = "crystal_app";
 
@@ -83,6 +85,70 @@ bool CrystalState::erase(const char *key)
         return false;
     }
     return hal().storage != nullptr && hal().storage->erase(full_key.c_str());
+}
+
+bool CrystalState::clear()
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("crystal", NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "clear '%s': nvs_open failed: %s", prefix_.c_str(), esp_err_to_name(err));
+        return false;
+    }
+    struct CloseHandle {
+        nvs_handle_t handle;
+        ~CloseHandle() { nvs_close(handle); }
+    } close_handle{handle};
+    struct ReleaseIterator {
+        nvs_iterator_t value = nullptr;
+        ~ReleaseIterator() { nvs_release_iterator(value); }
+    } iterator;
+
+    // Enumerate the opened namespace using the ESP-IDF 6.1 iterator API.
+    // Finish the scan before mutating NVS; a failed scan must not erase a
+    // partial list. Include the trailing dot when matching the app prefix.
+    std::vector<std::string> keys;
+    err = nvs_entry_find_in_handle(handle, NVS_TYPE_ANY, &iterator.value);
+    while (err == ESP_OK) {
+        nvs_entry_info_t info;
+        err = nvs_entry_info(iterator.value, &info);
+        if (err != ESP_OK) break;
+        if (strncmp(info.key, prefix_.c_str(), prefix_.size()) == 0) {
+            keys.emplace_back(info.key);
+        }
+        err = nvs_entry_next(&iterator.value);
+    }
+    // The iterator API may already have released it on reaching the end.
+    nvs_release_iterator(iterator.value);
+    iterator.value = nullptr;
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGE(TAG, "clear '%s': NVS enumeration failed: %s", prefix_.c_str(), esp_err_to_name(err));
+        return false;
+    }
+
+    bool ok = true;
+    size_t erased = 0;
+    for (const auto &key : keys) {
+        err = nvs_erase_key(handle, key.c_str());
+        if (err == ESP_OK) {
+            ++erased;
+        } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGE(TAG, "clear '%s': erase %s failed: %s",
+                     prefix_.c_str(), key.c_str(), esp_err_to_name(err));
+            ok = false;
+        }
+    }
+    if (!keys.empty()) {
+        err = nvs_commit(handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "clear '%s': nvs_commit failed: %s", prefix_.c_str(), esp_err_to_name(err));
+            ok = false;
+        }
+    }
+    if (ok) {
+        ESP_LOGI(TAG, "Cleared %zu keys under prefix '%s'", erased, prefix_.c_str());
+    }
+    return ok;
 }
 
 bool CrystalState::get_u32(const char *key, uint32_t *value) const

@@ -27,6 +27,7 @@ struct InstalledRow {
 };
 
 std::vector<InstalledRow> s_installed;
+std::vector<CrystalAppEntry> s_catalog;
 
 bool make_key(const char *id, char suffix, char *out, size_t out_size)
 {
@@ -64,6 +65,16 @@ bool write_value(const char *id, char suffix, const T &value)
 size_t crystal_registry_installed_count()
 {
     return s_installed.size();
+}
+
+size_t crystal_registry_catalog_count()
+{
+    return s_catalog.size();
+}
+
+const CrystalAppEntry *crystal_registry_catalog_entry(size_t index)
+{
+    return index < s_catalog.size() ? &s_catalog[index] : nullptr;
 }
 
 CrystalApp *crystal_registry_installed_app(size_t index)
@@ -118,15 +129,20 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
         return false;
     }
 
+    // Validate the entire table before publishing it, including disabled apps.
+    for (size_t i = 0; i < count; ++i) {
+        if (entries[i].id == nullptr || entries[i].id[0] == '\0' || entries[i].factory == nullptr) {
+            ESP_LOGE(TAG, "invalid app table entry at index %u", static_cast<unsigned>(i));
+            return false;
+        }
+    }
+    s_catalog.clear();
+    if (count != 0) s_catalog.assign(entries, entries + count);
     s_installed.clear();
     std::vector<RegistryRow> enabled;
     enabled.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         const CrystalAppEntry &entry = entries[i];
-        if (entry.id == nullptr || entry.id[0] == '\0' || entry.factory == nullptr) {
-            ESP_LOGE(TAG, "invalid app table entry at index %u", static_cast<unsigned>(i));
-            return false;
-        }
         if (!crystal_registry_enabled(entry.id, entry.default_enabled)) {
             ESP_LOGI(TAG, "disabled: %s", entry.id);
             continue;

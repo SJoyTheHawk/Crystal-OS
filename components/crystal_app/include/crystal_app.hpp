@@ -20,6 +20,11 @@ public:
     bool get(const char *key, void *value, size_t *length) const;
     bool set(const char *key, const void *value, size_t length);
     bool erase(const char *key);
+    // Erase persisted NVS keys under this instance's app-name prefix. An empty
+    // prefix namespace is a successful no-op. False means a storage error;
+    // some keys may already have been erased. Stop app writes before calling;
+    // this does not reset live app objects or service-owned state.
+    bool clear();
     bool get_u32(const char *key, uint32_t *value) const;
     bool set_u32(const char *key, uint32_t value);
 

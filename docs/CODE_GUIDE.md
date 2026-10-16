@@ -386,6 +386,7 @@ public:
     bool get(const char *key, void *value, size_t *length) const;   // <= 2048 bytes
     bool set(const char *key, const void *value, size_t length);
     bool erase(const char *key);
+    bool clear();   // Phase 13.2: erase persisted app-prefix keys
     bool get_u32(const char *key, uint32_t *value) const;
     bool set_u32(const char *key, uint32_t value);
 private:
@@ -393,9 +394,13 @@ private:
 };
 ```
 
-Still owed, and needed by Phase 13's clear-data row: `clear()` over the whole
-prefix. String helpers (`set_str`/`get_str`) are worth adding when the first app
-stores draft text — Notes and the Wi-Fi credential flow both will.
+Phase 13.2 adds `bool clear()` over the whole app prefix in the `crystal` NVS
+namespace. It collects matching keys before erasing and reports enumeration,
+erase, and commit failures; an empty prefix succeeds. Stop app writers before
+calling it. It does not reset live objects or service-owned state, and errors
+can leave partial changes. Use the actual app's `state()` instance: its prefix
+is hashed from the constructor name, not the lowercase registry ID. String
+helpers (`set_str`/`get_str`) remain separate future work.
 
 The namespace is not cosmetic. It is what makes a future script sandbox
 possible: an app that can read arbitrary NVS can read WiFi credentials.
@@ -1498,8 +1503,8 @@ scrolls.
 **Its state is in members, so a switch away erases it.** `formula_len`,
 `formula_label`, and `history_label` are plain fields. Cards are destroyed on
 switch, so the accumulator has to be in `CrystalState`. It is a string, so use
-the byte API — `CrystalState` has `get`/`set`/`erase`/`get_u32`/`set_u32` and
-nothing else:
+the byte API — `CrystalState` has `get`/`set`/`erase`/`get_u32`/`set_u32` plus
+the Phase 13.2 `clear()` operation:
 
 ```cpp
 // onPause: the formula text is the state. Store the NUL as well.
@@ -1731,7 +1736,7 @@ if (hal().storage->get("crash.new", &pending, &length) && pending == 1) {
 ```
 
 Keep the message free of PC values and task names. The toast is a reassurance that
-the device noticed; the detail belongs in Settings › System › Device Status, which
+the device noticed; the detail belongs in Settings › Device Status, which
 reads `crash.last` and formats a `Last Crash` row beside the existing `Last Reset`
 one (`crystal_shell.cpp:2708`). One crash, two audiences.
 
@@ -1803,7 +1808,7 @@ frame, letting it revert is the correct outcome.
 
 ### The update path
 
-Settings › System › Software Update, one page in `crystal_shell` via
+Settings › Software Update, one page in `crystal_shell` via
 `system_page_push()`. The image comes from an HTTPS manifest whose URL is
 compiled in as a default and editable in that page — `esp_https_ota` with the
 certificate bundle, which `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY`
@@ -1885,17 +1890,27 @@ size_t   crystal_registry_installed_count();
 const char *crystal_registry_installed_id(size_t index);
 ```
 
-Install is `set_enabled(id, true)`; reorder is `set_slot`. Iterate with
-`installed_count()` / `installed_id()` — do not keep a second list of app ids in
-the catalog UI, or it drifts from `kApps` the first time an app is added.
+Install is set_enabled(id, true); reorder is set_slot. Phase 13.3 adds
+crystal_registry_catalog_count() / crystal_registry_catalog_entry() to expose
+all validated firmware entries, including disabled apps. The UI must use these
+rather than installed queries or a second list of IDs. Read enabled and slot
+values with each entry's defaults.
 
-**One thing does not exist yet: clear-data.** `CrystalState` exposes
-`get`/`set`/`erase`/`get_u32`/`set_u32` and no `clear()`. Erasing one app's data
-means either adding `CrystalState::clear()` (which knows its own `prefix_` and
-can iterate that namespace) or an explicit key list per app. Prefer the former —
-a per-app key list in the catalog is a list that goes stale silently. The design
-doc's Manage Apps section refers to `CrystalState::clear()` as though it exists;
-it is a to-build, not a call site.
+**Phases 13.3–13.4 supply Manage Apps** directly under Settings.
+The shell owns the page stack; manage_apps_page.cpp populates rows in saved
+slot order. Install/Installed saves the enabled flag, updates the row, and
+explains that a restart applies changes. Failed writes show a visible error;
+the last enabled entry cannot be removed because shell startup requires an app.
+Clear remains a disabled preview. Phase 13.5 makes bars handles draggable,
+swaps persisted slots with rollback on a failed second write, preserves scroll,
+and requires restart for launcher order. Clear confirmation and live apply are
+later phases. Uninstall does not erase app state.
+
+**Phase 13.2 supplies the clear-data primitive.** `CrystalState::clear()` now
+erases persisted keys under its own app-name prefix. The clear confirmation
+flow remains a future sub-phase. Call it on the correct app state
+instance after stopping writers, and handle false as potentially partial
+erasure. It does not change registry settings or reset shared services.
 
 **Disabled apps are never constructed**, so a hidden app costs flash and no RAM.
 That also means toggling one on cannot instantiate it retroactively — decide
