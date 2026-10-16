@@ -340,6 +340,8 @@ lv_obj_t *s_quick_volume = nullptr;
 lv_obj_t *s_quick_wifi = nullptr;
 lv_obj_t *s_wifi_dialog = nullptr;
 lv_obj_t *s_system_dialog = nullptr;
+lv_obj_t *s_manage_apps_page = nullptr;
+lv_obj_t *s_manage_apps_restart_dialog = nullptr;
 lv_obj_t *s_wifi_page = nullptr;
 lv_obj_t *s_wifi_page_list = nullptr;
 lv_obj_t *s_wifi_page_status = nullptr;
@@ -1929,6 +1931,9 @@ lv_obj_t *system_page_push(const char *title)
 
 void clear_page_cache(lv_obj_t *page)
 {
+    if (s_manage_apps_page == page) {
+        s_manage_apps_page = nullptr;
+    }
     if (s_root_settings_page == page) {
         s_root_settings_page = nullptr;
         s_root_network_row = nullptr;
@@ -2756,7 +2761,90 @@ void open_restart_confirm()
 void manage_apps_page_open()
 {
     lv_obj_t *content = system_page_push("Manage Apps");
-    if (content != nullptr) crystal_manage_apps_page_build(content);
+    if (content != nullptr) {
+        s_manage_apps_page = lv_obj_get_parent(content);
+        crystal_manage_apps_page_build(content);
+    }
+}
+
+void manage_apps_restart_prompt_close()
+{
+    if (s_manage_apps_restart_dialog != nullptr) {
+        lv_obj_del(s_manage_apps_restart_dialog);
+        s_manage_apps_restart_dialog = nullptr;
+    }
+    crystal_shell_set_modal_open(false);
+}
+
+void manage_apps_restart_later()
+{
+    manage_apps_restart_prompt_close();
+    if (s_manage_apps_page != nullptr && s_system_page_depth > 0 &&
+            s_system_page_stack[s_system_page_depth - 1] == s_manage_apps_page) {
+        system_page_pop();
+    }
+}
+
+void open_manage_apps_restart_prompt()
+{
+    if (s_manage_apps_restart_dialog != nullptr) return;
+    s_manage_apps_restart_dialog = lv_obj_create(lv_layer_top());
+    if (s_manage_apps_restart_dialog == nullptr) return;
+    lv_obj_set_size(s_manage_apps_restart_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_manage_apps_restart_dialog, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_manage_apps_restart_dialog, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_manage_apps_restart_dialog, 0, 0);
+    lv_obj_add_flag(s_manage_apps_restart_dialog, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_manage_apps_restart_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_manage_apps_restart_dialog);
+    lv_obj_set_size(card, 380, 220);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x59636e), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 22, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(card);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, "Restart to Apply Changes?");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *detail = lv_label_create(card);
+    lv_obj_set_width(detail, 332);
+    lv_obj_set_height(detail, 72);
+    lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(detail,
+                      "Your app changes have been saved. Restart Crystal OS now to apply them?");
+    lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 48);
+
+    lv_obj_t *restart = lv_btn_create(card);
+    lv_obj_set_size(restart, 154, 44);
+    lv_obj_align(restart, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(restart, lv_color_hex(0x3b82f6), 0);
+    lv_obj_t *restart_label = lv_label_create(restart);
+    lv_label_set_text(restart_label, "Restart now");
+    lv_obj_center(restart_label);
+    lv_obj_add_event_cb(restart, [](lv_event_t *) { esp_restart(); },
+                        LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *later = lv_btn_create(card);
+    lv_obj_set_size(later, 154, 44);
+    lv_obj_align(later, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(later, lv_color_hex(0x424852), 0);
+    lv_obj_t *later_label = lv_label_create(later);
+    lv_label_set_text(later_label, "Later");
+    lv_obj_center(later_label);
+    lv_obj_add_event_cb(later, [](lv_event_t *) { manage_apps_restart_later(); },
+                        LV_EVENT_CLICKED, nullptr);
+    crystal_shell_set_modal_open(true);
 }
 
 void settings_push_system()
@@ -2848,6 +2936,10 @@ bool shell_consume_back()
         system_dialog_close();
         return true;
     }
+    if (s_manage_apps_restart_dialog != nullptr) {
+        manage_apps_restart_prompt_close();
+        return true;
+    }
     if (s_update_dialog != nullptr) {
         crystal_update_cancel_check();
         update_dialog_close();
@@ -2858,6 +2950,12 @@ bool shell_consume_back()
         return true;
     }
     if (s_system_page_depth > 0) {
+        if (s_manage_apps_page != nullptr &&
+                s_system_page_stack[s_system_page_depth - 1] == s_manage_apps_page &&
+                crystal_manage_apps_page_has_pending_restart()) {
+            open_manage_apps_restart_prompt();
+            return true;
+        }
         // At the Settings root (depth 1), close Settings entirely instead of
         // popping. The back button shows LV_SYMBOL_CLOSE at depth 1 to signal
         // this; the bottom swipe matches that behaviour.

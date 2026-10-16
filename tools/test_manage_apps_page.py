@@ -220,6 +220,7 @@ int main() {
     };
     drag(1, 2);
     assert(slot_writes == 2 && slots.at("clock") == 3 && slots.at("weather") == 2);
+    assert(crystal_manage_apps_page_has_pending_restart());
     check_row(content, 1, "weather", true);
     check_row(content, 2, "clock", true);
     drag(2, 1);
@@ -252,6 +253,7 @@ int main() {
     fail_slot_at = 0;
     fail_rollback = false;
     slots.clear();
+    crystal_manage_apps_page_clear_pending_restart();
     crystal_manage_apps_page_build(content);
     lv_obj_update_layout(page);
     for (int i = 0; i < 4; ++i) check_row(content, i, catalog[i].id, true);
@@ -265,6 +267,7 @@ int main() {
     auto *clock_row = lv_obj_get_child(content, 2);
     click(1);
     assert(!saved.at("clock"));
+    assert(crystal_manage_apps_page_has_pending_restart());
     assert(lv_obj_get_child(content, 2) == clock_row);
     check_row(content, 1, "clock", false);
     assert(std::strstr(label(content, 0), "Restart") != nullptr);

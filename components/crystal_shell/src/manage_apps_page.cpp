@@ -26,6 +26,7 @@ struct DragState {
 };
 
 DragState s_drag;
+bool s_pending_restart = false;
 
 lv_obj_t *app_button(lv_obj_t *row, const char *text, lv_coord_t width, bool disabled)
 {
@@ -229,7 +230,10 @@ void handle_drag_end(lv_event_t *event, bool dropped)
             : "Order could not be fully saved or restored.\nCheck the list and try again.";
         set_notice(content, message, true);
     }
-    else set_notice(content, "Order saved. Restart to apply on the launcher.\nClear is coming later.", false);
+    else {
+        s_pending_restart = true;
+        set_notice(content, "Order saved. Restart to apply on the launcher.\nClear is coming later.", false);
+    }
     refresh_row_order(content);
 }
 
@@ -261,6 +265,7 @@ void toggle_btn_cb(lv_event_t *event)
         set_notice(content, "Could not save the change. Please try again.\nThe app selection has not changed.", true);
         return;
     }
+    s_pending_restart = true;
     // Refresh just this row: preserve scroll/focus and the event target. No
     // asynchronous callbacks or cached widget pointers can outlive the page.
     lv_label_set_text(lv_obj_get_child(button, 0), enabled ? "Install" : "Installed");
@@ -269,6 +274,16 @@ void toggle_btn_cb(lv_event_t *event)
     if (!enabled && !clear) app_button(row, "Clear", 64, true);
     set_notice(content, "Saved. Restart to apply app changes.\nDrag handles to reorder. Clear is coming later.", false);
 }
+}
+
+bool crystal_manage_apps_page_has_pending_restart()
+{
+    return s_pending_restart;
+}
+
+void crystal_manage_apps_page_clear_pending_restart()
+{
+    s_pending_restart = false;
 }
 
 void crystal_manage_apps_page_build(lv_obj_t *content)
