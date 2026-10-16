@@ -22,6 +22,8 @@ Validation:
 - `DEVELOPER_DIR=/Library/Developer/CommandLineTools python3 tools/test_manage_apps_page.py --output-dir /tmp/whole-row-ui`: PASS. This uses real LVGL pointer samples and checks placeholder movement, release handling, persistence writes, layout, toggles, scrolling, and teardown.
 - `./scripts/build_dev.sh`: PASS, signed development image.
 - `git diff --check`: PASS.
-- Physical drag/release and reboot persistence still need to be checked on the board after flashing the new image.
+- Device acceptance (2026-10-17): after flashing, physical full-row drag/release
+  works and the resulting order survives reboot. A follow-up restart prompt
+  now warns when leaving Manage Apps with saved-but-unapplied app changes.
 
 Phase 13.6 clear-data confirmation is next. Changes are uncommitted.

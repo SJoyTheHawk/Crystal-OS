@@ -12,7 +12,7 @@
 - [x] 13.2 CrystalState Clear (verified 2026-10-15)
 - [x] 13.3 Manage Apps Page UI (3h)
 - [x] 13.4 Install/Uninstall Logic (3h)
-- [x] 13.5 Reorder with Drag Handles (3h)
+- [x] 13.5 Reorder with Drag Handles (3h, verified 2026-10-17)
 - [ ] 13.6 Clear Data Confirmation (2h)
 - [ ] 13.7 Apply Changes Live (4h)
 - [ ] 13.8 Full Validation Suite (4h)
@@ -175,6 +175,8 @@ restart; Clear and drag remain pending. Manage Apps stays directly under Setting
 - [x] Save the resulting row order as slot values
 - [x] Restore the previous order if a slot write fails
 - [x] Keep the saved order visible after release
+- [x] Prompt before leaving with saved changes that require restart
+- [x] Offer “Restart now” or “Later” from the prompt
 
 ### Validation Checkpoints
 - [x] Build succeeds
@@ -183,7 +185,9 @@ restart; Clear and drag remain pending. Manage Apps stays directly under Setting
 - [x] Placeholder and intervening rows shift during movement
 - [x] Release places the row at its new position
 - [x] New slot order is written and survives a rebuild
-- [ ] Verify the physical board gesture and reboot after flashing
+- [x] Verify the physical board gesture and reboot after flashing
+- [x] Back prompt explains that saved app changes require a restart
+- [x] “Later” returns to Settings; “Restart now” reboots the device
 
 ### Commit Message
 ```
@@ -197,7 +201,7 @@ Phase 13.5: Add drag-to-reorder
 Checkpoint: Drag handle moves app position, persists to NVS
 ```
 
-Validation: [Phase 13.5 preparation](PHASE_13_5_VALIDATION.md). Manage Apps remains directly under Settings; 13.6 clear confirmation is next.
+Validation: [Phase 13.5 results](PHASE_13_5_VALIDATION.md). Manage Apps remains directly under Settings; 13.6 clear confirmation is next.
 
 ---
 
