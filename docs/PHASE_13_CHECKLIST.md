@@ -13,11 +13,11 @@
 - [x] 13.3 Manage Apps Page UI (3h)
 - [x] 13.4 Install/Uninstall Logic (3h)
 - [x] 13.5 Reorder with Drag Handles (3h, verified 2026-10-17)
-- [ ] 13.6 Clear Data Confirmation (2h)
+- [x] 13.6 Clear Data Confirmation (verified 2026-10-17)
 - [ ] 13.7 Apply Changes Live (4h)
 - [ ] 13.8 Full Validation Suite (4h)
 
-**Current status:** Phases 13.1–13.5 implemented and validated; Phase 13.6 and later remain pending
+**Current status:** Phases 13.1–13.6 implemented and validated; Phase 13.7 and later remain pending
 
 **Total: ~23 hours (~3 days)**
 
@@ -201,33 +201,39 @@ Phase 13.5: Add drag-to-reorder
 Checkpoint: Drag handle moves app position, persists to NVS
 ```
 
-Validation: [Phase 13.5 results](PHASE_13_5_VALIDATION.md). Manage Apps remains directly under Settings; 13.6 clear confirmation is next.
+Validation: [Phase 13.5 results](PHASE_13_5_VALIDATION.md). Manage Apps remains directly under Settings.
 
 ---
 
-## Sub-Phase 13.6: Clear Data Confirmation ✓ / ✗
+## Sub-Phase 13.6: Clear Data Confirmation — complete
 
 ### Tasks
-- [ ] Add show_clear_confirmation() function
-- [ ] Create modal dialog with backdrop
-- [ ] Show app name and warning message
-- [ ] Add Cancel and Clear Data buttons
-- [ ] Wire clear_data_confirmed() callback
-- [ ] Call CrystalState::clear() on confirmation
-- [ ] Wire clear_data_cancelled() callback
-- [ ] Wire Clear button to show_clear_confirmation()
+- [x] Add show_clear_confirmation() function
+- [x] Create modal dialog with backdrop
+- [x] Show app name and warning message
+- [x] Add Cancel and Clear Data buttons
+- [x] Wire clear_data_confirmed() callback
+- [x] Call CrystalState::clear() on confirmation through the stopped app instance
+- [x] Wire clear_data_cancelled() callback
+- [x] Wire Clear button to show_clear_confirmation()
 
 ### Validation Checkpoints
-- [ ] Build succeeds
-- [ ] Tap "Clear" on enabled app
-- [ ] Dialog appears with "Clear App Data" title
-- [ ] Message shows correct app name
-- [ ] Warning about irreversibility shown
-- [ ] Tap "Cancel" closes dialog without erasing
-- [ ] Tap "Clear Data" closes dialog and erases
-- [ ] Logs show "Clearing data for X"
-- [ ] Logs show "Successfully cleared data for X"
-- [ ] Open app confirms state reset
+- [x] Signed development build succeeds
+- [x] Tap "Clear" on enabled app
+- [x] Dialog appears with "Clear App Data" title
+- [x] Message shows correct app name
+- [x] Warning about irreversibility shown
+- [x] Tap "Cancel" closes dialog without erasing
+- [x] Tap "Clear Data" closes dialog and erases
+- [x] Clearing/success log statements verified in implementation (serial transcript not supplied)
+- [x] Open app confirms state reset, including after reboot
+- [x] Clock and Weather reset behavior passes device testing
+- [x] Navigation, modal isolation, and unrelated-data preservation pass
+- [x] Newly enabled app can be cleared before restart (optional edge case)
+
+Closed on 2026-10-17 following the user's confirmation that all five device
+test groups passed, including the optional edge case. Automated evidence and
+acceptance scope: [Phase 13.6 results](PHASE_13_6_VALIDATION.md).
 
 ### Commit Message
 ```

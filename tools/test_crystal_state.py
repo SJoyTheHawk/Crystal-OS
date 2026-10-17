@@ -147,6 +147,14 @@ public:
     bool erase(const char *key) override { return namespaces["crystal"].erase(key) != 0; }
 };
 static void no_leaks() { assert(handles == 0 && iterators == 0); }
+class TestApp : public CrystalApp {
+public:
+    TestApp() : CrystalApp("Calculator") {}
+    unsigned resets = 0;
+    void onClearData() override { ++resets; }
+    bool onPause() override { return state().set_u32("old", 99); }
+    bool onDestroy() override { return state().set_u32("old", 100); }
+};
 int main() {
     Storage storage; test_hal.storage = &storage;
     CrystalState target("Phase13.2 target"), other("Phase13.2 sentinel");
@@ -208,6 +216,30 @@ int main() {
     race_missing = false;
     assert(namespaces == expected);
     std::puts("PASS: CrystalState clear, prefix/namespace isolation, empty/repeated clear, reuse, storage failures and resource cleanup");
+    TestApp app;
+    auto &lifecycle = static_cast<ESP_Brookesia_PhoneApp &>(app);
+    assert(lifecycle.init());
+    assert(app.clearData() && app.resets == 1);
+    assert(lifecycle.run());
+    assert(app.state().set_u32("formula", 42));
+    assert(!app.clearData() && app.resets == 1);
+    assert(lifecycle.pause());
+    assert(!app.clearData() && app.resets == 1);
+    assert(lifecycle.close());
+    assert(app.state().get_u32("old", &value) && value == 100);
+    CrystalState wrong_id("calculator"), sibling("Weather");
+    assert(wrong_id.set_u32("formula", 7));
+    assert(sibling.set_u32("cache", 8));
+    assert(app.clearData() && app.resets == 2);
+    assert(!app.state().get_u32("formula", &value));
+    assert(!app.state().get_u32("old", &value));
+    assert(wrong_id.get_u32("formula", &value) && value == 7);
+    assert(sibling.get_u32("cache", &value) && value == 8);
+    fail_open = true;
+    assert(!app.clearData() && app.resets == 3);
+    fail_open = false;
+    assert(app.clearData() && app.resets == 4); no_leaks();
+    std::puts("PASS: app clear lifecycle guard, stop-before-erase, reset hook, constructor namespace and retry");
 }
 '''
 

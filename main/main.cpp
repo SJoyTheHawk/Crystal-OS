@@ -145,6 +145,11 @@ extern "C" void app_main(void)
 
     lv_display_t *display = bsp_display_start();
     require_boot_step(display != nullptr, "Failed to start display");
+    crystal_hal_set_button_callback(crystal_core_wake_display);
+    // Establish a known OFF state before any LVGL rendering. crystal_hal_init()
+    // below restores only the cached user level, so the panel stays dark until
+    // the first frame is fully rendered.
+    (void)bsp_display_brightness_set(0);
     crystal_hal_init();
     if (display->driver != nullptr) {
         display->driver->rounder_cb = my_rounder_cb;
@@ -243,4 +248,8 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "main task stack headroom: %u bytes",
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     bsp_display_unlock();
+    // In RGB direct mode every LVGL draw reaches the panel immediately. Keep
+    // the backlight off through all object creation and enable it only after
+    // the final refresh and LVGL unlock, so intermediate UI states stay hidden.
+    (void)bsp_display_brightness_set(hal().brightness->get());
 }

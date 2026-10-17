@@ -107,6 +107,8 @@ int crystal_hal_get_volume();
 // Must be called after the board display has initialized its backlight.
 void crystal_hal_init();
 void crystal_hal_bind_touch(void *lvgl_input_device);
+using crystal_hal_button_callback_t = void (*)();
+void crystal_hal_set_button_callback(crystal_hal_button_callback_t callback);
 
 // Plays the short timer-expiry alert through the board speaker, if available.
 void crystal_hal_timer_alarm();

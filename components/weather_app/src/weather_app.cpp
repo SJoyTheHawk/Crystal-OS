@@ -143,6 +143,7 @@ WeatherApp::WeatherApp() : CrystalApp("Weather", &weather_icon)
 
 bool WeatherApp::onCreate()
 {
+    discard_updates_until_open_ = false;
     const lv_area_t area = getVisualArea();
     const lv_coord_t width = area.x2 - area.x1 + 1;
     const lv_coord_t height = area.y2 - area.y1 + 1;
@@ -518,8 +519,17 @@ void WeatherApp::setStatus(const Reading &reading, bool unconfirmed, bool expire
     lv_label_set_text(status_, line);
 }
 
+void WeatherApp::onClearData()
+{
+    // A queued service response must not repopulate the cleared cache.
+    discard_updates_until_open_ = true;
+    requested_at_ = 0;
+    last_fetch_failed_ = false;
+}
+
 void WeatherApp::update(const CrystalWeatherReading &incoming)
 {
+    if (discard_updates_until_open_) return;
     requested_at_ = 0;
     if (!incoming.success) {
         last_fetch_failed_ = true;

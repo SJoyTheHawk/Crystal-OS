@@ -38,6 +38,7 @@ bool StateTestApp::onCreate()
     count_label_ = lv_label_create(root);
     lv_obj_set_style_text_font(count_label_, &lv_font_montserrat_20, 0);
     lv_obj_align(count_label_, LV_ALIGN_TOP_MID, 0, 66);
+    counter_ = 0;
     (void)state().get_u32("counter", &counter_);
     refresh_count();
 

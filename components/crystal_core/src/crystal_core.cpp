@@ -111,6 +111,7 @@ crystal_connectivity_update_cb_t s_connectivity_update = nullptr;
 crystal_battery_update_cb_t s_battery_update = nullptr;
 void *s_status_context = nullptr;
 PowerState s_power_state = PowerState::Full;
+std::atomic_bool s_button_wake_requested{false};
 std::atomic_bool s_time_valid{false};
 std::atomic_bool s_sntp_initialized{false};
 std::atomic_bool s_sntp_sync_started{false};
@@ -677,6 +678,9 @@ void update_timer_indicator(lv_timer_t *)
 void check_power_state(lv_timer_t *)
 {
     if (s_display == nullptr || s_service_task == nullptr) return;
+    if (s_button_wake_requested.exchange(false)) {
+        lv_disp_trig_activity(s_display);
+    }
     // Auto Dimming is the master switch for both timeouts. Off means the panel
     // stays at the user's brightness indefinitely, so restore Full if a timeout
     // had already taken it down before the switch was flipped.
@@ -1285,6 +1289,15 @@ bool crystal_core_consume_wake_touch()
         xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::Full), eSetValueWithOverwrite);
     }
     return true;
+}
+
+void crystal_core_wake_display()
+{
+    s_button_wake_requested.store(true);
+    s_power_state = PowerState::Full;
+    if (s_service_task != nullptr) {
+        xTaskNotify(s_service_task, static_cast<uint32_t>(PowerState::Full), eSetValueWithOverwrite);
+    }
 }
 
 bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,

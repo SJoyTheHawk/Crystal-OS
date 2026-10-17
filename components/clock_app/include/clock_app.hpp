@@ -17,6 +17,7 @@ protected:
     bool onPause() override;
     bool onResume() override;
     bool onDestroy() override;
+    void onClearData() override;
 
 private:
     static void timer_preset_cb(lv_event_t *event);

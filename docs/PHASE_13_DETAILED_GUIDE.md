@@ -584,6 +584,31 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ## Sub-Phase 13.6: Add Clear Data Confirmation
 
+**Status: complete, device accepted 2026-10-17.** The user confirmed all five
+device test groups, including clearing a newly enabled app before restart.
+See [Phase 13.6 validation and sign-off](PHASE_13_6_VALIDATION.md).
+
+### Repository implementation notes
+
+The illustrative code below is historical and is superseded by the production
+implementation in `components/crystal_shell/src/manage_apps_page.cpp` and the
+shell's `manage_apps_clear_data()` callback:
+
+- Manage Apps remains directly under Settings. Clear opens a modal with Cancel
+  and Clear Data, reports success/failure, and resets saved data immediately.
+- Resolve the installed app and stop it before clearing. Use
+  `CrystalApp::clearData()` and its `state().clear()`; constructor names define
+  namespaces (Calculator), not registry IDs (calculator). The snippet's
+  `CrystalState state(s_clear_target_id)` must not be copied into this system.
+- Newly enabled apps use a temporary factory instance for the correct namespace.
+- Reset hooks discard Clock's retained timer/stopwatch/lap state and suppress
+  late Weather cache writes until reopening. Storage failures can be partial
+  and are shown explicitly with a retry option.
+- Back, cancellation, page deletion, and rebuilding release the modal safely.
+  The production card uses configured fonts and keeps both buttons in bounds.
+- Clear preserves install/order settings and creates no new restart requirement.
+  Prior install/reorder changes retain the Restart now / Later behavior.
+
 ### Goal
 Wire the Clear button to show a confirmation dialog, then erase the app's data on confirm.
 

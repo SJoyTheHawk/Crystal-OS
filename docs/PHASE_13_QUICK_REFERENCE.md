@@ -13,7 +13,7 @@
 | 13.3 | Manage Apps Page UI | Page displays all apps with current state | 3h |
 | 13.4 | Install/Uninstall Logic | Toggle saves enabled flag; restart applies | 3h |
 | 13.5 | Reorder with Drag Handles | Drag the whole row; rows shift and restart applies | 3h |
-| 13.6 | Clear Data Confirmation | Clear-data shows dialog, erases on confirm | 2h |
+| 13.6 | Clear Data Confirmation — complete | Confirmation resets saved app data immediately; device verified 2026-10-17 | 2h |
 | 13.7 | Apply Changes Live | Enable reflects without reboot (disable needs reboot) | 4h |
 | 13.8 | Validation Suite | All test cases pass | 4h |
 
@@ -99,7 +99,7 @@ Settings › Manage Apps
     |
     +-> Tap [Install]/[Installed] to toggle (restart to apply)
     |
-    +-> Tap [Clear] → confirmation dialog → erase app data (13.6 pending)
+    +-> Tap [Clear] → confirmation dialog → reset saved app data immediately (13.6 complete)
 ```
 
 ---

@@ -4,6 +4,7 @@
 #include "manage_apps_page.h"
 
 #include <cmath>
+#include <memory>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1500,7 +1501,7 @@ void on_gesture_pressing(lv_event_t *event)
         return;
     }
 
-    if (s_modal_open) {
+    if (s_modal_open || crystal_manage_apps_page_confirmation_open()) {
         s_gesture_owner = CrystalGestureOwner::App;
     } else if (s_quick_settings_open) {
         // Controls inside the panel (brightness, volume, tiles) own their
@@ -2758,12 +2759,44 @@ void open_restart_confirm()
     crystal_shell_set_modal_open(true);
 }
 
+bool manage_apps_clear_data(const CrystalAppEntry *entry)
+{
+    if (entry == nullptr || s_phone == nullptr) return false;
+    CrystalApp *app = nullptr;
+    for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
+        const char *id = crystal_registry_installed_id(i);
+        if (id != nullptr && strcmp(id, entry->id) == 0) {
+            app = crystal_registry_installed_app(i);
+            break;
+        }
+    }
+    // Newly enabled apps have no installed instance until restart. A temporary
+    // factory instance supplies the exact namespace without launching its UI.
+    std::unique_ptr<CrystalApp> temporary;
+    if (app == nullptr) {
+        if (entry->factory == nullptr) return false;
+        temporary.reset(entry->factory());
+        app = temporary.get();
+    }
+    if (app == nullptr) return false;
+    auto &manager = s_phone->getManager();
+    if (!temporary && manager.getRunningAppById(app->getId()) != nullptr) {
+        ESP_Brookesia_CoreAppEventData_t event = {
+            .id = app->getId(), .type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP, .data = nullptr,
+        };
+        if (!s_phone->sendAppEvent(&event) ||
+            manager.getRunningAppById(app->getId()) != nullptr) return false;
+    }
+    // onPause/onDestroy can save old values. Erase only after STOP completes.
+    return app->clearData();
+}
+
 void manage_apps_page_open()
 {
     lv_obj_t *content = system_page_push("Manage Apps");
     if (content != nullptr) {
         s_manage_apps_page = lv_obj_get_parent(content);
-        crystal_manage_apps_page_build(content);
+        crystal_manage_apps_page_build(content, manage_apps_clear_data);
     }
 }
 
@@ -2924,6 +2957,7 @@ void wifi_page_close()
 // topmost layer and its normal Back behaviour should run.
 bool shell_consume_back()
 {
+    if (crystal_manage_apps_page_dismiss_confirmation()) return true;
     if (crystal_keyboard_is_open()) {
         crystal_keyboard_hide();
         return true;

@@ -15,6 +15,7 @@ public:
     bool onPause() override;
     bool onResume() override;
     bool onDestroy() override;
+    void onClearData() override;
 
     // Called on the LVGL task when the service task finishes a fetch.
     void update(const CrystalWeatherReading &reading);
@@ -75,6 +76,7 @@ private:
     // WiFi is down, so a request with no reply has to time out on its own.
     int32_t requested_at_ = 0;
     bool last_fetch_failed_ = false;
+    bool discard_updates_until_open_ = false;
     // Clock validity as of the last tick. SNTP can land at any moment, and the
     // step it applies retroactively makes a cached reading datable; this is how
     // the tick notices the transition and re-runs the staleness check once.

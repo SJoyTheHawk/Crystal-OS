@@ -49,6 +49,9 @@ public:
 
     CrystalState &state() { return state_; }
     const CrystalState &state() const { return state_; }
+    // LVGL task only, after the manager stops the app. Resets retained state
+    // and clears the constructor-name namespace, never the registry ID.
+    bool clearData();
     LifecycleState lifecycle_state() const { return lifecycle_state_; }
 
 protected:
@@ -76,6 +79,8 @@ protected:
     virtual bool onStop() { return true; }
     virtual bool onDestroy() { return true; }
     virtual bool onBack();
+    // Stop service writers and discard fields before the NVS clear attempt.
+    virtual void onClearData() {}
 
 private:
     bool is_active() const;

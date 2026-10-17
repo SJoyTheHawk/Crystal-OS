@@ -206,6 +206,16 @@ bool ClockApp::onDestroy()
     return true;
 }
 
+void ClockApp::onClearData()
+{
+    crystal_timer_reset();
+    crystal_stopwatch_set_running(false);
+    selected_duration_ = 180;
+    stopwatch_running_ = stopwatch_paused_ = false;
+    stopwatch_elapsed_ = stopwatch_started_ = 0;
+    laps_.clear();
+}
+
 void ClockApp::save_stopwatch()
 {
     uint32_t elapsed = stopwatch_elapsed_;

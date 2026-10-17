@@ -42,6 +42,12 @@ static std::map<std::string, uint16_t> slots;
 static unsigned slot_writes = 0;
 static unsigned fail_slot_at = 0;
 static bool fail_rollback = false;
+static unsigned clears = 0;
+static bool fail_clear = false;
+static const CrystalAppEntry *cleared_target = nullptr;
+static bool clear_data(const CrystalAppEntry *entry) {
+    ++clears; cleared_target = entry; return !fail_clear;
+}
 static lv_point_t touch_point{};
 static lv_indev_state_t touch_state = LV_INDEV_STATE_RELEASED;
 static void read_touch(lv_indev_drv_t *, lv_indev_data_t *data) {
@@ -93,7 +99,7 @@ static void check_row(lv_obj_t *content, int i, const char *id, bool enabled) {
     if (enabled) {
         auto *clear = lv_obj_get_child(row, 3);
         assert(std::strcmp(label(clear, 0), "Clear") == 0);
-        assert(lv_obj_has_state(clear, LV_STATE_DISABLED));
+        assert(!lv_obj_has_state(clear, LV_STATE_DISABLED));
     }
     lv_area_t bounds;
     lv_obj_get_coords(row, &bounds);
@@ -177,6 +183,64 @@ int main() {
     assert(lv_obj_get_child_cnt(content) == 5);
     for (int i = 0; i < 4; ++i) check_row(content, i, catalog[i].id, true);
     snapshot(page, "all-enabled.ppm");
+    crystal_manage_apps_page_build(content, clear_data);
+    auto open_clear = [&](int index) {
+        auto *clear = lv_obj_get_child(lv_obj_get_child(content, index + 1), 3);
+        lv_event_send(clear, LV_EVENT_CLICKED, nullptr);
+        assert(crystal_manage_apps_page_confirmation_open());
+        assert(lv_obj_get_child_cnt(lv_layer_top()) == 1);
+        lv_obj_update_layout(lv_layer_top());
+        return lv_obj_get_child(lv_obj_get_child(lv_layer_top(), 0), 0);
+    };
+    auto *card = open_clear(3);
+    assert(std::strcmp(label(card, 0), "Clear App Data") == 0);
+    assert(std::strstr(label(card, 1), "calculator") != nullptr);
+    assert(std::strstr(label(card, 1), "cannot be undone") != nullptr);
+    lv_area_t message_box, cancel_box, card_box;
+    lv_obj_get_coords(lv_obj_get_child(card, 1), &message_box);
+    lv_obj_get_coords(lv_obj_get_child(card, 2), &cancel_box);
+    lv_obj_get_coords(card, &card_box);
+    assert(message_box.y2 < cancel_box.y1 && cancel_box.y2 < card_box.y2);
+    snapshot(lv_layer_top(), "clear-confirmation.ppm");
+    // Duplicate request keeps the original target; background actions cannot
+    // toggle or drag rows while the modal is open.
+    open_clear(0);
+    lv_event_send(lv_obj_get_child(lv_obj_get_child(content, 1), 2), LV_EVENT_CLICKED, nullptr);
+    assert(writes == 0 && clears == 0);
+    lv_event_send(lv_obj_get_child(card, 2), LV_EVENT_CLICKED, nullptr);
+    assert(!crystal_manage_apps_page_confirmation_open() && clears == 0);
+    open_clear(1);
+    assert(crystal_manage_apps_page_dismiss_confirmation());
+    assert(!crystal_manage_apps_page_dismiss_confirmation() && clears == 0);
+    card = open_clear(3);
+    crystal_manage_apps_page_clear_pending_restart();
+    lv_event_send(lv_obj_get_child(card, 3), LV_EVENT_CLICKED, nullptr);
+    assert(clears == 1 && cleared_target == &catalog[3]);
+    assert(!crystal_manage_apps_page_confirmation_open());
+    assert(!crystal_manage_apps_page_has_pending_restart());
+    assert(std::strstr(label(content, 0), "App data cleared"));
+    assert(writes == 0 && slot_writes == 0);
+    fail_clear = true;
+    card = open_clear(1);
+    lv_event_send(lv_obj_get_child(card, 3), LV_EVENT_CLICKED, nullptr);
+    assert(clears == 2 && cleared_target == &catalog[1]);
+    assert(std::strstr(label(content, 0), "Some data may be removed"));
+    fail_clear = false;
+    card = open_clear(1);
+    lv_event_send(lv_obj_get_child(card, 3), LV_EVENT_CLICKED, nullptr);
+    assert(clears == 3 && !crystal_manage_apps_page_confirmation_open());
+    open_clear(0);
+    crystal_manage_apps_page_build(content, clear_data);
+    assert(!crystal_manage_apps_page_confirmation_open() && clears == 3);
+    auto *temporary_content = lv_obj_create(page);
+    crystal_manage_apps_page_build(temporary_content, clear_data);
+    lv_event_send(lv_obj_get_child(lv_obj_get_child(temporary_content, 1), 3), LV_EVENT_CLICKED, nullptr);
+    assert(crystal_manage_apps_page_confirmation_open());
+    lv_obj_del(temporary_content);
+    assert(!crystal_manage_apps_page_confirmation_open() && clears == 3);
+    assert(lv_obj_get_child_cnt(lv_layer_top()) == 0);
+    crystal_manage_apps_page_build(content, clear_data);
+    std::puts("PASS: Clear confirmation, target isolation, cancel/back, success/failure/retry, modal layout and teardown");
     // Real pointer samples traverse LVGL hit-testing, press loss, scrolling,
     // and release. Sending events directly would miss the reported bug.
     auto drag = [&](int from, int to, bool cancel = false) {
@@ -362,7 +426,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='crystal-manage-apps-') as directory:
         temp = Path(directory)
         (temp / 'lv_conf.h').write_text(CONF)
-        (temp / 'esp_log.h').write_text('#pragma once\n#define ESP_LOGI(...) ((void)0)\n')
+        (temp / 'esp_log.h').write_text('#pragma once\n#define ESP_LOGI(...) ((void)0)\n#define ESP_LOGE(...) ((void)0)\n')
         (temp / 'check.cpp').write_text(CHECK)
         lvgl = ROOT / 'managed_components/lvgl__lvgl'
         shell = ROOT / 'components/crystal_shell/src'
@@ -381,7 +445,7 @@ target_link_libraries(check PRIVATE lvgl)
         output = args.output_dir or temp
         output.mkdir(parents=True, exist_ok=True)
         subprocess.run([str(temp / 'build/check')], check=True, cwd=output)
-        for name in ('all-enabled.ppm', 'disabled-weather.ppm'):
+        for name in ('all-enabled.ppm', 'disabled-weather.ppm', 'clear-confirmation.ppm'):
             png_from_ppm(output / name)
         if args.output_dir:
             print(f'Rendered previews: {output.resolve()}')

@@ -61,6 +61,7 @@ bool crystal_location_get(double *latitude, double *longitude, char *city, size_
 // Called by the gesture arbiter on touch-down. Returns true exactly when that
 // touch must wake the display without being delivered as an app interaction.
 bool crystal_core_consume_wake_touch();
+void crystal_core_wake_display();
 
 // Loads timezone and initializes system time from the hardware RTC before UI startup.
 void crystal_time_init();

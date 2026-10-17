@@ -49,6 +49,7 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr size_t kAudioInitMinInternalFree = 20U * 1024U;
 constexpr size_t kAudioInitMinInternalBlock = 12U * 1024U;
 static const char *TAG = "crystal_hal";
+crystal_hal_button_callback_t s_button_callback = nullptr;
 constexpr size_t kWifiMaxNetworks = 20;
 // The board's only free tactile button. Wired active-low; also the ESP32-S3
 // strapping pin, which is why we only ever read it after boot.
@@ -75,6 +76,11 @@ public:
     uint8_t get() const override
     {
         return pct_;
+    }
+
+    void restore_cached(uint8_t pct)
+    {
+        pct_ = pct > kBrightnessMax ? kBrightnessMax : pct;
     }
 
 private:
@@ -904,6 +910,7 @@ void reset_button_task(void *)
 {
     uint32_t held_ms = 0;
     bool armed = false;
+    bool pressed = false;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(kResetPollMs));
@@ -912,9 +919,14 @@ void reset_button_task(void *)
             if (held_ms >= kResetPollMs) ESP_LOGI(TAG, "reset button released after %ums", (unsigned)held_ms);
             held_ms = 0;
             armed = false;
+            pressed = false;
             continue;
         }
 
+        if (!pressed) {
+            pressed = true;
+            if (s_button_callback != nullptr) s_button_callback();
+        }
         held_ms += kResetPollMs;
 
         // Log once per press so a partial hold is visible in the console.
@@ -1001,9 +1013,9 @@ void crystal_hal_init()
     size_t brightness_len = sizeof(brightness);
     if (s_storage.get("brightness", &brightness, &brightness_len) &&
         brightness_len == sizeof(brightness)) {
-        s_brightness.set(brightness);
+        s_brightness.restore_cached(brightness);
     } else {
-        s_brightness.set(s_brightness.get());
+        s_brightness.restore_cached(s_brightness.get());
     }
 
     // The codec is initialized lazily by the volume adapter. Apply the saved
@@ -1022,6 +1034,11 @@ void crystal_hal_init()
 void crystal_hal_bind_touch(void *lvgl_input_device)
 {
     s_touch.bind(lvgl_input_device);
+}
+
+void crystal_hal_set_button_callback(crystal_hal_button_callback_t callback)
+{
+    s_button_callback = callback;
 }
 
 void crystal_hal_timer_alarm()
