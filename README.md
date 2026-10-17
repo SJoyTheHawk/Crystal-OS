@@ -81,6 +81,7 @@ Board wiring and pin assignments are maintained in the
 - **Status bar:** time, Wi-Fi, battery, and page indicators
 - **Quick Settings:** brightness, volume, Wi-Fi, and energy-saving toggle
 - **Settings overlay:** Wi-Fi networks, static IP, timezone, manual time/location, timer alerts, device info
+- **Manage Apps:** view bundled apps, enable apps live, disable apps for the next reboot, reorder cards, and clear app data
 - **Keyboard overlay:** iOS-inspired shell keyboard with field lifting and multi-layer lifecycle
 - **Apps:** Clock (with timer/stopwatch), Weather (Open-Meteo), Calculator, Hello World, State Test
 - **Core services:** RTC persistence, Wi-Fi/SNTP sync, power management with dim/off timeouts
@@ -113,12 +114,17 @@ validation remains. Details and evidence live in
 - [x] Phase 10 — keyboard overlay
 - [x] Phase 11 — Settings and power management
 - [ ] Phase 12 — reliability and recovery
-- [ ] Phase 13 — PC app catalog and package loader
+- [ ] Phase 13 — bundled app catalog and Manage Apps controls (13.1–13.7 complete; 13.8 closure pending)
 
 Phase 11 closed on 2026-09-11 after all Settings and power validation rows passed
 on the physical panel. This includes the five V3 defect regressions, the durable
 project-local Brookesia override, and independent enabled/disabled timer-alert
 policy checks.
+
+Phase 13 implementation through live app enabling is complete. The remaining
+13.8 work is the final device regression pass and documentation sign-off; see
+[`docs/PHASE_13_CHECKLIST.md`](docs/PHASE_13_CHECKLIST.md) and the per-phase
+validation records for current evidence.
 
 ## V2 track: installable apps
 
@@ -253,3 +259,9 @@ Phase-specific proposals:
 
 - **[PHASE_12_PROPOSAL.md](docs/PHASE_12_PROPOSAL.md)** — OTA updates, crash reporting, recovery
 - **[NO_BUS_BASELINE.md](docs/NO_BUS_BASELINE.md)** — baseline testing without bus app
+
+Phase 13 records:
+
+- **[PHASE_13_CHECKLIST.md](docs/PHASE_13_CHECKLIST.md)** — implementation and closure checklist
+- **[PHASE_13_7_VALIDATION.md](docs/PHASE_13_7_VALIDATION.md)** — live-enable device acceptance
+- **[PHASE_13_RELEASE_NOTES.md](docs/PHASE_13_RELEASE_NOTES.md)** — user-visible Manage Apps behavior

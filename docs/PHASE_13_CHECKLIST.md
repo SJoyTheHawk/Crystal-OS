@@ -14,10 +14,10 @@
 - [x] 13.4 Install/Uninstall Logic (3h)
 - [x] 13.5 Reorder with Drag Handles (3h, verified 2026-10-17)
 - [x] 13.6 Clear Data Confirmation (verified 2026-10-17)
-- [ ] 13.7 Apply Changes Live (4h)
+- [x] 13.7 Apply Changes Live (verified 2026-10-18)
 - [ ] 13.8 Full Validation Suite (4h)
 
-**Current status:** Phases 13.1–13.6 implemented and validated; Phase 13.7 and later remain pending
+**Current status:** Phases 13.1–13.7 implemented and validated; Phase 13.8 full-suite closure remains pending
 
 **Total: ~23 hours (~3 days)**
 
@@ -252,26 +252,30 @@ Checkpoint: Clear-data shows dialog and erases on confirm
 ## Sub-Phase 13.7: Apply Changes Live ✓ / ✗
 
 ### Tasks
-- [ ] Add crystal_registry_apply_changes() to registry
-- [ ] Save phone pointer in crystal_registry_install()
-- [ ] Iterate kApps and check enabled state
-- [ ] Install newly enabled apps immediately
-- [ ] Note that uninstall requires reboot
-- [ ] Call apply_changes() from toggle_btn_cb() when enabling
-- [ ] Add UI note about enable vs disable behavior
-- [ ] Update header file with new function
+- [x] Add crystal_registry_apply_changes() to registry
+- [x] Save phone pointer in crystal_registry_install()
+- [x] Iterate catalog and check enabled state
+- [x] Install newly enabled apps immediately
+- [x] Note that uninstall requires reboot
+- [x] Call apply_changes() from toggle_btn_cb() when enabling
+- [x] Add UI note about enable vs disable behavior
+- [x] Update header file with new function
 
 ### Validation Checkpoints
-- [ ] Build succeeds
-- [ ] Disable calculator (note about reboot appears)
-- [ ] Exit to launcher (calculator still visible)
-- [ ] Reboot device
-- [ ] Calculator not in launcher (confirm disable worked)
-- [ ] Enable calculator in Manage Apps
-- [ ] Logs show "Applied changes live"
-- [ ] Exit to launcher
-- [ ] Calculator appears immediately (no reboot needed)
-- [ ] Open calculator, verify it works
+- [x] Host UI and registry tests pass
+- [x] Signed development build succeeds
+- [x] Disable calculator (note about reboot appears)
+- [x] Exit to launcher (calculator still visible)
+- [x] Reboot device
+- [x] Calculator not in launcher (confirm disable worked)
+- [x] Enable calculator in Manage Apps
+- [x] Logs show "Applied changes live"
+- [x] Exit to launcher
+- [x] Calculator appears immediately (no reboot needed)
+- [x] Open calculator, verify it works
+
+Automated evidence and the board procedure are recorded in
+[Phase 13.7 validation](PHASE_13_7_VALIDATION.md).
 
 ### Commit Message
 ```
@@ -288,6 +292,18 @@ Checkpoint: Enable app appears in launcher without reboot
 ---
 
 ## Sub-Phase 13.8: Full Validation Suite ✓ / ✗
+
+Automated Phase 13 regression checks passed on 2026-10-18:
+
+- `python3 tools/test_crystal_registry.py`
+- `python3 tools/test_crystal_state.py`
+- `python3 tools/test_manage_apps_page.py`
+- Signed `./scripts/build_dev.sh`
+- `git diff --check`
+
+The broader Phase 13.8 device regression matrix and documentation deliverables
+below still need explicit closure before Phase 13 as a whole can be marked
+complete.
 
 ### Pre-Flight Checklist
 - [ ] All previous sub-phases completed
@@ -347,9 +363,9 @@ Checkpoint: Enable app appears in launcher without reboot
 - [ ] WiFi scan and connect work
 
 ### Documentation Updates
-- [ ] Update CODE_GUIDE.md with Manage Apps section
-- [ ] Update DESIGN.md with registry management
-- [ ] Create release notes for Phase 13
+- [x] Update CODE_GUIDE.md with Manage Apps section
+- [x] Update DESIGN.md with registry management
+- [x] Create release notes for Phase 13 (`PHASE_13_RELEASE_NOTES.md`)
 
 ### Final Commit
 ```

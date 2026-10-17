@@ -701,10 +701,9 @@ removing apps; underneath, install is `app.<id>.enabled = 1` and reorder is
 `app.<id>.slot` — both already exist as `crystal_registry_set_enabled()` and
 `crystal_registry_set_slot()`.
 
-Clear-data is the one piece with no implementation behind it. `CrystalState`
-offers `get`/`set`/`erase`/`get_u32`/`set_u32` and no `clear()`, so Phase 13 has
-to add one that iterates the app's own key prefix. A per-app key list in the
-catalog instead would go stale the first time an app adds a key.
+Clear-data uses `CrystalState::clear()`, which iterates the app's own key prefix.
+The Manage Apps confirmation dialog calls it only after the user confirms. A
+per-app key list in the catalog would go stale the first time an app adds a key.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -716,8 +715,9 @@ catalog instead would go stale the first time an app adds a key.
 └──────────────────────────────────────────────┘
 ```
 
-Drag the `≡` handle to reorder. Changes apply to the launcher immediately;
-disabled apps are never constructed, so a hidden app costs flash but no RAM.
+Drag the `≡` handle to reorder. Newly enabled apps apply to the launcher
+immediately and retain their saved slot; disabling takes effect after reboot.
+Disabled apps are never constructed, so a hidden app costs flash but no RAM.
 
 The honest limit, worth stating in the UI copy: users can only install what
 shipped in the firmware. The catalog grows when the OS updates.

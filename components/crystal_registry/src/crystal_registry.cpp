@@ -28,6 +28,7 @@ struct InstalledRow {
 
 std::vector<InstalledRow> s_installed;
 std::vector<CrystalAppEntry> s_catalog;
+ESP_Brookesia_Phone *s_phone = nullptr;
 
 bool make_key(const char *id, char suffix, char *out, size_t out_size)
 {
@@ -122,12 +123,65 @@ bool crystal_registry_set_slot(const char *id, uint16_t slot)
     return ok;
 }
 
+bool crystal_registry_apply_changes(void)
+{
+    if (s_phone == nullptr) {
+        ESP_LOGE(TAG, "Phone not set, cannot apply changes");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Applying registry changes live");
+    bool ok = true;
+    for (const CrystalAppEntry &entry : s_catalog) {
+        if (!crystal_registry_enabled(entry.id, entry.default_enabled)) continue;
+
+        bool installed = false;
+        for (const InstalledRow &row : s_installed) {
+            if (row.id != nullptr && strcmp(row.id, entry.id) == 0) {
+                installed = true;
+                break;
+            }
+        }
+        if (installed) continue;
+
+        ESP_LOGI(TAG, "Installing %s", entry.id);
+        CrystalApp *app = entry.factory();
+        if (app == nullptr || s_phone->installApp(app) < 0) {
+            ESP_LOGE(TAG, "install failed: %s", entry.id);
+            delete app;
+            ok = false;
+            continue;
+        }
+        const uint16_t slot = crystal_registry_slot(entry.id, entry.default_slot);
+        auto insert_at = s_installed.end();
+        for (auto it = s_installed.begin(); it != s_installed.end(); ++it) {
+            const CrystalAppEntry *existing = nullptr;
+            for (const CrystalAppEntry &candidate : s_catalog) {
+                if (candidate.id != nullptr && it->id != nullptr && strcmp(candidate.id, it->id) == 0) {
+                    existing = &candidate;
+                    break;
+                }
+            }
+            if (existing != nullptr &&
+                    slot < crystal_registry_slot(existing->id, existing->default_slot)) {
+                insert_at = it;
+                break;
+            }
+        }
+        s_installed.insert(insert_at, {entry.id, app});
+        ESP_LOGI(TAG, "Applied %s live at slot %u", entry.id, static_cast<unsigned>(slot));
+    }
+    return ok;
+}
+
 bool crystal_registry_install(ESP_Brookesia_Phone *phone,
                               const CrystalAppEntry *entries, size_t count)
 {
     if (phone == nullptr || (entries == nullptr && count != 0)) {
         return false;
     }
+
+    s_phone = phone;
 
     // Validate the entire table before publishing it, including disabled apps.
     for (size_t i = 0; i < count; ++i) {

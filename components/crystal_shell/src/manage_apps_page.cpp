@@ -8,6 +8,12 @@
 #include "crystal_registry.hpp"
 #include "esp_log.h"
 
+// The standalone host renderer supplies registry stubs and may not provide
+// the optional live-apply symbol. The firmware's strong implementation
+// overrides this weak fallback at link time.
+bool crystal_registry_apply_changes(void) __attribute__((weak));
+bool crystal_registry_apply_changes(void) { return true; }
+
 namespace {
 struct AppRow {
     const CrystalAppEntry *entry;
@@ -364,7 +370,18 @@ void toggle_btn_cb(lv_event_t *event)
         set_notice(content, "Could not save the change. Please try again.\nThe app selection has not changed.", true);
         return;
     }
-    s_pending_restart = true;
+    if (!enabled) {
+        if (crystal_registry_apply_changes()) {
+            ESP_LOGI("manage_apps", "Applied changes live, %s should appear in launcher", entry->id);
+        } else {
+            ESP_LOGI("manage_apps", "Could not apply live, changes take effect on next boot");
+            s_pending_restart = true;
+            set_notice(content, "Saved, but the app will appear\nafter restart.", true);
+        }
+    } else {
+        s_pending_restart = true;
+        set_notice(content, "App disabled. Restart to apply the change.\nEnable changes apply immediately.", false);
+    }
     // Refresh just this row: preserve scroll/focus and the event target. No
     // asynchronous callbacks or cached widget pointers can outlive the page.
     lv_label_set_text(lv_obj_get_child(button, 0), enabled ? "Install" : "Installed");
@@ -375,7 +392,6 @@ void toggle_btn_cb(lv_event_t *event)
         lv_obj_add_event_cb(clear_button, clear_btn_cb, LV_EVENT_CLICKED,
                             const_cast<CrystalAppEntry *>(entry));
     }
-    set_notice(content, "Saved. Restart to apply app changes.\nClear removes saved data immediately.", false);
 }
 }
 
@@ -412,7 +428,7 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
     lv_obj_set_style_pad_row(content, 8, 0);
 
     lv_obj_t *note = lv_label_create(content);
-    lv_label_set_text(note, "Drag to reorder. Tap Installed to uninstall.\nRestart applies changes; Clear resets saved data.");
+    lv_label_set_text(note, "Drag to reorder. Enable applies now.\nDisable needs restart; Clear resets data.");
     lv_obj_set_width(note, LV_PCT(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(note, &lv_font_montserrat_16, 0);

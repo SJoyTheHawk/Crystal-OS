@@ -790,6 +790,24 @@ void update_page_dots()
         return;
     }
     const size_t count = crystal_registry_installed_count();
+
+    // The installed-app list can grow while Manage Apps is open. The overlay
+    // used to create its dots only during shell initialization, leaving the
+    // newly installed card without an indicator after a live enable.
+    while (lv_obj_get_child_cnt(s_page_dots) < count) {
+        lv_obj_t *dot = lv_obj_create(s_page_dots);
+        if (dot == nullptr) break;
+        lv_obj_set_size(dot, 5, 5);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_white(), 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+    while (lv_obj_get_child_cnt(s_page_dots) > count) {
+        lv_obj_del(lv_obj_get_child(s_page_dots, -1));
+    }
+    lv_obj_set_width(s_page_dots, static_cast<lv_coord_t>(count * 9));
     for (size_t i = 0; i < count; ++i) {
         lv_obj_t *dot = lv_obj_get_child(s_page_dots, static_cast<int32_t>(i));
         if (dot != nullptr) {

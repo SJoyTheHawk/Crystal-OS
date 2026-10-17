@@ -11,6 +11,10 @@
 .DS_Store
 *.pem
 
+# Locally extracted video frames used during hardware validation.
+video_frames_*/
+video_frames/
+
 # Release binaries are generated artifacts; keep source checksums/manifests.
 /releases/*/crystal_os*.bin
 /releases/*/crystal_os*.elf

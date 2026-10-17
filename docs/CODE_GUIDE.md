@@ -1896,27 +1896,27 @@ all validated firmware entries, including disabled apps. The UI must use these
 rather than installed queries or a second list of IDs. Read enabled and slot
 values with each entry's defaults.
 
-**Phases 13.3–13.4 supply Manage Apps** directly under Settings.
+**Phases 13.3–13.7 supply Manage Apps** directly under Settings.
 The shell owns the page stack; manage_apps_page.cpp populates rows in saved
-slot order. Install/Installed saves the enabled flag, updates the row, and
-explains that a restart applies changes. Failed writes show a visible error;
-the last enabled entry cannot be removed because shell startup requires an app.
-Clear remains a disabled preview. Phase 13.5 makes bars handles draggable,
-swaps persisted slots with rollback on a failed second write, preserves scroll,
-and requires restart for launcher order. Clear confirmation and live apply are
-later phases. Uninstall does not erase app state.
+slot order. Install/Installed saves the enabled flag and updates the row.
+Enabling calls `crystal_registry_apply_changes()` and installs the app immediately;
+disabling requires a restart because Brookesia does not expose uninstall-by-ID.
+Failed writes show a visible error; the last enabled entry cannot be removed
+because shell startup requires an app. Phase 13.5 makes bars handles draggable,
+swaps persisted slots with rollback on a failed second write, and preserves scroll.
+Phase 13.6 confirms and clears the selected app state. Phase 13.7 applies newly
+enabled apps live and keeps the saved slot order when inserting them into the
+launcher. Disabling does not erase app state.
 
 **Phase 13.2 supplies the clear-data primitive.** `CrystalState::clear()` now
-erases persisted keys under its own app-name prefix. The clear confirmation
-flow remains a future sub-phase. Call it on the correct app state
+erases persisted keys under its own app-name prefix. Phase 13.6 invokes it from
+the confirmation flow. Call it on the correct app state
 instance after stopping writers, and handle false as potentially partial
 erasure. It does not change registry settings or reset shared services.
 
 **Disabled apps are never constructed**, so a hidden app costs flash and no RAM.
-That also means toggling one on cannot instantiate it retroactively — decide
-whether enabling takes effect at once (construct and install into the phone now)
-or at next boot, and say which in the UI copy. Silently doing neither is the
-failure mode.
+Enabling constructs and installs the app into the running phone through
+`crystal_registry_apply_changes()`; disabling remains a reboot-time operation.
 
 The honest limit belongs in the UI, not just the docs: users install only what
 shipped in the firmware, and the catalog grows when the OS updates.

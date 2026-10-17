@@ -72,20 +72,22 @@ not registry IDs. This erases persisted app state only.
 
 ---
 
-## Manage Apps (Phases 13.3–13.5)
+## Manage Apps (Phases 13.3–13.7)
 
 Open Settings > Manage Apps. All firmware entries appear, including disabled
-apps, sorted by saved slot (entry defaults if absent). Tap Installed to uninstall
-or Install to enable; the selection is saved immediately and applied on restart.
-Clear appears only for enabled entries but remains disabled. Drag a bars handle
-to lift the whole row; rows shift as it crosses other rows and release saves the
-new launcher order. The UI reports save errors and keeps at least one app enabled so the
-shell remains bootable. Uninstall preserves app data.
+apps, sorted by saved slot (entry defaults if absent). Tap Installed to disable
+or Install to enable; enabling constructs and installs the app immediately, while
+disabling takes effect after reboot. Clear appears only for enabled entries and
+opens a confirmation dialog. Drag a bars handle to lift the whole row; rows shift
+as it crosses other rows and release saves the new launcher order. The UI reports
+save errors and keeps at least one app enabled so the shell remains bootable.
+Disabling preserves app data.
 
 Host render/check: python3 tools/test_manage_apps_page.py.
-Results: [Phase 13.4 validation](PHASE_13_4_VALIDATION.md).
+Results: [Phase 13.4 validation](PHASE_13_4_VALIDATION.md) and
+[Phase 13.7 validation](PHASE_13_7_VALIDATION.md).
 
-## Full Phase 13 UI Flow (later actions pending)
+## Full Phase 13 UI Flow
 
 ```
 Settings › Manage Apps
@@ -97,9 +99,9 @@ Settings › Manage Apps
     |
     +-> Drag the whole row by its ≡ handle; rows shift as it crosses (13.5)
     |
-    +-> Tap [Install]/[Installed] to toggle (restart to apply)
+    +-> Tap [Install] to enable live; tap [Installed] to disable on reboot
     |
-    +-> Tap [Clear] → confirmation dialog → reset saved app data immediately (13.6 complete)
+    +-> Tap [Clear] → confirmation dialog → reset saved app data immediately
 ```
 
 ---

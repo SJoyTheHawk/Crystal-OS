@@ -793,11 +793,18 @@ and says so.
 
 ### Phase 13 — App catalog
 
-The user-facing face of Phase 5: browse all bundled apps, install (enable),
-uninstall (disable, optionally wiping that app's state namespace), reorder.
+Phase 13 adds the user-facing Manage Apps page directly under Settings. It
+browses all bundled firmware apps, enables newly selected apps live, disables
+apps for the next reboot, reorders launcher cards, and clears app data after
+confirmation. The saved enabled and slot values live in the NVS registry.
 
-Exit: a non-developer can install, remove, reorder, and clear app data without a
-firmware change.
+Disabling preserves app data and cannot remove an already-installed Brookesia
+card until reboot. The catalog contains firmware-shipped apps; package download
+and third-party installation remain part of the Phase 14–17 app-platform track.
+
+Implementation through 13.7 is complete. Phase 13.8 remains the final device
+regression and release sign-off; see `docs/PHASE_13_CHECKLIST.md` and
+`docs/PHASE_13_RELEASE_NOTES.md`.
 
 ## 5. Partition table
 

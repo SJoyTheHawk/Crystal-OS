@@ -17,6 +17,10 @@ struct CrystalAppEntry {
 bool crystal_registry_install(ESP_Brookesia_Phone *phone,
                               const CrystalAppEntry *entries, size_t count);
 
+// Install newly enabled catalog entries into the running phone. Disabling an
+// app remains a reboot-time change because the launcher owns its live removal.
+bool crystal_registry_apply_changes(void);
+
 // Full validated firmware catalog, including disabled and failed-install apps,
 // in table order. Entry pointers remain valid until the next install() call;
 // referenced IDs must have static lifetime. Out-of-range returns nullptr.
