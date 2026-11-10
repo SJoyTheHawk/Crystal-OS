@@ -110,3 +110,7 @@ using crystal_battery_update_cb_t = void (*)(void *context, int percent, bool ch
 bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
                        crystal_connectivity_update_cb_t connectivity_update,
                        crystal_battery_update_cb_t battery_update, void *status_context);
+
+// Release background startup after the first frame is rendered and visible.
+// Call after crystal_core_init(), outside the LVGL lock.
+void crystal_core_start_services();

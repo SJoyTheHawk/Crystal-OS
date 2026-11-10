@@ -11,6 +11,7 @@
 
 #include "crystal_hal.hpp"
 #include "crystal_http.h"
+#include "crystal_core_http.hpp"
 #include "crystal_update_view.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -18,13 +19,12 @@
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_pm.h"
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "lvgl.h"
 
 extern void crystal_shell_wifi_event(uint8_t event);
@@ -69,16 +69,16 @@ void crystal_http_phase1_callback(const crystal_http_response_t *response, void 
     crystal_http_response_release(response);
 }
 
-void crystal_http_smoke_network_handler(void *, esp_event_base_t, int32_t id, void *)
+void queue_https_smoke_test()
 {
-    if (id != CRYSTAL_NETWORK_CONNECTED || s_http_smoke_requested.exchange(true)) return;
+    if (s_http_smoke_requested.exchange(true)) return;
     crystal_http_options_t options = {};
     options.url = "https://example.com/";
     options.timeout_ms = 15000;
     options.max_attempts = 1;
     options.max_body_bytes = 8192;
     options.owner_id = kHttpFrameworkOwner;
-    ESP_LOGI(TAG, "starting HTTPS smoke test");
+    ESP_LOGI(TAG, "Startup: weather step finished; queuing HTTPS smoke test");
     if (crystal_http_get(&options, crystal_http_phase1_callback, nullptr) == 0) {
         s_http_smoke_requested.store(false);
         ESP_LOGW(TAG, "failed to queue HTTPS smoke test");
@@ -105,6 +105,7 @@ size_t s_toast_queue_head = 0;
 size_t s_toast_queue_count = 0;
 bool s_toast_active = false;
 TaskHandle_t s_service_task = nullptr;
+SemaphoreHandle_t s_startup_ready = nullptr;
 lv_disp_t *s_display = nullptr;
 crystal_clock_update_cb_t s_clock_update = nullptr;
 crystal_connectivity_update_cb_t s_connectivity_update = nullptr;
@@ -205,52 +206,12 @@ bool one_of(uint16_t value, const uint16_t *allowed, size_t count)
     return false;
 }
 
-// Fetches a small JSON document into s_weather_response, NUL-terminated.
-//
-// Do NOT use esp_http_client_perform() here. It drains the body internally to
-// satisfy content_length, does not cache it (response->buffer->output_ptr is
-// NULL), resets raw_len to 0, and closes the connection -- so a following
-// esp_http_client_read_response() returns 0 bytes and every parse fails. The
-// open/fetch_headers/read/close sequence is what hands the body to a caller.
+// Location and weather share the HTTP worker with the diagnostic request.
+// The service task sleeps while waiting; it no longer opens a parallel TLS
+// connection. Parsing and UI event delivery remain on the service task.
 bool http_get_json(const char *url)
 {
-    memset(s_weather_response, 0, sizeof(s_weather_response));
-    esp_http_client_config_t config = {};
-    config.url = url;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.timeout_ms = 8000;
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == nullptr) {
-        ESP_LOGW(TAG, "http client allocation failed");
-        return false;
-    }
-
-    bool ok = false;
-    if (esp_http_client_open(client, 0) == ESP_OK) {
-        // Negative content_length means chunked; read until the socket ends.
-        const int64_t declared = esp_http_client_fetch_headers(client);
-        const int status = esp_http_client_get_status_code(client);
-        if (status == 200) {
-            int total = 0;
-            const int limit = static_cast<int>(sizeof(s_weather_response)) - 1;
-            while (total < limit) {
-                const int read = esp_http_client_read(client, s_weather_response + total, limit - total);
-                if (read <= 0) break;      // 0 = complete, <0 = error
-                total += read;
-            }
-            s_weather_response[total] = '\0';
-            ok = total > 0;
-            if (!ok) ESP_LOGW(TAG, "empty body for %s (declared %lld)", url, static_cast<long long>(declared));
-            else if (declared > limit) ESP_LOGW(TAG, "body truncated: %lld > %d bytes", static_cast<long long>(declared), limit);
-        } else {
-            ESP_LOGW(TAG, "http status %d for %s", status, url);
-        }
-        esp_http_client_close(client);
-    } else {
-        ESP_LOGW(TAG, "http open failed for %s", url);
-    }
-    esp_http_client_cleanup(client);
-    return ok;
+    return crystal_core_http_get_json(url, s_weather_response, sizeof(s_weather_response));
 }
 
 bool load_weather_location()
@@ -781,6 +742,10 @@ void sntp_synced(struct timeval *tv)
 void service_task(void *)
 {
     vTaskDelay(pdMS_TO_TICKS(1200));
+    // Preserve the existing OTA settling interval, but do not assume it means
+    // the shell has finished drawing. app_main explicitly releases this gate.
+    xSemaphoreTake(s_startup_ready, portMAX_DELAY);
+    ESP_LOGI(TAG, "Startup: first frame ready; starting background services");
     bool ota_confirmed = false;
     // Rollback-enabled OTA images boot as PENDING_VERIFY. Confirm only after
     // the display/core settling interval so an early boot failure can still
@@ -816,10 +781,6 @@ void service_task(void *)
         (void)esp_event_loop_create_default();
         (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
                                                   network_signal_handler, nullptr, &s_network_handler);
-        esp_event_handler_instance_t smoke_handler = nullptr;
-        (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
-                                                  crystal_http_smoke_network_handler, nullptr,
-                                                  &smoke_handler);
         hal().wifi->start();
     }
     power_saving_apply(energy_saving_enabled());
@@ -898,6 +859,11 @@ void service_task(void *)
             }
             (void)crystal_ui_post(UI_EVT_WEATHER, &reading, sizeof(reading));
         }
+        // Give location/weather the first turn. Run the diagnostic once the
+        // initial attempt finishes (success or failure), or cached data is
+        // already fresh. The shared worker also serializes later refreshes.
+        // A rejected submission is retried on the next service tick.
+        if (online) queue_https_smoke_test();
         const TickType_t now_ticks = xTaskGetTickCount();
         if ((last_battery_poll == 0 || now_ticks - last_battery_poll >= pdMS_TO_TICKS(30000)) &&
                 hal().power != nullptr) {
@@ -1339,10 +1305,19 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (lv_timer_create(check_power_state, 250, nullptr) == nullptr) return false;
     update_clock(nullptr);
     update_connectivity(nullptr);
+    s_startup_ready = xSemaphoreCreateBinary();
+    if (s_startup_ready == nullptr) return false;
     if (xTaskCreatePinnedToCore(service_task, "crystal_service", 8192, nullptr, 2,
                                 &s_service_task, 0) != pdPASS) {
+        vSemaphoreDelete(s_startup_ready);
+        s_startup_ready = nullptr;
         return false;
     }
 
     return true;
+}
+
+void crystal_core_start_services()
+{
+    if (s_startup_ready != nullptr) xSemaphoreGive(s_startup_ready);
 }

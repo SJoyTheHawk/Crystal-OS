@@ -241,6 +241,8 @@ extern "C" void app_main(void)
     (void)crystal_phase14_device_test_start(phone, phase14_package_start,
         static_cast<size_t>(phase14_package_end - phase14_package_start),
         "/littlefs/apps", esp_restart, CRYSTAL_PHASE14_DEVICE_TEST_RUN);
+#else
+    ESP_LOGI(TAG, "Startup baseline: automatic Phase 14 device test disabled");
 #endif
     // The update subsystem checks the bootloader result before UI creation.
     // Queue the one-shot rollback notification only after the shell exists.
@@ -261,4 +263,5 @@ extern "C" void app_main(void)
     // the backlight off through all object creation and enable it only after
     // the final refresh and LVGL unlock, so intermediate UI states stay hidden.
     (void)bsp_display_brightness_set(hal().brightness->get());
+    crystal_core_start_services();
 }

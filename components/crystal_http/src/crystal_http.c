@@ -23,6 +23,16 @@ static const char *TAG = "crystal_http";
 #define CRYSTAL_HTTP_CONTEXT_SLOTS CRYSTAL_HTTP_QUEUE_DEPTH
 #define CRYSTAL_HTTP_SYNTHETIC_ERROR ESP_ERR_NOT_SUPPORTED
 
+// Certificate verification can remain CPU-bound inside esp_http_client_open().
+// A delay between requests cannot let IDLE0 run during that calculation. Keep
+// this background worker at idle priority so tick-based time slicing shares
+// CPU0 with IDLE0 even inside a synchronous TLS call. UI/network tasks retain
+// precedence; under load a request may take longer. Keep the watchdog enabled.
+#define CRYSTAL_HTTP_WORKER_PRIORITY tskIDLE_PRIORITY
+#if configUSE_PREEMPTION != 1 || configUSE_TIME_SLICING != 1
+#error "crystal_http requires preemption and time slicing for CPU0 idle fairness"
+#endif
+
 typedef struct {
     bool used;
     volatile bool cancelled;
@@ -370,7 +380,8 @@ static void deliver_request(request_slot_t *slot)
 static void worker_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "worker started core=%d", xPortGetCoreID());
+    ESP_LOGI(TAG, "worker started core=%d priority=%u (idle time slicing)",
+             xPortGetCoreID(), (unsigned)uxTaskPriorityGet(NULL));
 
     queue_item_t item;
     while (xQueueReceive(s_queue, &item, portMAX_DELAY) == pdTRUE) {
@@ -401,7 +412,8 @@ bool crystal_http_init(void)
         return false;
     }
 
-    if (xTaskCreatePinnedToCore(worker_task, "crystal_http", 8192, NULL, 2,
+    if (xTaskCreatePinnedToCore(worker_task, "crystal_http", 8192, NULL,
+                                CRYSTAL_HTTP_WORKER_PRIORITY,
                                 &s_worker, 0) != pdPASS) {
         vQueueDelete(s_queue);
         vSemaphoreDelete(s_lock);

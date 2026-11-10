@@ -34,6 +34,9 @@ typedef int esp_err_t;
 #define MALLOC_CAP_8BIT 4
 #define pdTRUE 1
 #define pdPASS 1
+#define tskIDLE_PRIORITY 0
+#define configUSE_PREEMPTION 1
+#define configUSE_TIME_SLICING 1
 #define portMAX_DELAY UINT32_MAX
 #define pdMS_TO_TICKS(n) (n)
 typedef unsigned TickType_t;
@@ -58,9 +61,17 @@ static int64_t esp_timer_get_time(void) {return ticks * 1000;}
 static TickType_t xTaskGetTickCount(void) {return ticks;}
 static void vTaskDelay(unsigned n) {ticks += n;}
 static int xPortGetCoreID(void) {return 0;}
+static unsigned uxTaskPriorityGet(void *task) {(void)task;return tskIDLE_PRIORITY;}
 static void vTaskDelete(void *p) {(void)p;}
+static unsigned worker_creations;
 static int xTaskCreatePinnedToCore(void (*f)(void *),const char *n,unsigned s,void *a,int p,TaskHandle_t *h,int c)
-{(void)f;(void)n;(void)s;(void)a;(void)p;(void)h;(void)c;return pdPASS;}
+{
+    (void)f;(void)n;(void)s;(void)a;
+    assert(p == tskIDLE_PRIORITY && c == 0);
+    *h = (void *)1;
+    worker_creations++;
+    return pdPASS;
+}
 static void *xQueueCreate(unsigned n,size_t s) {(void)n;(void)s;return (void *)1;}
 static void vQueueDelete(void *p) {(void)p;}
 static int xQueueReceive(void *q,void *p,unsigned t) {(void)q;(void)p;(void)t;return 0;}
@@ -128,6 +139,8 @@ static request_slot_t fresh(void) {
         .callback=completed, .max_attempts=3, .max_body_bytes=4096};
 }
 int main(void) {
+    assert(crystal_http_init());
+    assert(crystal_http_init() && worker_creations == 1);
     request_slot_t slot = fresh();
     failures[0] = ESP_ERR_HTTP_CONNECT;
     deliver_request(&slot);
