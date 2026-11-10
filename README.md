@@ -5,6 +5,8 @@
 Crystal OS is an ESP32-S3 touch-device shell and app framework built on
 LVGL and Espressif's `esp-brookesia` phone UI.
 
+![Crystal OS blue green wallpaper](reference/launcher_wallpaper_crystalos_480x480.png)
+
 ## No-bus baseline branch
 
 This branch removes the Bus app and its service/catalog workload from the current
@@ -113,8 +115,8 @@ validation remains. Details and evidence live in
 - [x] Phase 9.6 — Calculator app port
 - [x] Phase 10 — keyboard overlay
 - [x] Phase 11 — Settings and power management
-- [ ] Phase 12 — reliability and recovery
-- [ ] Phase 13 — bundled app catalog and Manage Apps controls (13.1–13.7 complete; 13.8 closure pending)
+- [x] Phase 12 — reliability and recovery
+- [~] Phase 13 — bundled app catalog and Manage Apps controls (13.1–13.7 complete; 13.8 closure pending)
 
 Phase 11 closed on 2026-09-11 after all Settings and power validation rows passed
 on the physical panel. This includes the five V3 defect regressions, the durable

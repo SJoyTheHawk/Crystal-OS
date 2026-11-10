@@ -214,6 +214,9 @@ void ESP_Brookesia_AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
     case LV_EVENT_PRESSED:
         ESP_BROOKESIA_LOGD("Pressed");
         if (icon->_flags.is_click_disable) {
+            // A touch begun during a page settle must remain cancelled even
+            // if the animation finishes before the finger is released.
+            icon->_flags.is_pressed_losted = true;
             break;
         }
         // Zoom out icon

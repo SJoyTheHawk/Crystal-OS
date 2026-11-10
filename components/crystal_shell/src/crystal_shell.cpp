@@ -1553,9 +1553,12 @@ void on_gesture_pressing(lv_event_t *event)
             s_gesture_owner = CrystalGestureOwner::QuickSettings;
         } else if (s_keyboard_open) {
             s_gesture_owner = CrystalGestureOwner::App;
-        } else if (horizontal_edge) {
+        } else if (horizontal_edge && s_phone != nullptr &&
+                   s_phone->getManager().getActiveApp() != nullptr) {
             s_gesture_owner = CrystalGestureOwner::AppSwitch;
         } else {
+            // The launcher's native pager owns horizontal drags, including
+            // ones starting at an edge. Showing the OS mask would steal them.
             s_gesture_owner = CrystalGestureOwner::App;
         }
     }

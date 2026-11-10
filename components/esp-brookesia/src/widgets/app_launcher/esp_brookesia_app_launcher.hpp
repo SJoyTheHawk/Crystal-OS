@@ -53,12 +53,11 @@ private:
     bool destoryMixObject(uint8_t index, std::vector<ESP_Brookesia_AppLauncherMixObject_t> &mix_objs);
     bool updateMixByNewData(uint8_t index, std::vector<ESP_Brookesia_AppLauncherMixObject_t> &mix_objs);
     bool togglePageIconClickable(uint8_t page_index, bool clickable);
-    bool toggleCurrentPageIconClickable(bool clickable);
     bool updateActiveSpot(void);
     bool updateByNewData(void);
 
     static void onDataUpdateEventCallback(lv_event_t *event);
-    static void onPageTouchEventCallback(lv_event_t *event);
+    static void onPageScrollEventCallback(lv_event_t *event);
 
     // Core
     ESP_Brookesia_Core &_core;

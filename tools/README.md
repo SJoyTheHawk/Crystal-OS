@@ -1,5 +1,17 @@
 # Crystal OS recovery tools
 
+## Launcher swipe regression check
+
+Run `python3 tools/test_launcher_swipe.py` to build a headless test with the
+production Brookesia launcher/manager and the checked-out LVGL dependency.
+It requires CMake and a C++ compiler with AddressSanitizer support.
+
+The test sends pointer input through LVGL and checks live page positions,
+center/edge/icon/indicator-band swipes, flicks, snap-back, reversal, interruption,
+page limits, vertical drags, page dots, app taps after settling, returning from
+an app, and teardown during animation. It does not exercise Crystal's shell
+overlays or measure frame pacing on the physical panel.
+
 ## USB recovery
 
 The recovery tool uses the ESP-IDF build metadata in `build/flasher_args.json`,

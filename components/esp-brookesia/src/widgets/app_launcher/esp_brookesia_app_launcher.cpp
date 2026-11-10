@@ -71,17 +71,25 @@ bool ESP_Brookesia_AppLauncher::begin(lv_obj_t *parent)
     /* Setup objects style */
     // Main
     lv_obj_add_style(main_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
+    lv_obj_clear_flag(main_obj.get(), LV_OBJ_FLAG_SCROLLABLE);
     // Table
     lv_obj_add_style(table_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
     lv_obj_align(table_obj.get(), LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_flex_flow(table_obj.get(), LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(table_obj.get(), LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(table_obj.get(), LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollbar_mode(table_obj.get(), LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_x(table_obj.get(), LV_SCROLL_SNAP_CENTER);
-    lv_obj_clear_flag(table_obj.get(), LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(table_obj.get(), onPageTouchEventCallback, LV_EVENT_RELEASED, this);
+    lv_obj_set_scroll_dir(table_obj.get(), LV_DIR_HOR);
+    // Scroll the real pages under the finger; momentum chooses the adjacent
+    // page on release, then LVGL animates the remaining distance to its snap.
+    lv_obj_add_flag(table_obj.get(), LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ONE | LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_clear_flag(table_obj.get(), LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(table_obj.get(), onPageScrollEventCallback, LV_EVENT_SCROLL_BEGIN, this);
+    lv_obj_add_event_cb(table_obj.get(), onPageScrollEventCallback, LV_EVENT_SCROLL_END, this);
     // Indicator
     lv_obj_add_style(indicator_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
+    // Let touches on the dots reach the full-height page viewport beneath.
+    lv_obj_clear_flag(indicator_obj.get(), LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(indicator_obj.get(), LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(indicator_obj.get(), LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     // Event
@@ -234,10 +242,10 @@ bool ESP_Brookesia_AppLauncher::scrollToPage(uint8_t index)
         return true;
     }
 
-    lv_obj_add_flag(_table_obj.get(), LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_scroll_to_view_recursive(_mix_objs[index].page_obj.get(), _data.flags.enable_table_scroll_anim ?
-                                    LV_ANIM_ON : LV_ANIM_OFF);
-    lv_obj_clear_flag(_table_obj.get(), LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_update_layout(_table_obj.get());
+    lv_obj_scroll_to_view(_mix_objs[index].page_main_obj.get(),
+                          (_table_current_page_index >= 0 && _data.flags.enable_table_scroll_anim) ?
+                          LV_ANIM_ON : LV_ANIM_OFF);
 
     _table_current_page_index = index;
 
@@ -257,11 +265,6 @@ bool ESP_Brookesia_AppLauncher::scrollToRightPage(void)
         return true;
     }
 
-    // Avoid click the next page icon when the scroll is not finished
-    ESP_BROOKESIA_CHECK_FALSE_RETURN(
-        togglePageIconClickable(next_page_index, false), false, "Toggle next page icon clickable failed"
-    );
-
     return scrollToPage(next_page_index);
 }
 
@@ -275,11 +278,6 @@ bool ESP_Brookesia_AppLauncher::scrollToLeftPage(void)
         ESP_BROOKESIA_LOGD("The current page is the last page");
         return true;
     }
-
-    // Avoid click the next page icon when the scroll is not finished
-    ESP_BROOKESIA_CHECK_FALSE_RETURN(
-        togglePageIconClickable(next_page_index, false), false, "Toggle next page icon clickable failed"
-    );
 
     return scrollToPage(next_page_index);
 }
@@ -393,9 +391,10 @@ bool ESP_Brookesia_AppLauncher::createMixObject(ESP_Brookesia_LvObj_t &table_obj
     ESP_BROOKESIA_CHECK_NULL_RETURN(spot_obj, false, "Create spot_obj failed");
 
     lv_obj_add_style(page_main_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
-    lv_obj_add_flag(page_main_obj.get(), LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_clear_flag(page_main_obj.get(), LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(page_main_obj.get(), LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_SNAPPABLE);
 
-    lv_obj_center(page_obj.get());
+    lv_obj_align(page_obj.get(), LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_add_style(page_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
     lv_obj_set_flex_flow(page_obj.get(), LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(page_obj.get(), LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -403,6 +402,7 @@ bool ESP_Brookesia_AppLauncher::createMixObject(ESP_Brookesia_LvObj_t &table_obj
     lv_obj_add_flag(page_obj.get(), LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_add_style(spot_obj.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
+    lv_obj_clear_flag(spot_obj.get(), LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(spot_obj.get(), LV_RADIUS_CIRCLE, 0);
 
     mix_objs.push_back({0, page_main_obj, page_obj, spot_obj});
@@ -431,7 +431,7 @@ bool ESP_Brookesia_AppLauncher::updateMixByNewData(uint8_t index, vector<ESP_Bro
     ESP_Brookesia_LvObj_t &spot_obj = mix_objs[index].spot_obj;
 
     // Table
-    lv_obj_set_size(page_main_obj.get(), _data.table.size.width, _data.table.size.height);
+    lv_obj_set_size(page_main_obj.get(), _data.table.size.width, _data.main.size.height);
     // lv_obj_set_size(page_obj.get(), _table_page_width, _table_page_height);
     lv_obj_set_style_pad_row(page_obj.get(), _table_page_pad_row, 0);
     lv_obj_set_style_pad_ver(page_obj.get(), _table_page_pad_row, 0);
@@ -466,14 +466,6 @@ bool ESP_Brookesia_AppLauncher::togglePageIconClickable(uint8_t page_index, bool
     }
 
     return true;
-}
-
-bool ESP_Brookesia_AppLauncher::toggleCurrentPageIconClickable(bool clickable)
-{
-    ESP_BROOKESIA_CHECK_FALSE_RETURN(checkInitialized(), false, "Not initialized");
-    ESP_BROOKESIA_LOGD("Toggle current page icon %s", clickable ? "clickable" : "unclickable");
-
-    return togglePageIconClickable(_table_current_page_index, clickable);
 }
 
 bool ESP_Brookesia_AppLauncher::checkTableFull(uint8_t page_index) const
@@ -590,7 +582,7 @@ bool ESP_Brookesia_AppLauncher::updateByNewData(void)
     lv_obj_set_size(_main_obj.get(), _data.main.size.width, _data.main.size.height);
     lv_obj_align(_main_obj.get(), LV_ALIGN_TOP_MID, 0, _data.main.y_start);
     // Table
-    lv_obj_set_size(_table_obj.get(), _data.table.size.width, _data.table.size.height);
+    lv_obj_set_size(_table_obj.get(), _data.table.size.width, _data.main.size.height);
     // Indicator
     lv_obj_set_size(_indicator_obj.get(), _data.indicator.main_size.width, _data.indicator.main_size.height);
     lv_obj_set_style_pad_column(_indicator_obj.get(), _data.indicator.main_layout_column_pad, 0);
@@ -637,7 +629,7 @@ void ESP_Brookesia_AppLauncher::onDataUpdateEventCallback(lv_event_t *event)
     ESP_BROOKESIA_CHECK_FALSE_EXIT(app_launcher->updateByNewData(), "Update object style failed");
 }
 
-void ESP_Brookesia_AppLauncher::onPageTouchEventCallback(lv_event_t *event)
+void ESP_Brookesia_AppLauncher::onPageScrollEventCallback(lv_event_t *event)
 {
     ESP_Brookesia_AppLauncher *app_launcher = nullptr;
 
@@ -646,10 +638,37 @@ void ESP_Brookesia_AppLauncher::onPageTouchEventCallback(lv_event_t *event)
     app_launcher = (ESP_Brookesia_AppLauncher *)lv_event_get_user_data(event);
     ESP_BROOKESIA_CHECK_NULL_EXIT(app_launcher, "Invalid app launcher object");
 
-    ESP_BROOKESIA_LOGD("On page touch event callback");
-
-    // Reset the clickable of the current page icon
-    ESP_BROOKESIA_CHECK_FALSE_EXIT(
-        app_launcher->toggleCurrentPageIconClickable(true), "Toggle current page icon clickable failed"
-    );
+    auto *table = app_launcher->_table_obj.get();
+    if (lv_event_get_target(event) != table || app_launcher->_mix_objs.empty()) {
+        return;
+    }
+    const bool starting = lv_event_get_code(event) == LV_EVENT_SCROLL_BEGIN;
+    if (starting) {
+        auto *animation = static_cast<lv_anim_t *>(lv_event_get_param(event));
+        if (animation != nullptr) {
+            lv_anim_set_time(animation, 250);
+            lv_anim_set_path_cb(animation, lv_anim_path_ease_out);
+        } else {
+            // A new drag takes over immediately from an unfinished snap.
+            lv_anim_del(table, nullptr);
+        }
+    } else {
+        // LVGL also emits SCROLL_END when the finger lifts, before the snap
+        // animation finishes. Keep icons blocked until that animation ends.
+        if (lv_anim_get(table, nullptr) != nullptr) {
+            return;
+        }
+        const int width = lv_obj_get_width(table);
+        if (width > 0) {
+            app_launcher->_table_current_page_index = LV_CLAMP(
+                0, (lv_obj_get_scroll_x(table) + width / 2) / width,
+                static_cast<int>(app_launcher->_mix_objs.size()) - 1);
+            ESP_BROOKESIA_CHECK_FALSE_EXIT(app_launcher->updateActiveSpot(), "Update active spot failed");
+        }
+    }
+    for (size_t i = 0; i < app_launcher->_mix_objs.size(); ++i) {
+        ESP_BROOKESIA_CHECK_FALSE_EXIT(
+            app_launcher->togglePageIconClickable(i, !starting), "Toggle page icon clickable failed"
+        );
+    }
 }

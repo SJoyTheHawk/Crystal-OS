@@ -29,6 +29,20 @@ reset follows it.
 Completion gate: basic display, touch, app launch, and app return all work on
 physical hardware.
 
+### Launcher page swipes
+
+- [ ] `python3 tools/test_launcher_swipe.py` passes.
+- [ ] Swipe left/right from blank space, an icon, either screen edge, and the
+  page-dot band. The two actual icon pages slide together under the finger.
+- [ ] Release a short slow drag: the current page snaps back. Flick or drag
+  farther: the adjacent page settles into place and its dot becomes active.
+- [ ] Reverse a drag, swipe again during settling, and swipe outward on the
+  first/last page. Pages remain aligned and app taps still work afterward.
+- [ ] Swiping over an icon does not open it; a fresh tap after settling does.
+- [ ] Quick Settings, home navigation, wake-touch suppression, and app-edge
+  card transitions still work; launcher swipes do not show a card overlay.
+- [ ] Check animation smoothness and tearing on the physical 480x480 panel.
+
 ## Phase 1: performance gate
 
 - [x] Two RGB framebuffers with avoid-tear direct mode remain selected.

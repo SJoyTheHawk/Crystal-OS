@@ -186,6 +186,7 @@ extern "C" void app_main(void)
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
     stylesheet->core.manager.app.max_running_num = 1;
     stylesheet->home.flags.enable_recents_screen = 0;
+    stylesheet->home.app_launcher.data.flags.enable_table_scroll_anim = 1;
     stylesheet->manager.gesture.threshold.direction_horizon = 12;
     stylesheet->manager.gesture.threshold.direction_vertical = 12;
     stylesheet->manager.gesture.threshold.horizontal_edge = 24;

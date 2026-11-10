@@ -21,7 +21,6 @@ ESP_Brookesia_PhoneManager::ESP_Brookesia_PhoneManager(ESP_Brookesia_Core &core_
     data(data_in),
     _flags{},
     _home_active_screen(ESP_BROOKESIA_PHONE_MANAGER_SCREEN_MAX),
-    _app_launcher_gesture_dir(ESP_BROOKESIA_GESTURE_DIR_NONE),
     _navigation_bar_gesture_dir(ESP_BROOKESIA_GESTURE_DIR_NONE),
     _gesture(nullptr),
     _recents_screen_drag_tan_threshold(0),
@@ -110,12 +109,8 @@ bool ESP_Brookesia_PhoneManager::begin(void)
     }
 
     if (gesture != nullptr) {
-        // App Launcher
-        lv_obj_add_event_cb(gesture->getEventObj(), onAppLauncherGestureEventCallback,
-                            gesture->getPressingEventCode(), this);
-        lv_obj_add_event_cb(gesture->getEventObj(), onAppLauncherGestureEventCallback,
-                            gesture->getReleaseEventCode(), this);
-
+        // Launcher paging is handled by its LVGL scroll viewport so the real
+        // pages follow the finger without a second, timer-driven page change.
         // Navigation Bar
         if (home.getNavigationBar() != nullptr) {
             lv_obj_add_event_cb(gesture->getEventObj(), onNavigationBarGestureEventCallback,
@@ -434,82 +429,6 @@ void ESP_Brookesia_PhoneManager::onHomeMainScreenLoadEventCallback(lv_event_t *e
     }
 }
 
-void ESP_Brookesia_PhoneManager::onAppLauncherGestureEventCallback(lv_event_t *event)
-{
-    lv_event_code_t event_code = _LV_EVENT_LAST;
-    ESP_Brookesia_PhoneManager *manager = nullptr;
-    ESP_Brookesia_AppLauncher *app_launcher = nullptr;
-    ESP_Brookesia_RecentsScreen *recents_screen = nullptr;
-    ESP_Brookesia_Gesture *gesture = nullptr;
-    ESP_Brookesia_GestureInfo_t *gesture_info = nullptr;
-    ESP_Brookesia_GestureDirection_t dir_type = ESP_BROOKESIA_GESTURE_DIR_NONE;
-
-    // ESP_BROOKESIA_LOGD("App launcher gesture event callback");
-    ESP_BROOKESIA_CHECK_NULL_GOTO(event, end, "Invalid event");
-
-    manager = static_cast<ESP_Brookesia_PhoneManager *>(lv_event_get_user_data(event));
-    ESP_BROOKESIA_CHECK_NULL_GOTO(manager, end, "Invalid manager");
-    gesture = manager->_gesture.get();
-    ESP_BROOKESIA_CHECK_NULL_GOTO(gesture, end, "Invalid gesture");
-    recents_screen = manager->home._recents_screen.get();
-    app_launcher = &manager->home._app_launcher;
-    ESP_BROOKESIA_CHECK_NULL_GOTO(app_launcher, end, "Invalid app launcher");
-    event_code = lv_event_get_code(event);
-    ESP_BROOKESIA_CHECK_FALSE_GOTO(
-        (event_code == gesture->getPressingEventCode()) || (event_code == gesture->getReleaseEventCode()), end,
-        "Invalid event code"
-    );
-
-    // Here is to prevent detecting gestures when the app exits, which could trigger unexpected behaviors
-    if (event_code == gesture->getReleaseEventCode()) {
-        if (manager->_flags.is_app_launcher_gesture_disabled) {
-            manager->_flags.is_app_launcher_gesture_disabled = false;
-            return;
-        }
-    }
-
-    // Check if the app launcher and recents_screen are visible
-    if (!app_launcher->checkVisible() || manager->_flags.is_app_launcher_gesture_disabled ||
-            ((recents_screen != nullptr) && recents_screen->checkVisible())) {
-        return;
-    }
-
-    dir_type = manager->_app_launcher_gesture_dir;
-    // Check if the dir type is already set. If so, just ignore and return
-    if (dir_type != ESP_BROOKESIA_GESTURE_DIR_NONE) {
-        // Check if the gesture is released
-        if (event_code == gesture->getReleaseEventCode()) {   // If so, reset the navigation type
-            dir_type = ESP_BROOKESIA_GESTURE_DIR_NONE;
-            goto end;
-        }
-        return;
-    }
-
-    gesture_info = (ESP_Brookesia_GestureInfo_t *)lv_event_get_param(event);
-    ESP_BROOKESIA_CHECK_NULL_GOTO(gesture_info, end, "Invalid gesture info");
-    // Check if there is a gesture
-    if (gesture_info->direction == ESP_BROOKESIA_GESTURE_DIR_NONE) {
-        return;
-    }
-
-    dir_type = gesture_info->direction;
-    switch (dir_type) {
-    case ESP_BROOKESIA_GESTURE_DIR_LEFT:
-        ESP_BROOKESIA_LOGD("App table gesture left");
-        ESP_BROOKESIA_CHECK_FALSE_GOTO(app_launcher->scrollToRightPage(), end, "App table scroll to right page failed");
-        break;
-    case ESP_BROOKESIA_GESTURE_DIR_RIGHT:
-        ESP_BROOKESIA_LOGD("App table gesture right");
-        ESP_BROOKESIA_CHECK_FALSE_GOTO(app_launcher->scrollToLeftPage(), end, "App table scroll to left page failed");
-        break;
-    default:
-        break;
-    }
-
-end:
-    manager->_app_launcher_gesture_dir = dir_type;
-}
-
 void ESP_Brookesia_PhoneManager::onNavigationBarGestureEventCallback(lv_event_t *event)
 {
     lv_event_code_t event_code = _LV_EVENT_LAST;
@@ -576,7 +495,6 @@ bool ESP_Brookesia_PhoneManager::processNavigationEvent(ESP_Brookesia_CoreNaviga
     ESP_BROOKESIA_LOGD("Process navigation event type(%d)", type);
 
     // Disable the gesture function of widgets
-    _flags.is_app_launcher_gesture_disabled = true;
     _flags.is_navigation_bar_gesture_disabled = true;
 
     // Check if the recents_screen is visible

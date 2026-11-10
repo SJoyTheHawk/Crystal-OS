@@ -44,8 +44,6 @@ private:
     bool processGestureScreenChange(ESP_Brookesia_PhoneManagerScreen_t screen, void *param);
     bool processHomeScreenChange(ESP_Brookesia_PhoneManagerScreen_t screen, void *param);
     static void onHomeMainScreenLoadEventCallback(lv_event_t *event);
-    // App Launcher
-    static void onAppLauncherGestureEventCallback(lv_event_t *event);
     // Navigation Bar
     static void onNavigationBarGestureEventCallback(lv_event_t *event);
     // Gesture
@@ -67,8 +65,6 @@ private:
     struct {
         // Main
         uint8_t is_initialized: 1;
-        // App Launcher
-        uint8_t is_app_launcher_gesture_disabled: 1;
         // Navigation Bar
         uint8_t enable_navigation_bar_gesture: 1;
         uint8_t is_navigation_bar_gesture_disabled: 1;
@@ -89,8 +85,6 @@ private:
     } _flags;
     // Home
     ESP_Brookesia_PhoneManagerScreen_t _home_active_screen;
-    // App Launcher
-    ESP_Brookesia_GestureDirection_t _app_launcher_gesture_dir;
     // Navigation Bar
     ESP_Brookesia_GestureDirection_t _navigation_bar_gesture_dir;
     // Gesture
