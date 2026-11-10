@@ -2,229 +2,167 @@
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE.md)
 
-Crystal OS is an ESP32-S3 touch-device shell and app framework built on
-LVGL and Espressif's `esp-brookesia` phone UI.
+A touch-first shell and app framework for the **Waveshare ESP32-S3-Touch-LCD-4B**,
+the 4-inch, 480 × 480 ESP32-S3 panel in an **86-box form factor**. Crystal OS
+builds on LVGL and Espressif's `esp-brookesia` to bring swipeable app cards,
+a paged launcher, Quick Settings, and everyday utilities to this board.
 
-![Crystal OS blue green wallpaper](reference/launcher_wallpaper_crystalos_480x480.png)
+[Hardware](#supported-hardware) · [Build and flash](#build-and-flash) ·
+[Documentation](#documentation) · [Project status](#project-status)
 
-## No-bus baseline branch
+## Screenshots
 
-This branch removes the Bus app and its service/catalog workload from the current
-firmware. Bus development is preserved at `examples/bus_app/` (extracted from 
-`bus-app-development` at fc20cf7).
+| Launcher | Quick Settings | Weather |
+|:---:|:---:|:---:|
+| <img src="docs/images/launcher.png" width="240" alt="Crystal OS launcher with Clock, Weather, and Calculator"> | <img src="docs/images/quick_settings.png" width="240" alt="Crystal OS Quick Settings with Wi-Fi, brightness, volume, and power controls"> | <img src="docs/images/weather.png" width="240" alt="Crystal OS Weather app showing conditions in Hong Kong"> |
 
-**Status**: Development halted due to ESP32-S3 memory constraints (internal DRAM 
-exhaustion). The extracted code serves as architecture evidence for Phase 14+ app 
-platform work.
+| Clock | Calculator |
+|:---:|:---:|
+| <img src="docs/images/clock.png" width="240" alt="Crystal OS Clock app"> | <img src="docs/images/calculator.png" width="240" alt="Crystal OS Calculator app"> |
 
-**Documentation**:
-- [Bus app handoff](examples/bus_app/ARCHITECTURE_HANDOFF.md) — validated patterns 
-  and architecture gaps
-- [App platform lessons](docs/APP_PLATFORM_BUS_LESSONS.md) — resource ownership, 
-  quotas, permissions, and third-party distribution model derived from bus app evidence
-- [Baseline testing](docs/NO_BUS_BASELINE.md) — build, flash, and comparison steps
+These 480 × 480 captures render the production LVGL interfaces on the host
+with fixed sample data. See [screenshot generation](tools/README.md#readme-screenshots)
+to regenerate them.
 
-Historical bus planning documents below `docs/` describe the development roadmap but 
-do not reflect this baseline build.
+## Supported hardware
 
-## Project goal
+This repository's firmware targets the **Waveshare ESP32-S3-Touch-LCD-4B**.
+Its display, touch, RTC, and power adapters use this board's hardware and the
+`waveshare/esp32_s3_touch_lcd_4b` board support package. Other ESP32-S3 displays
+require a matching board configuration and hardware adapters.
 
-Crystal OS standardizes touch-screen apps on ESP32 with a shared shell,
-hardware interfaces, lifecycle, persistence, and system services. Early phases
-verify that the MCU can run a modern, animation-rich interface. Apps currently
-ship in firmware; later phases will add packages and a PC loader.
+| 4-inch touch panel and enclosure | Onboard components |
+|:---:|:---:|
+| <img src="docs/images/hardware/ESP32-S3-Touch-LCD-4B-inter001.jpg" width="360" alt="Waveshare ESP32-S3-Touch-LCD-4B touch panel in its white 86-box enclosure"> | <img src="docs/images/hardware/ESP32-S3-Touch-LCD-4B-details-intro.jpg" width="360" alt="Waveshare ESP32-S3-Touch-LCD-4B PCB with numbered component callouts"> |
 
-**App Platform Development**: The bus app (preserved at `examples/bus_app/`) served as 
-a demanding reference workload for designing the third-party app platform (Phases 14-17). 
-While memory constraints halted its development, the extracted architecture patterns and 
-identified gaps inform the resource management, permission model, and package distribution 
-design. See [App Platform Lessons](docs/APP_PLATFORM_BUS_LESSONS.md) for the full analysis.
+*Hardware photos: Waveshare. The screen in the product photo shows the vendor's
+demo UI; the Crystal OS captures are above. [Image sources and attribution](docs/images/README.md).*
 
-## Why ESP32?
+| Component | Specification |
+| --- | --- |
+| Module | ESP32-S3-WROOM-1-N16R8 |
+| Memory | 16 MB flash, 8 MB octal PSRAM |
+| Display | 4-inch IPS RGB LCD, 480 × 480, ST7701 controller |
+| Touch | GT911 capacitive touch over I2C |
+| Timekeeping | PCF85063 RTC |
+| Power | AXP2101 PMIC, USB-C power, lithium battery connector |
 
-ESP32 offers fast boot, low power, low cost, direct hardware access, and
-built-in wireless connectivity in a small, predictable system.
+Board specifications, connector details, and schematics are available in the
+[Waveshare hardware wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4B).
+The [board reference](reference/ESP32-S3-Touch-LCD-4B/) contains the vendor
+examples and hardware resources.
 
-Compared with Android, Crystal OS is smaller and more deterministic, but has
-far fewer apps and drivers. Compared with Raspberry Pi, it uses less power and
-has fewer moving parts, but cannot match Linux's CPU, memory, storage, or
-software ecosystem. Android or Raspberry Pi is preferable for browsers,
-heavy multimedia, Linux tools, or general-purpose apps.
+## Features
 
-## Design principles
+- **Navigation:** swipe between app cards, browse launcher pages with horizontal
+  swipes, and use system gestures for Home and overlays.
+- **Quick Settings:** Wi-Fi, brightness, volume, energy saving, and automatic dimming.
+- **Settings:** network configuration, timezone and manual time, weather location,
+  timer alerts, and device information.
+- **Apps:** Clock with timer and stopwatch, Weather, Calculator, and Dev Tester.
+- **Manage Apps:** enable bundled apps live, disable them for the next reboot,
+  reorder cards, and clear saved app data.
+- **Shared services:** persistent app state, RTC and network time, Wi-Fi, power
+  management, an on-screen keyboard, and a time/Wi-Fi/battery status bar.
 
-- **Cards are home:** the device opens a useful data card, not an empty icon grid.
-- **Appliance first:** fixed card order and simple gestures are preferred over
-  phone-style navigation.
-- **One live app:** the active app owns the screen; neighbouring cards use small
-  snapshots to keep memory bounded.
-- **Services own state:** timers, time, network, and storage survive app
-  recreation, while apps remain lightweight views.
-
-## Target hardware
-
-- Waveshare ESP32-S3-Touch-LCD-4B
-- ESP32-S3 with 16 MB flash and octal PSRAM
-- 480x480 RGB LCD
-- GT911 touch controller over I2C
-- PCF85063 RTC over I2C
-- AXP2101 power management over I2C
-- ESP-IDF 6.1
-- LVGL 8.4.0
-- `esp-brookesia` 0.4.2
-
-Board wiring and pin assignments are maintained in the
-[Waveshare ESP32-S3-Touch-LCD-4B schematic diagram](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4B#Schematic_Diagram).
-
-## Current features
-
-- **Card shell:** horizontal swipe navigation with 50% visual crossover and early icon cards
-- **Gesture arbiter:** unified edge-gesture ownership for app switching and system overlays
-- **Status bar:** time, Wi-Fi, battery, and page indicators
-- **Quick Settings:** brightness, volume, Wi-Fi, and energy-saving toggle
-- **Settings overlay:** Wi-Fi networks, static IP, timezone, manual time/location, timer alerts, device info
-- **Manage Apps:** view bundled apps, enable apps live, disable apps for the next reboot, reorder cards, and clear app data
-- **Keyboard overlay:** iOS-inspired shell keyboard with field lifting and multi-layer lifecycle
-- **Apps:** Clock (with timer/stopwatch), Weather (Open-Meteo), Calculator, Hello World, State Test
-- **Core services:** RTC persistence, Wi-Fi/SNTP sync, power management with dim/off timeouts
-- **Hardware abstraction:** unified interface for brightness, storage, Wi-Fi, RTC, power, and touch
-
-## Phase status
-
-`[x]` means the phase exit criteria are complete; `[ ]` means work or
-validation remains. Details and evidence live in
-[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) and
-[`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md).
-
-- [x] Phase 0 — skeleton and boot baseline
-- [x] Phase 1 — animation performance gate
-- [x] Phase 2 — hardware abstraction layer and simulator
-- [x] Phase 3 — core services (RTC, Wi-Fi/SNTP, power states)
-- [x] Phase 4 — app framework checkpoint
-- [x] Phase 4.5 — lifecycle correctness validation
-- [x] Phase 5 — persistent app registry and launcher order
-- [x] Phase 5.5 — Clock, Timer, and Stopwatch hardware validation
-- [x] Phase 6 — card shell and app switcher baseline
-- [x] Phase 6.5 — measured crossover re-gate
-- [x] Phase 7 — gesture arbiter and indicator bar
-- [x] Phase 7.5 — 50% visual crossover and icon-only transition cards
-- [x] Phase 8 — quick settings
-- [x] Phase 8.5 — corner-anchored quick panel
-- [x] Phase 9 — Wi-Fi product integration
-- [x] Phase 9.5 — Weather app
-- [x] Phase 9.6 — Calculator app port
-- [x] Phase 10 — keyboard overlay
-- [x] Phase 11 — Settings and power management
-- [x] Phase 12 — reliability and recovery
-- [~] Phase 13 — bundled app catalog and Manage Apps controls (13.1–13.7 complete; 13.8 closure pending)
-
-Phase 11 closed on 2026-09-11 after all Settings and power validation rows passed
-on the physical panel. This includes the five V3 defect regressions, the durable
-project-local Brookesia override, and independent enabled/disabled timer-alert
-policy checks.
-
-Phase 13 implementation through live app enabling is complete. The remaining
-13.8 work is the final device regression pass and documentation sign-off; see
-[`docs/PHASE_13_CHECKLIST.md`](docs/PHASE_13_CHECKLIST.md) and the per-phase
-validation records for current evidence.
-
-## V2 track: installable apps
-
-The V2 app platform is a design track, not yet built. It replaces the V1 rule
-that apps must ship in firmware with a versioned host ABI and PC-assisted
-installation.
-
-- Apps live in `/apps/<reverse-dns-id>/` with a manifest, assets, and private data.
-- A signed `.capp` package is verified and installed transactionally.
-- Declarative, Lua, and curated native runtime tiers share one handle-based ABI.
-- Permissions, memory limits, and per-app storage keep third-party code bounded.
-- The launcher merges built-in and packaged apps; built-ins can be disabled and
-  packaged apps can be uninstalled.
-
-See [`docs/APP_PLATFORM.md`](docs/APP_PLATFORM.md) for the ABI, package format,
-security boundaries, and the `examples/clock3p/` worked example.
-
-### V2 phase status
-
-V2 continues the main roadmap as Phases 14–17. The design is documented, but
-implementation has not started.
-
-- [ ] Phase 14 — package format and registry generalisation
-- [ ] Phase 15 — PC/on-device control panel and transport
-- [ ] Phase 16 — declarative runtime and frozen ABI v1
-- [ ] Phase 17 — Lua runtime, sandbox, quotas, and watchdog
-
-See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for phase exit criteria and decisions.
-The current desktop mock workflow is documented in [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
-Phase 3 hardware checks are documented in [`docs/PHASE_3_SERVICES.md`](docs/PHASE_3_SERVICES.md).
-The consolidated regression checklist is in [`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md).
-The complete project-specific ESP-IDF command reference is in
-[`docs/ESP_IDF_COMMAND_GUIDE.md`](docs/ESP_IDF_COMMAND_GUIDE.md).
-
-## Bus app architecture reference
-
-The [extracted bus app](examples/bus_app/README.md) preserves the native UI,
-service, catalog tools, fixtures, and architecture handoff for future package
-work. It is reference source only and is not included in the no-bus firmware.
+The shell keeps one app active at a time. System services retain timers,
+network state, and settings while app views are recreated, keeping the UI
+within the board's memory budget.
 
 ## Build and flash
 
-From the project directory, activate the matching ESP-IDF environment:
+The current development stack uses **ESP-IDF 6.1**, **LVGL 8.4.0**, and
+**esp-brookesia 0.4.2**. The repository includes a project-local Brookesia
+override; see the [version strategy](docs/BROOKESIA_VERSION_STRATEGY.md).
+
+From the repository root, activate your ESP-IDF installation and build:
 
 ```bash
-source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
-```
-
-Build the firmware:
-
-```bash
+# Replace this path with your ESP-IDF 6.1 installation.
+source /path/to/esp-idf/export.sh
 idf.py build
 ```
 
-Flash a connected board. Replace the port if macOS assigns a different device:
+Connect the board over USB, then select its serial port and flash:
 
 ```bash
-idf.py -p /dev/cu.usbmodem101 flash
+# Examples: /dev/cu.usbmodem101 on macOS, /dev/ttyACM0 on Linux, COM3 on Windows.
+PORT=/dev/cu.usbmodem101
+idf.py -p "$PORT" flash
+idf.py -p "$PORT" monitor
 ```
 
-Open the serial monitor at the configured 2 Mbps console rate:
+The example uses a Bash/Zsh shell. Press `Ctrl+]` to exit the serial monitor.
+For configuration, update-only flashing, and recovery, see the
+[ESP-IDF command guide](docs/ESP_IDF_COMMAND_GUIDE.md),
+[baseline flashing notes](docs/NO_BUS_BASELINE.md#build-and-flash), and
+[USB recovery tools](tools/README.md#usb-recovery).
 
-```bash
-idf.py -p /dev/cu.usbmodem101 monitor -b 2000000
-```
+Host development currently provides a mock HAL and headless LVGL checks/captures.
+A full interactive desktop simulator is still planned; see
+[desktop simulation](docs/SIMULATOR.md) and [host tools](tools/README.md).
 
-Press `Ctrl+]` to quit the monitor. A clean build is only needed after changing
-configuration, dependencies, generated files, or when troubleshooting stale
-build results:
+## Project status
 
-```bash
-idf.py fullclean
-idf.py build
-```
+Crystal OS is under development. Apps currently ship inside the firmware.
+Bundled-app management through Phase 13.7 is implemented; the broader Phase 13.8
+device regression pass and documentation closure remain pending.
+
+- **Current firmware:** the no-bus baseline. Bus app development paused after
+  internal DRAM exhaustion; its source and findings are preserved in
+  [examples/bus_app](examples/bus_app/README.md).
+- **Next platform track:** installable apps, packages, and a PC-assisted loader.
+  Phases 14–17 are a [design proposal](docs/APP_PLATFORM.md), not implemented features.
+- **Detailed progress:** see the [implementation plan](docs/IMPLEMENTATION_PLAN.md),
+  [Phase 13 checklist](docs/PHASE_13_CHECKLIST.md), and
+  [validation checklist](docs/VALIDATION_CHECKLIST.md).
 
 ## Project layout
 
 ```text
-main/                       Application entry point and shell initialization
-components/crystal_hal/     Hardware abstraction interfaces and device adapters
-components/crystal_app/     CrystalApp lifecycle and bounded per-app state
-components/crystal_registry/ Persistent app enable and launcher slot registry
-components/crystal_shell/   Card shell, gesture arbiter, and system overlays
-components/crystal_core/    Core services (RTC, Wi-Fi/SNTP, power states, timers)
-components/hello_app/       Hello World launcher application and icon
-components/state_test_app/  Phase 4 state persistence validation app
-components/clock_app/       Clock, timer, and stopwatch app (Phase 5.5)
-components/weather_app/     Open-Meteo weather app (Phase 9.5)
-components/calculator_app/  Calculator app port (Phase 9.6)
-components/perf_spike/      Phase 1 temporary performance benchmark
-docs/                       Design, implementation, and bring-up notes
-partitions.csv              Dual-OTA partition table with storage partition
-sdkconfig.defaults          Project configuration defaults
+main/                        Firmware entry point and startup
+components/crystal_shell/     App cards, gestures, Quick Settings, and overlays
+components/crystal_app/       App lifecycle and bounded per-app state
+components/crystal_registry/  Bundled-app enable state and launcher order
+components/crystal_core/      Time, weather, power, and timer services
+components/crystal_hal/       Hardware interfaces and board adapters
+components/esp-brookesia/      Project-local Brookesia UI framework
+components/*_app/             Bundled apps and development examples
+sim/                         Host HAL mocks and screenshot harness
+tools/                       Host checks, screenshot generation, and recovery
+docs/                        Architecture, validation records, and images
+examples/                    App-platform examples and archived Bus workload
+reference/                   Vendor board resources and reference material
+partitions.csv               Dual-OTA partition table and storage partition
+sdkconfig.defaults           Firmware configuration defaults
 ```
 
-The performance spike is retained as diagnostic code, but it is not installed
-by the production startup path. The display currently uses two RGB buffers:
-`CONFIG_BSP_LCD_RGB_BUFFER_NUMS=2` in avoid-tear direct mode.
+## Documentation
+
+| Topic | Start here |
+| --- | --- |
+| Architecture and app lifecycle | [Design](docs/DESIGN.md) · [Code guide](docs/CODE_GUIDE.md) |
+| Build, flash, and recovery | [ESP-IDF commands](docs/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
+| Roadmap and validation | [Implementation plan](docs/IMPLEMENTATION_PLAN.md) · [Regression checklist](docs/VALIDATION_CHECKLIST.md) |
+| Manage Apps | [Release notes](docs/PHASE_13_RELEASE_NOTES.md) · [Phase 13 checklist](docs/PHASE_13_CHECKLIST.md) |
+| Host development | [Mock HAL](docs/SIMULATOR.md) · [Screenshot generation](tools/README.md#readme-screenshots) |
+| Future installable apps | [App platform design](docs/APP_PLATFORM.md) · [Bus workload lessons](docs/APP_PLATFORM_BUS_LESSONS.md) |
+| Bus reference and baseline | [Architecture handoff](examples/bus_app/ARCHITECTURE_HANDOFF.md) · [Baseline testing](docs/NO_BUS_BASELINE.md) |
+
+Historical phase reports and proposals live in [docs/archive](docs/archive/).
+
+## Use of AI
+
+Generative AI assists with planning, implementation, review, testing, and
+documentation for Crystal OS. The maintainer is responsible for design
+decisions, review, and releases.
+
+## Sponsor Me (With Thanks)
+
+[![Sponsor SJoyTheHawk](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/SJoyTheHawk)
+
+If you find Crystal OS useful, consider supporting its development through
+GitHub Sponsors. Thank you for your support!
 
 ## License and attribution
 
@@ -241,29 +179,3 @@ artwork. Third-party dependencies and reference materials retain their own
 licenses. See [`NOTICE`](NOTICE) for third-party credits; the exact dependency
 license files under `managed_components/` remain authoritative for
 redistributed components.
-
-## Documentation
-
-Core design and implementation documentation:
-
-- **[DESIGN.md](docs/DESIGN.md)** — system architecture, visual language, lifecycle contract
-- **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — phase breakdown and exit criteria
-- **[CODE_GUIDE.md](docs/CODE_GUIDE.md)** — developer reference for the codebase
-
-App platform design (Phases 14-17):
-
-- **[APP_PLATFORM.md](docs/APP_PLATFORM.md)** — third-party app packaging, runtime tiers, host ABI
-- **[APP_PLATFORM_BUS_LESSONS.md](docs/APP_PLATFORM_BUS_LESSONS.md)** — architecture lessons from bus app development
-- **[examples/bus_app/ARCHITECTURE_HANDOFF.md](examples/bus_app/ARCHITECTURE_HANDOFF.md)** — validated patterns and gaps from reference workload
-- **[BUS_APP_VALIDATION_SUMMARY.md](docs/BUS_APP_VALIDATION_SUMMARY.md)** — validation findings and next steps
-
-Phase-specific proposals:
-
-- **[PHASE_12_PROPOSAL.md](docs/PHASE_12_PROPOSAL.md)** — OTA updates, crash reporting, recovery
-- **[NO_BUS_BASELINE.md](docs/NO_BUS_BASELINE.md)** — baseline testing without bus app
-
-Phase 13 records:
-
-- **[PHASE_13_CHECKLIST.md](docs/PHASE_13_CHECKLIST.md)** — implementation and closure checklist
-- **[PHASE_13_7_VALIDATION.md](docs/PHASE_13_7_VALIDATION.md)** — live-enable device acceptance
-- **[PHASE_13_RELEASE_NOTES.md](docs/PHASE_13_RELEASE_NOTES.md)** — user-visible Manage Apps behavior

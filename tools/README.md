@@ -1,5 +1,14 @@
 # Crystal OS recovery tools
 
+## README screenshots
+
+Run `python3 tools/capture_readme.py` to render the production Brookesia
+launcher, Crystal shell Quick Settings panel, Clock, Weather, and Calculator
+interfaces into `docs/images/`. The headless LVGL capture uses fixed sample
+time, weather, battery, brightness, volume, and Wi-Fi status; it does not need a
+device or network connection. It requires CMake, a C++17 compiler, and the
+checked-out managed LVGL dependency.
+
 ## Launcher swipe regression check
 
 Run `python3 tools/test_launcher_swipe.py` to build a headless test with the
