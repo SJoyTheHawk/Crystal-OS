@@ -194,12 +194,55 @@ Investigate service scheduling during TLS before treating this as a clean
 system stress run. The log does not establish the root cause or prove that
 every native allocation is tracked.
 
+## Cleanup of earlier development diagnostics
+
+The post-closure cleanup removes verbose NVS old/new value dumps and
+the detailed boot-time OTA partition investigation dump. Storage writes still
+check `nvs_set_*` and `nvs_commit` failures, use the same persisted keys/types,
+and log errors. Small blob writes retain their readback verification and failure
+return; the Wi-Fi enabled flag retains its readback error reporting. Review
+identified these checks as functional reliability behavior, so their initial
+removal was corrected. Larger blobs retain the existing commit-based behavior.
+OTA pending-image confirmation and rollback behavior remain.
+
+The unregistered `hello_app`, `state_test_app`, and `perf_spike` components were
+removed; Dev Tester and the host regression suites provide the retained
+development tools. Manage Apps now requires the real registry live-apply
+implementation; the standalone host page test supplies its own explicit stub
+instead of putting a weak success fallback in production code.
+
+The Phase 14 device-test build option remains available for deliberate board
+regression runs. Device/host platform guards, TLS configuration checks, app
+state compatibility, and resource/admission checks are still required.
+The automatic HTTPS smoke request is retained: commit `a7f0453` deliberately
+kept it when removing HTTP acceptance-test code, and the no-bus baseline report
+still uses it to exercise `crystal_http` on the board. Review reversed its
+initial removal because it is not established as obsolete, especially while
+the TLS watchdog investigation is open.
+
+### Removal review evidence
+
+- `perf_spike`: the v1 plan calls it a throwaway Phase 1 spike; no current caller
+  or launcher registration remains.
+- `hello_app` and `state_test_app`: the v1 Phase 10 plan explicitly records their
+  replacement by Dev Tester; current state/registry regression suites remain.
+- Manage Apps weak live-apply fallback: a host-linking convenience from
+  `0c48ba8`, replaced by an explicit test stub. Firmware links the actual registry.
+- OTA partition dump: introduced for rollback investigation in `895664c`; its
+  queries only fed logs. Pending-image confirmation and rollback handling remain.
+- NVS old/new dumps: diagnostic formatting removed. Readback checks introduced
+  in the settings reliability change `131610c` are retained because small-blob
+  verification affects the write result. No stored-key migration was removed.
+
+No obsolete build-time feature flag was identified in this removal set. Existing
+platform, TLS configuration, and Phase 14 test guards still serve current paths.
+
 ## Follow-ups after Phase 14 closure
 
 The user requested Phase 14 closure after the successful Calculator board run
 and will address the watchdog separately. These items remain open for follow-up:
 
-- [ ] Investigate the `crystal_service`/TLS watchdog timeout and repeat the board run to confirm it no longer starves `IDLE0`.
+- [ ] Investigate the `crystal_service`/TLS watchdog timeout and repeat the board run to confirm it no longer starves `IDLE0`. The startup HTTPS baseline check remains available.
 - [ ] Check manual touch responsiveness and lifecycle timing during package operations; the automatic Calculator run does not establish these.
 - [ ] Exercise the instrumented Bus service with actual HTTP/catalog work and verify its retained worker/queue disables it and blocks removal. The host test reproduces those ownership records; it does not run the full Bus network stack.
 - [ ] Interrupt power during staging, directory commit, and uninstall, then confirm recovery without unrelated state loss.

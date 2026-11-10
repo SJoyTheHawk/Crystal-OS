@@ -8,12 +8,6 @@
 #include "crystal_registry.hpp"
 #include "esp_log.h"
 
-// The standalone host renderer supplies registry stubs and may not provide
-// the optional live-apply symbol. The firmware's strong implementation
-// overrides this weak fallback at link time.
-bool crystal_registry_apply_changes(void) __attribute__((weak));
-bool crystal_registry_apply_changes(void) { return true; }
-
 namespace {
 struct AppRow {
     const CrystalAppEntry *entry;

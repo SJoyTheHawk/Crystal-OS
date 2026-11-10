@@ -116,41 +116,23 @@ public:
             return false;
         }
 
-        // Phase 11 edit begin: verify and log every shell/core NVS write.
-        uint8_t old_value[32] = {};
-        size_t old_length = sizeof(old_value);
-        const esp_err_t old_err = nvs_get_blob(handle, key, old_value, &old_length);
-        const bool old_present = old_err == ESP_OK;
-        if (!old_present) old_length = 0;
         esp_err_t err = nvs_set_blob(handle, key, value, length);
         if (err == ESP_OK) {
             err = nvs_commit(handle);
         }
-        bool readback_ok = false;
-        if (err == ESP_OK) {
-            size_t verify_length = length;
-            uint8_t verify_value[32] = {};
-            void *verify_buffer = length <= sizeof(verify_value) ? verify_value : nullptr;
-            if (verify_buffer != nullptr && nvs_get_blob(handle, key, verify_buffer, &verify_length) == ESP_OK) {
-                readback_ok = verify_length == length && memcmp(verify_buffer, value, length) == 0;
-            } else if (verify_buffer == nullptr) {
-                // Large values are uncommon in shell settings. The successful
-                // commit is still useful to report when an inline comparison
-                // would require an allocation on the LVGL task.
-                readback_ok = true;
-            }
+        // Preserve the settings write contract: small values must read back
+        // exactly. Larger package blobs rely on the successful NVS commit.
+        uint8_t verified[32] = {};
+        bool readback_ok = err == ESP_OK;
+        if (readback_ok && length <= sizeof(verified)) {
+            size_t verified_length = sizeof(verified);
+            readback_ok = nvs_get_blob(handle, key, verified, &verified_length) == ESP_OK &&
+                          verified_length == length &&
+                          (length == 0 || memcmp(verified, value, length) == 0);
         }
-        char old_hex[65] = {};
-        char new_hex[65] = {};
-        const size_t old_dump = old_length < 32 ? old_length : 32;
-        const size_t new_dump = length < 32 ? length : 32;
-        for (size_t i = 0; i < old_dump; ++i) snprintf(old_hex + i * 2, 3, "%02x", old_value[i]);
-        for (size_t i = 0; i < new_dump; ++i) snprintf(new_hex + i * 2, 3, "%02x", static_cast<const uint8_t *>(value)[i]);
-        ESP_LOGI(TAG, "NVS set key=%s old=%s requested=%s write=%s readback=%s",
-                 key, old_present ? old_hex : "<unset>", new_hex,
-                 err == ESP_OK ? "ok" : esp_err_to_name(err), readback_ok ? "ok" : "failed");
         nvs_close(handle);
-        // Phase 11 edit end.
+        if (err != ESP_OK) ESP_LOGE(TAG, "NVS set key=%s failed: %s", key, esp_err_to_name(err));
+        else if (!readback_ok) ESP_LOGE(TAG, "NVS set key=%s readback failed", key);
         return err == ESP_OK && readback_ok;
     }
 
@@ -585,25 +567,20 @@ private:
 
     static void write_enabled(bool enabled)
     {
-        // Phase 11 edit begin: preserve the legacy u8 Wi-Fi key while verifying it.
         nvs_handle_t handle;
         if (nvs_open(kStorageNamespace, NVS_READWRITE, &handle) != ESP_OK) {
             ESP_LOGE(TAG, "NVS set key=%s open failed", kWifiEnabledKey);
             return;
         }
-        uint8_t old_value = 0;
-        const bool old_present = nvs_get_u8(handle, kWifiEnabledKey, &old_value) == ESP_OK;
         const uint8_t value = enabled ? 1 : 0;
         esp_err_t err = nvs_set_u8(handle, kWifiEnabledKey, value);
         if (err == ESP_OK) err = nvs_commit(handle);
-        uint8_t verify = 0;
-        const bool readback_ok = err == ESP_OK && nvs_get_u8(handle, kWifiEnabledKey, &verify) == ESP_OK && verify == value;
-        ESP_LOGI(TAG, "NVS set key=%s old=%s requested=%u write=%s readback=%s",
-                 kWifiEnabledKey, old_present ? (old_value ? "1" : "0") : "<unset>",
-                 static_cast<unsigned>(value), err == ESP_OK ? "ok" : esp_err_to_name(err),
-                 readback_ok ? "ok" : "failed");
+        uint8_t verified = 0;
+        const bool readback_ok = err == ESP_OK &&
+            nvs_get_u8(handle, kWifiEnabledKey, &verified) == ESP_OK && verified == value;
         nvs_close(handle);
-        // Phase 11 edit end.
+        if (err != ESP_OK) ESP_LOGE(TAG, "NVS set key=%s failed: %s", kWifiEnabledKey, esp_err_to_name(err));
+        else if (!readback_ok) ESP_LOGE(TAG, "NVS set key=%s readback failed", kWifiEnabledKey);
     }
 
     static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)

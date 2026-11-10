@@ -125,35 +125,8 @@ extern "C" void app_main(void)
 
     crystal_crash_init();
 
-    // Log detailed OTA partition state for rollback investigation
     const esp_partition_t *running = esp_ota_get_running_partition();
-    const esp_partition_t *boot = esp_ota_get_boot_partition();
-    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
-    const esp_partition_t *last_invalid = esp_ota_get_last_invalid_partition();
-
     esp_ota_img_states_t running_state = ESP_OTA_IMG_UNDEFINED;
-    esp_ota_img_states_t boot_state = ESP_OTA_IMG_UNDEFINED;
-    if (running != nullptr) esp_ota_get_state_partition(running, &running_state);
-    if (boot != nullptr) esp_ota_get_state_partition(boot, &boot_state);
-
-    ESP_LOGI(TAG, "=== OTA Partition State at Boot ===");
-    ESP_LOGI(TAG, "Running: %s @ 0x%lx state=%d",
-             running ? running->label : "NULL",
-             running ? (unsigned long)running->address : 0UL,
-             running_state);
-    ESP_LOGI(TAG, "Boot: %s @ 0x%lx state=%d",
-             boot ? boot->label : "NULL",
-             boot ? (unsigned long)boot->address : 0UL,
-             boot_state);
-    ESP_LOGI(TAG, "Next update slot: %s @ 0x%lx",
-             next ? next->label : "NULL",
-             next ? (unsigned long)next->address : 0UL);
-    ESP_LOGI(TAG, "Last invalid: %s @ 0x%lx",
-             last_invalid ? last_invalid->label : "NULL",
-             last_invalid ? (unsigned long)last_invalid->address : 0UL);
-    ESP_LOGI(TAG, "Rollback possible: %s",
-             esp_ota_check_rollback_is_possible() ? "YES" : "NO");
-
     if (running != nullptr &&
             esp_ota_get_state_partition(running, &running_state) == ESP_OK &&
             running_state == ESP_OTA_IMG_PENDING_VERIFY) {

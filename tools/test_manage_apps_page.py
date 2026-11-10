@@ -46,6 +46,8 @@ static unsigned clears = 0;
 static bool fail_clear = false;
 static bool fail_uninstall = false;
 static unsigned uninstalls = 0;
+// This standalone page fixture supplies the registry implementation explicitly.
+bool crystal_registry_apply_changes() { return true; }
 bool crystal_registry_uninstall_package(const char *id) {
     ++uninstalls;
     if (fail_uninstall) return false;
