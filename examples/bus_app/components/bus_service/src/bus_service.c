@@ -198,6 +198,11 @@ typedef struct {
 // Service state
 static TaskHandle_t s_worker_task = NULL;
 static QueueHandle_t s_request_queue = NULL;
+void bus_service_get_resources(void **worker_task, void **request_queue)
+{
+    if (worker_task) *worker_task = s_worker_task;
+    if (request_queue) *request_queue = s_request_queue;
+}
 static bus_listener_t s_listener = NULL;
 static void *s_listener_user_data = NULL;
 static uint32_t s_next_request_id = 1;

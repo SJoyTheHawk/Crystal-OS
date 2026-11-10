@@ -1,4 +1,6 @@
 /build/
+/build-phase14/
+__pycache__/
 /managed_components/
 /.vscode/
 /sdkconfig

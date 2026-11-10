@@ -54,7 +54,7 @@ bool isOperatorButton(uint32_t id)
 }
 }  // namespace
 
-CalculatorApp::CalculatorApp() : CrystalApp("Calculator", &calculator_icon)
+CalculatorApp::CalculatorApp(const char *name) : CrystalApp(name, &calculator_icon)
 {
     calculator_icon_prepare();
 }
@@ -66,6 +66,8 @@ bool CalculatorApp::onCreate()
     const lv_coord_t height = lv_area_get_height(&area);
 
     root_ = lv_obj_create(lv_scr_act());
+    if (root_ == nullptr) return false;
+    if (!trackObject(root_)) { lv_obj_del(root_); root_ = nullptr; return false; }
     lv_obj_set_size(root_, width, height);
     lv_obj_set_pos(root_, 0, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -162,6 +164,7 @@ bool CalculatorApp::onResume()
 
 bool CalculatorApp::onDestroy()
 {
+    if (root_ != nullptr) lv_obj_del(root_);
     root_ = display_ = history_label_ = formula_label_ = result_label_ = keyboard_ = nullptr;
     formula_len_ = 1;
     return true;

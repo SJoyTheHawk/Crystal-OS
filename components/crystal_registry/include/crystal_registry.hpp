@@ -6,13 +6,25 @@
 
 class CrystalApp;
 class ESP_Brookesia_Phone;
+struct CrystalPackageManifest;
+enum crystal_app_origin_t : uint8_t { CRYSTAL_ORIGIN_BUILTIN, CRYSTAL_ORIGIN_PACKAGE };
 
 struct CrystalAppEntry {
     const char *id;
     CrystalApp *(*factory)();
     bool default_enabled;
     uint16_t default_slot;
+    crystal_app_origin_t origin = CRYSTAL_ORIGIN_BUILTIN;
+    const char *display_name = nullptr;
+    bool available = true;
 };
+
+using crystal_package_factory_t = CrystalApp *(*)(const CrystalPackageManifest &manifest);
+void crystal_registry_set_package_factory(crystal_package_factory_t factory);
+CrystalApp *crystal_registry_create_app(const CrystalAppEntry *entry);
+// LVGL task, with the display lock held. Stops the app, verifies its ledger,
+// detaches it from the launcher, then removes package files and state.
+bool crystal_registry_uninstall_package(const char *id);
 
 bool crystal_registry_install(ESP_Brookesia_Phone *phone,
                               const CrystalAppEntry *entries, size_t count);

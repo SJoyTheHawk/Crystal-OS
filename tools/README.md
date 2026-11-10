@@ -61,3 +61,26 @@ Use `CRYSTAL_ESPTOOL` to select a particular executable or wrapper, for
 example `CRYSTAL_ESPTOOL="python3 -m esptool"`. The tool streams esptool's
 progress and returns a non-zero status when a confirmation, validation, or
 flash operation fails.
+
+## App packages (Phase 14)
+
+`./tools/crystal pack examples/calculator_package --unsigned -o /tmp/calculator.capp`
+creates the development proof package. `./tools/crystal inspect /tmp/calculator.capp`
+checks the stream layout and CRCs. General YAML and Ed25519 signing use the
+optional dependencies in `requirements-pack.txt`; this JSON-syntax example
+needs only Python's standard library.
+
+Run `python3 tools/test_app_platform_v2.py` after ESP-IDF has resolved the
+managed dependencies. It builds the production package store, registry,
+Calculator, Brookesia, and LVGL under ASan/UBSan, then exercises repeated
+installation and lifecycle teardown, malformed packages, resource admission,
+state isolation, and leak refusal. Phase 14 is closed; board evidence and open
+follow-ups are recorded in [Phase 14 closure notes](../docs/PHASE_14_IMPLEMENTATION.md).
+
+For the Calculator test on a board already using the Phase 14 partition layout,
+run `idf.py -DCRYSTAL_PHASE14_DEVICE_TEST=ON build app-flash monitor`. It embeds
+a dedicated development fixture, runs 10 install/launch/save/uninstall cycles,
+and reboots once to verify persisted state. Leave the panel untouched and wait
+for `PASS: Phase 14 device test complete`. Turn the cached option off afterward
+with `idf.py -DCRYSTAL_PHASE14_DEVICE_TEST=OFF build app-flash monitor`.
+See the implementation notes for expected logs, reruns, and failure handling.

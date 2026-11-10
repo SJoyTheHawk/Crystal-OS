@@ -38,6 +38,7 @@ lv_obj_t *s_clear_dialog = nullptr;
 const CrystalAppEntry *s_clear_target = nullptr;
 lv_obj_t *s_clear_content = nullptr;
 crystal_manage_apps_clear_cb_t s_clear_callback = nullptr;
+bool s_uninstall = false;
 
 lv_obj_t *app_button(lv_obj_t *row, const char *text, lv_coord_t width, bool disabled);
 void set_notice(lv_obj_t *content, const char *message, bool error);
@@ -70,21 +71,27 @@ void clear_data_confirmed(lv_event_t *)
     bool success = false;
     if (target != nullptr) {
         ESP_LOGI("manage_apps", "Clearing data for %s", target->id);
-        success = s_clear_callback != nullptr && s_clear_callback(target);
+        success = s_uninstall ? crystal_registry_uninstall_package(target->id) :
+            s_clear_callback != nullptr && s_clear_callback(target);
         if (success) ESP_LOGI("manage_apps", "Successfully cleared data for %s", target->id);
         else ESP_LOGE("manage_apps", "Failed to clear data for %s", target->id);
     }
+    const bool uninstall = s_uninstall;
     close_clear_dialog();
     if (content != nullptr) {
-        set_notice(content, success ? "App data cleared." :
-            "Could not fully clear app data.\nSome data may be removed. Please try again.", !success);
+        if (uninstall && success) crystal_manage_apps_page_build(content, s_clear_callback);
+        set_notice(content, uninstall ? (success ? "App uninstalled." :
+            "Could not remove the app. If resources are\nstill active, restart and try again.") :
+            (success ? "App data cleared." :
+             "Could not fully clear app data.\nSome data may be removed. Please try again."), !success);
     }
 }
 
-void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry)
+void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry, bool uninstall = false)
 {
     if (s_clear_dialog != nullptr || s_drag.row != nullptr || content == nullptr || entry == nullptr) return;
     s_clear_target = entry;
+    s_uninstall = uninstall;
     s_clear_content = content;
     s_clear_dialog = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_clear_dialog, LV_PCT(100), LV_PCT(100));
@@ -103,13 +110,15 @@ void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry)
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1b2028), 0);
     lv_obj_center(card);
     lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text(title, "Clear App Data");
+    lv_label_set_text(title, uninstall ? "Uninstall App" : "Clear App Data");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_pos(title, 0, 0);
     lv_obj_t *message = lv_label_create(card);
     char text[128];
-    snprintf(text, sizeof(text), "Clear saved data for %s?\nThe app will close and reset.\n\nThis cannot be undone.", entry->id);
+    snprintf(text, sizeof(text), uninstall ? "Uninstall %s?\nThe app and saved data will be removed.\n\nThis cannot be undone." :
+        "Clear saved data for %s?\nThe app will close and reset.\n\nThis cannot be undone.",
+        entry->display_name ? entry->display_name : entry->id);
     lv_label_set_text(message, text);
     lv_obj_set_width(message, 340);
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
@@ -119,7 +128,7 @@ void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry)
     lv_obj_t *cancel = app_button(card, "Cancel", 140, false);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     lv_obj_add_event_cb(cancel, clear_data_cancelled, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *confirm = app_button(card, "Clear Data", 140, false);
+    lv_obj_t *confirm = app_button(card, uninstall ? "Uninstall" : "Clear Data", 140, false);
     lv_obj_align(confirm, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(confirm, lv_color_hex(0xb42318), 0);
     lv_obj_set_style_bg_color(confirm, lv_color_hex(0x8f1c13), LV_STATE_PRESSED);
@@ -132,11 +141,27 @@ void clear_btn_cb(lv_event_t *event)
     show_clear_confirmation(lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(event))), entry);
 }
 
+void uninstall_btn_cb(lv_event_t *event)
+{
+    auto *entry = static_cast<const CrystalAppEntry *>(lv_event_get_user_data(event));
+    auto *content = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(event)));
+    bool another_enabled = false;
+    for (size_t i = 0; i < crystal_registry_catalog_count(); ++i) {
+        const auto *candidate = crystal_registry_catalog_entry(i);
+        if (candidate && candidate != entry && crystal_registry_enabled(candidate->id, candidate->default_enabled)) another_enabled = true;
+    }
+    if (!another_enabled) {
+        set_notice(content, "Enable another app before uninstalling\nthis one.", true);
+        return;
+    }
+    show_clear_confirmation(content, entry, true);
+}
+
 lv_obj_t *app_button(lv_obj_t *row, const char *text, lv_coord_t width, bool disabled)
 {
     lv_obj_t *button = lv_btn_create(row);
     lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, width, 40);
+    lv_obj_set_size(button, width, 44);
     lv_obj_set_style_radius(button, 8, 0);
     lv_obj_set_style_shadow_width(button, 0, 0);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x1769aa), 0);
@@ -361,7 +386,7 @@ void toggle_btn_cb(lv_event_t *event)
         // The boot shell requires at least one installed app. Keep Settings
         // reachable instead of persisting a configuration that cannot boot.
         if (enabled_count <= 1) {
-            set_notice(content, "Keep at least one app installed.\nInstall another app before removing this one.", true);
+            set_notice(content, "Keep at least one app enabled.\nEnable another app before disabling this one.", true);
             return;
         }
     }
@@ -384,7 +409,8 @@ void toggle_btn_cb(lv_event_t *event)
     }
     // Refresh just this row: preserve scroll/focus and the event target. No
     // asynchronous callbacks or cached widget pointers can outlive the page.
-    lv_label_set_text(lv_obj_get_child(button, 0), enabled ? "Install" : "Installed");
+    lv_label_set_text(lv_obj_get_child(button, 0), enabled ? "Enable" : "Disable");
+    if (entry->origin == CRYSTAL_ORIGIN_PACKAGE) return;
     auto *clear = lv_obj_get_child(row, 3);
     if (enabled && clear) lv_obj_del(clear);
     if (!enabled && !clear) {
@@ -450,7 +476,7 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
     for (const auto &app : apps) {
         const bool enabled = crystal_registry_enabled(app.entry->id, app.entry->default_enabled);
         lv_obj_t *row = lv_obj_create(content);
-        lv_obj_set_size(row, LV_PCT(100), 62);
+        lv_obj_set_size(row, LV_PCT(100), 64);
         lv_obj_set_style_bg_color(row, lv_color_hex(0x1b2028), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(row, 0, 0);
@@ -480,17 +506,22 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
         lv_obj_add_event_cb(handle, drag_object_deleted, LV_EVENT_DELETE, nullptr);
 
         lv_obj_t *name = lv_label_create(row);
-        lv_label_set_text(name, app.entry->id);
+        lv_label_set_text(name, app.entry->display_name ? app.entry->display_name : app.entry->id);
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
         lv_obj_set_width(name, 0);
         lv_obj_set_flex_grow(name, 1);
         lv_obj_set_style_text_font(name, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(name, lv_color_hex(0xf2f4f7), 0);
 
-        auto *toggle = app_button(row, enabled ? "Installed" : "Install", 100, false);
+        auto *toggle = app_button(row, enabled ? "Disable" : "Enable", 100, false);
         lv_obj_add_event_cb(toggle, toggle_btn_cb, LV_EVENT_CLICKED,
                             const_cast<CrystalAppEntry *>(app.entry));
-        if (enabled) {
+        if (app.entry->origin == CRYSTAL_ORIGIN_PACKAGE) {
+            auto *remove = app_button(row, "Uninstall", 88, false);
+            lv_obj_set_style_bg_color(remove, lv_color_hex(0xb42318), 0);
+            lv_obj_add_event_cb(remove, uninstall_btn_cb, LV_EVENT_CLICKED,
+                                const_cast<CrystalAppEntry *>(app.entry));
+        } else if (enabled) {
             auto *clear = app_button(row, "Clear", 64, false);
             lv_obj_add_event_cb(clear, clear_btn_cb, LV_EVENT_CLICKED,
                                 const_cast<CrystalAppEntry *>(app.entry));

@@ -11,7 +11,7 @@ extern "C" void calculator_icon_prepare(void);
 
 class CalculatorApp final : public CrystalApp {
 public:
-    CalculatorApp();
+    explicit CalculatorApp(const char *name = "Calculator");
 
 protected:
     bool onCreate() override;

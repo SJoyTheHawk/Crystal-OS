@@ -54,7 +54,8 @@ def main():
     brookesia = ROOT / 'components/esp-brookesia/src'
     capture = ROOT / 'sim/screenshots'
     sources = [ROOT / 'components/crystal_app/src/crystal_app.cpp', ROOT / 'sim/crystal_hal_mock.cpp',
-               capture / 'capture.cpp', capture / 'capture_shell.cpp', capture / 'services.cpp']
+               ROOT / 'components/crystal_package/src/crystal_resources.cpp',
+               capture / 'package_stubs.cpp', capture / 'capture.cpp', capture / 'capture_shell.cpp', capture / 'services.cpp']
     for app in ('clock_app', 'weather_app', 'calculator_app'):
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.cpp')))
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.c')))
@@ -63,7 +64,7 @@ def main():
                     ROOT / 'components/manage_apps_page/include', ROOT / 'components/crystal_registry/include',
                     ROOT / 'components/crystal_update_view/include']
     include_dirs.extend(ROOT / f'components/{name}/include' for name in
-                        ('crystal_app', 'crystal_core', 'crystal_hal', 'clock_app', 'weather_app', 'calculator_app'))
+                        ('crystal_package', 'crystal_app', 'crystal_core', 'crystal_hal', 'clock_app', 'weather_app', 'calculator_app'))
     quoted_sources = '\n'.join(f'"{path}"' for path in sources)
     quoted_includes = '\n'.join(f'"{path}"' for path in include_dirs)
     (work / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)

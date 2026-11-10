@@ -44,6 +44,14 @@ static unsigned fail_slot_at = 0;
 static bool fail_rollback = false;
 static unsigned clears = 0;
 static bool fail_clear = false;
+static bool fail_uninstall = false;
+static unsigned uninstalls = 0;
+bool crystal_registry_uninstall_package(const char *id) {
+    ++uninstalls;
+    if (fail_uninstall) return false;
+    for (auto &entry : catalog) if (!std::strcmp(entry.id, id)) entry.available = false;
+    return true;
+}
 static const CrystalAppEntry *cleared_target = nullptr;
 static bool clear_data(const CrystalAppEntry *entry) {
     ++clears; cleared_target = entry; return !fail_clear;
@@ -62,7 +70,7 @@ bool crystal_registry_set_slot(const char *id, uint16_t slot) {
 }
 size_t crystal_registry_catalog_count() { return catalog.size(); }
 const CrystalAppEntry *crystal_registry_catalog_entry(size_t i) {
-    return i < catalog.size() ? &catalog[i] : nullptr;
+    return i < catalog.size() && catalog[i].available ? &catalog[i] : nullptr;
 }
 bool crystal_registry_enabled(const char *id, bool fallback) {
     auto found = saved.find(id);
@@ -94,7 +102,7 @@ static void check_row(lv_obj_t *content, int i, const char *id, bool enabled) {
     assert(std::strcmp(label(row, 0), LV_SYMBOL_BARS) == 0);
     assert(std::strcmp(label(row, 1), id) == 0);
     auto *button = lv_obj_get_child(row, 2);
-    assert(std::strcmp(label(button, 0), enabled ? "Installed" : "Install") == 0);
+    assert(std::strcmp(label(button, 0), enabled ? "Disable" : "Enable") == 0);
     assert(!lv_obj_has_state(button, LV_STATE_DISABLED));
     if (enabled) {
         auto *clear = lv_obj_get_child(row, 3);
@@ -403,6 +411,36 @@ int main() {
     click(11);
     assert(lv_obj_get_scroll_y(content) == scroll_before);
     check_row(content, 11, "app_11", false);
+    catalog.clear(); saved.clear(); slots.clear(); overrides = false;
+    catalog.push_back({"org.crystal.calculator", nullptr, true, 16, CRYSTAL_ORIGIN_PACKAGE, "Calculator Demo", true});
+    crystal_manage_apps_page_build(content, clear_data);
+    lv_obj_update_layout(page);
+    auto *only_package = lv_obj_get_child(content, 1);
+    lv_event_send(lv_obj_get_child(only_package, 3), LV_EVENT_CLICKED, nullptr);
+    assert(!crystal_manage_apps_page_confirmation_open() && strstr(label(content, 0), "Enable another app"));
+    catalog.push_back({"clock", nullptr, true, 2});
+    crystal_manage_apps_page_build(content, clear_data);
+    lv_obj_update_layout(page);
+    auto *package_row = lv_obj_get_child(content, 2);
+    assert(!strcmp(label(package_row, 1), "Calculator Demo"));
+    auto *remove = lv_obj_get_child(package_row, 3);
+    assert(!strcmp(label(remove, 0), "Uninstall"));
+    snapshot(page, "package-app.ppm");
+    lv_event_send(remove, LV_EVENT_CLICKED, nullptr);
+    auto *uninstall_card = lv_obj_get_child(lv_obj_get_child(lv_layer_top(), 0), 0);
+    assert(!strcmp(label(uninstall_card, 0), "Uninstall App"));
+    lv_obj_update_layout(lv_layer_top());
+    snapshot(lv_layer_top(), "uninstall-confirmation.ppm");
+    fail_uninstall = true;
+    lv_event_send(lv_obj_get_child(uninstall_card, 3), LV_EVENT_CLICKED, nullptr);
+    assert(uninstalls == 1 && catalog[0].available && strstr(label(content, 0), "Could not remove"));
+    fail_uninstall = false;
+    lv_event_send(remove, LV_EVENT_CLICKED, nullptr);
+    uninstall_card = lv_obj_get_child(lv_obj_get_child(lv_layer_top(), 0), 0);
+    lv_event_send(lv_obj_get_child(uninstall_card, 3), LV_EVENT_CLICKED, nullptr);
+    assert(uninstalls == 2 && !catalog[0].available && strstr(label(content, 0), "App uninstalled"));
+    assert(!crystal_manage_apps_page_confirmation_open());
+    std::puts("PASS: package display name, Uninstall confirmation, failed removal/retry and catalog refresh");
     lv_obj_del(page);
     std::puts("PASS: real LVGL layout, defaults/overrides, catalog rows, slot sorting/ties, toggle persistence, failure/retry, last-app guard, empty/rebuild/scroll/teardown");
 }
@@ -445,7 +483,7 @@ target_link_libraries(check PRIVATE lvgl)
         output = args.output_dir or temp
         output.mkdir(parents=True, exist_ok=True)
         subprocess.run([str(temp / 'build/check')], check=True, cwd=output)
-        for name in ('all-enabled.ppm', 'disabled-weather.ppm', 'clear-confirmation.ppm'):
+        for name in ('all-enabled.ppm', 'disabled-weather.ppm', 'clear-confirmation.ppm', 'package-app.ppm', 'uninstall-confirmation.ppm'):
             png_from_ppm(output / name)
         if args.output_dir:
             print(f'Rendered previews: {output.resolve()}')

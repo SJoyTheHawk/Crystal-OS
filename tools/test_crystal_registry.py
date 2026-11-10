@@ -14,21 +14,37 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 APP = r'''
 #pragma once
+#include "crystal_resources.hpp"
 class CrystalApp {
 public:
+    enum class LifecycleState { Installed, Destroyed };
+    LifecycleState lifecycle_state() const { return LifecycleState::Installed; }
     static int live;
     CrystalApp() { ++live; }
     virtual ~CrystalApp() { --live; }
+    bool bindPackage(const char *, size_t, unsigned) { return true; }
+    int getId() const { return 0; }
+    CrystalResources &resources() { return ledger; }
+    CrystalResources ledger;
 };
+inline void crystal_app_set_cleanup_hook(void (*)(CrystalApp *)) {}
 '''
 
 PHONE = r'''
 #pragma once
 #include <vector>
 #include "crystal_app.hpp"
+constexpr int ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP = 1;
+struct ESP_Brookesia_CoreAppEventData_t { int id; int type; void *data; };
 class ESP_Brookesia_Phone {
 public:
     bool fail = false;
+    ESP_Brookesia_Phone &getManager() { return *this; }
+    uint8_t getRunningAppCount() { return 0; }
+    CrystalApp *getRunningAppByIdenx(uint8_t) { return nullptr; }
+    CrystalApp *getRunningAppById(int) { return nullptr; }
+    bool sendAppEvent(ESP_Brookesia_CoreAppEventData_t *) { return true; }
+    bool uninstallApp(CrystalApp *) { return true; }
     std::vector<CrystalApp *> apps;
     int installApp(CrystalApp *app) {
         if (fail) return -1;
@@ -263,6 +279,9 @@ def main():
             "-I", str(ROOT / "components/crystal_registry/include"),
             "-I", str(ROOT / "components/crystal_hal/include"),
             str(ROOT / "components/crystal_registry/src/crystal_registry.cpp"),
+            str(ROOT / "components/crystal_package/src/crystal_resources.cpp"),
+            str(ROOT / "sim/screenshots/package_stubs.cpp"),
+            "-I", str(ROOT / "components/crystal_package/include"),
             str(temp / "check.cpp"), "-o", str(temp / "check"),
         ], check=True)
         subprocess.run([str(temp / "check")], check=True)

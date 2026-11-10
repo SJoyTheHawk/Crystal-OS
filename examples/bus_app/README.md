@@ -12,7 +12,17 @@ Extracted from `reference/Crystal-OS-bus-app-development/` on 2026-10-05.
 The copied app, service, tools, catalogs, and historical documents match the local
 `bus-app-development` checkpoint `fc20cf7d1c205991bb15a45a269ecbbd7b74ec0a`.
 `SOURCE_MANIFEST.json` records the source paths and SHA-256 of every copied file.
-The download remains untouched. Original source and CMake files are preserved.
+The download remains untouched. Original CMake files are preserved.
+
+Phase 14 adds local resource instrumentation to
+`components/bus_app/src/bus_app.cpp`,
+`components/bus_service/src/bus_service.c`, and
+`components/bus_service/include/bus_service.h`. The app registers the retained
+worker, request queue, and its LVGL timers with its `CrystalResources` ledger.
+Closing it now exposes the singleton worker/queue leak and the current registry
+disables the app. This does not implement worker shutdown. The hashes in
+`SOURCE_MANIFEST.json` continue to describe the original extraction, before
+these three changes. The untouched original remains under `reference/`.
 
 This snapshot is an unfinished reference implementation with known memory/TLS
 problems, not proof that the app is production-ready. Historical documentation

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "crystal_hal.hpp"
+#include "crystal_package.hpp"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "nvs.h"
@@ -18,6 +19,7 @@ namespace {
 constexpr size_t kMaxStateBytes = 2048;
 constexpr size_t kMaxKeyBytes = 7;
 crystal_shell_back_hook_t s_shell_back_hook = nullptr;
+crystal_app_cleanup_hook_t s_cleanup_hook = nullptr;
 
 ESP_Brookesia_PhoneAppData_t crystal_phone_app_data(const void *launcher_icon)
 {
@@ -35,9 +37,12 @@ void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook)
     s_shell_back_hook = hook;
 }
 
-CrystalState::CrystalState(const char *app_name)
-    : prefix_("a")
+void crystal_app_set_cleanup_hook(crystal_app_cleanup_hook_t hook) { s_cleanup_hook = hook; }
+
+CrystalState::CrystalState(const char *app_name, bool package)
+    : prefix_("a"), package_(package)
 {
+    if (package_) { prefix_ = app_name ? app_name : ""; return; }
     uint32_t hash = 2166136261u;
     if (app_name != nullptr) {
         for (const unsigned char *p = reinterpret_cast<const unsigned char *>(app_name); *p != '\0'; ++p) {
@@ -62,6 +67,7 @@ bool CrystalState::make_key(const char *key, std::string *out) const
 
 bool CrystalState::get(const char *key, void *value, size_t *length) const
 {
+    if (package_) return crystal_package_state_get(prefix_, key, value, length);
     std::string full_key;
     if (value == nullptr || length == nullptr || *length > kMaxStateBytes || !make_key(key, &full_key)) {
         return false;
@@ -71,6 +77,7 @@ bool CrystalState::get(const char *key, void *value, size_t *length) const
 
 bool CrystalState::set(const char *key, const void *value, size_t length)
 {
+    if (package_) return crystal_package_state_set(prefix_, key, value, length);
     std::string full_key;
     if (value == nullptr || length > kMaxStateBytes || !make_key(key, &full_key)) {
         return false;
@@ -80,6 +87,7 @@ bool CrystalState::set(const char *key, const void *value, size_t length)
 
 bool CrystalState::erase(const char *key)
 {
+    if (package_) return crystal_package_state_erase(prefix_, key);
     std::string full_key;
     if (!make_key(key, &full_key)) {
         return false;
@@ -89,6 +97,7 @@ bool CrystalState::erase(const char *key)
 
 bool CrystalState::clear()
 {
+    if (package_) return crystal_package_state_clear(prefix_);
     nvs_handle_t handle;
     esp_err_t err = nvs_open("crystal", NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -170,6 +179,25 @@ CrystalApp::CrystalApp(const char *name, const void *launcher_icon)
 {
 }
 
+bool CrystalApp::bindPackage(const char *id, size_t memory_bytes, unsigned workers)
+{
+    if (lifecycle_state_ != LifecycleState::Destroyed || !id ||
+        !crystal_package_valid_id(id) || !resources_.configure(memory_bytes, workers)) return false;
+    package_id_ = id;
+    state_ = CrystalState(id, true);
+    return true;
+}
+
+bool CrystalApp::trackObject(lv_obj_t *object)
+{
+    if (!resources_.track(CrystalResourceKind::Object, object)) return false;
+    lv_obj_add_event_cb(object, [](lv_event_t *event) {
+        auto *resources = static_cast<CrystalResources *>(lv_event_get_user_data(event));
+        resources->release(CrystalResourceKind::Object, lv_event_get_target(event));
+    }, LV_EVENT_DELETE, &resources_);
+    return true;
+}
+
 // Brookesia's init()/deinit() are lifecycle bookkeeping only. They forward to no
 // app hook: setup belongs in onCreate(), and boot-time reconciliation of service
 // state belongs to the owning service.
@@ -177,6 +205,7 @@ bool CrystalApp::clearData()
 {
     if (lifecycle_state_ != LifecycleState::Installed &&
         lifecycle_state_ != LifecycleState::Destroyed) return false;
+    if (!resources_.report().clean()) return false;
     onClearData();
     return state_.clear();
 }
@@ -198,6 +227,16 @@ bool CrystalApp::run()
 {
     assert(lifecycle_state_ == LifecycleState::Installed ||
            lifecycle_state_ == LifecycleState::Destroyed);
+    if (!resources_.report().clean()) {
+        if (s_cleanup_hook) s_cleanup_hook(this);
+        if (!package_id_.empty()) (void)crystal_package_set_enabled(package_id_, false);
+        return false;
+    }
+    if (!package_id_.empty()) {
+        bool enabled = false;
+        for (const auto &r : crystal_packages()) if (r.manifest.id == package_id_) enabled = r.enabled;
+        if (!enabled || !resources_.report().clean()) return false;
+    }
     ESP_LOGI(TAG, "%s lifecycle: onCreate", app_name_.c_str());
     const uint32_t start = lv_tick_get();
     const bool ok = onCreate();
@@ -208,7 +247,12 @@ bool CrystalApp::run()
     }
     if (ok) {
         lifecycle_state_ = LifecycleState::Created;
+    } else {
+        (void)onDestroy();
+        lifecycle_state_ = LifecycleState::Destroyed;
+        if (s_cleanup_hook) s_cleanup_hook(this);
     }
+    if (!package_id_.empty()) (void)crystal_package_launch_result(package_id_, ok);
     return ok;
 }
 
@@ -255,6 +299,16 @@ bool CrystalApp::close()
         ESP_LOGW(TAG, "%s onDestroy reported failure; continuing teardown", app_name_.c_str());
     }
     lifecycle_state_ = LifecycleState::Destroyed;
+    if (!package_id_.empty()) {
+        CrystalCleanupReport report;
+        // A surviving worker must never be hidden by resetting its ledger.
+        if (!crystal_app_verify_cleanup(resources_, &report)) {
+            ESP_LOGE(TAG, "%s resources remain: tasks=%zu timers=%zu queues=%zu heap=%zu objects=%zu",
+                     package_id_.c_str(), report.tasks, report.timers, report.queues, report.heap_bytes, report.objects);
+            (void)crystal_package_set_enabled(package_id_, false);
+        }
+    }
+    if (s_cleanup_hook) s_cleanup_hook(this);
     return true;
 }
 

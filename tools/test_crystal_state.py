@@ -17,6 +17,7 @@ BROOKESIA = r'''
 struct ESP_Brookesia_PhoneAppData_t { struct { int enable_navigation_gesture; } flags; };
 #define ESP_BROOKESIA_PHONE_APP_DATA_DEFAULT(icon, a, b) ((void)(icon), ESP_Brookesia_PhoneAppData_t{})
 #define ESP_BROOKESIA_CORE_APP_DATA_DEFAULT(name, icon, a) ((void)(name), (void)(icon), 0)
+struct lv_obj_t {};
 class ESP_Brookesia_PhoneApp {
 public:
     ESP_Brookesia_PhoneApp(int, ESP_Brookesia_PhoneAppData_t) {}
@@ -155,7 +156,27 @@ public:
     bool onPause() override { return state().set_u32("old", 99); }
     bool onDestroy() override { return state().set_u32("old", 100); }
 };
+class FailedApp : public CrystalApp {
+public:
+    FailedApp() : CrystalApp("Failure fixture") {}
+    unsigned destroys = 0;
+    void *allocation = nullptr;
+    bool onCreate() override { allocation = resources().allocate(16); return false; }
+    bool onDestroy() override {
+        ++destroys;
+        if (allocation) { assert(resources().deallocate(allocation)); allocation = nullptr; }
+        return true;
+    }
+};
 int main() {
+    FailedApp failed;
+    auto &failed_lifecycle = static_cast<ESP_Brookesia_PhoneApp &>(failed);
+    assert(failed_lifecycle.init() && !failed_lifecycle.run());
+    assert(failed.destroys == 1 && failed.resources().report().clean());
+    assert(failed_lifecycle.close() && failed.destroys == 1);
+    assert(!failed_lifecycle.run() && failed.destroys == 2);
+    assert(failed_lifecycle.close() && failed.destroys == 2);
+    std::puts("PASS: failed onCreate cleans resources exactly once per attempt");
     Storage storage; test_hal.storage = &storage;
     CrystalState target("Phase13.2 target"), other("Phase13.2 sentinel");
     assert(target.clear()); no_leaks();
@@ -249,7 +270,7 @@ def main():
         temp = pathlib.Path(directory)
         for name, body in (("esp_brookesia.hpp", BROOKESIA), ("esp_log.h", LOG),
                            ("nvs.h", NVS), ("check.cpp", CHECK),
-                           ("lvgl.h", "#pragma once\n#include <cstdint>\ninline uint32_t lv_tick_get() { return 0; }\ninline uint32_t lv_tick_elaps(uint32_t) { return 0; }\n")):
+                           ("lvgl.h", "#pragma once\n#include <cstdint>\ninline uint32_t lv_tick_get() { return 0; }\ninline uint32_t lv_tick_elaps(uint32_t) { return 0; }\nstruct lv_event_t {};\nconstexpr int LV_EVENT_DELETE = 0;\ninline void *lv_event_get_user_data(lv_event_t *) { return nullptr; }\ninline lv_obj_t *lv_event_get_target(lv_event_t *) { return nullptr; }\ninline void lv_obj_add_event_cb(lv_obj_t *, void (*)(lv_event_t *), int, void *) {}\n")):
             (temp / name).write_text(body)
         subprocess.run([
             *shlex.split(os.environ.get("CXX", "c++")),
@@ -257,6 +278,9 @@ def main():
             "-I", str(temp), "-I", str(ROOT / "components/crystal_app/include"),
             "-I", str(ROOT / "components/crystal_hal/include"),
             str(ROOT / "components/crystal_app/src/crystal_app.cpp"),
+            str(ROOT / "components/crystal_package/src/crystal_resources.cpp"),
+            str(ROOT / "sim/screenshots/package_stubs.cpp"),
+            "-I", str(ROOT / "components/crystal_package/include"),
             str(temp / "check.cpp"), "-o", str(temp / "check"),
         ], check=True)
         subprocess.run([str(temp / "check")], check=True)

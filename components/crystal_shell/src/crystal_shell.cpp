@@ -2795,8 +2795,7 @@ bool manage_apps_clear_data(const CrystalAppEntry *entry)
     // factory instance supplies the exact namespace without launching its UI.
     std::unique_ptr<CrystalApp> temporary;
     if (app == nullptr) {
-        if (entry->factory == nullptr) return false;
-        temporary.reset(entry->factory());
+        temporary.reset(crystal_registry_create_app(entry));
         app = temporary.get();
     }
     if (app == nullptr) return false;

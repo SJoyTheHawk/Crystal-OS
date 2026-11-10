@@ -1,0 +1,17 @@
+{
+  "abi": 1,
+  "id": "org.crystal.calculator",
+  "name": "Calculator",
+  "version": "1.0.0",
+  "min_os": "0.12.14",
+  "author": "Crystal OS",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Phase 14 curated native Calculator package using the system Calculator UI.",
+  "runtime": "native",
+  "entry": "calculator.native",
+  "bar_style": "dark",
+  "memory_kb": 160,
+  "storage_kb": 8,
+  "worker_threads": 0,
+  "permissions": {}
+}

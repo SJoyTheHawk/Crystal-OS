@@ -168,6 +168,10 @@ bool BusApp::onCreate()
 
     // Initialize service
     bus_service_init();
+    void *worker = nullptr, *queue = nullptr;
+    bus_service_get_resources(&worker, &queue);
+    if (worker) (void)resources().track(CrystalResourceKind::Task, worker);
+    if (queue) (void)resources().track(CrystalResourceKind::Queue, queue);
     bus_service_set_listener(onBusEvent, this);
     bus_catalog_info_t stop_catalog_info = {};
     bus_catalog_get_info(&stop_catalog_info);
@@ -198,10 +202,12 @@ bool BusApp::onCreate()
     // and the framework's first HTTPS request during app crossover.
 
     catalog_bootstrap_timer_ = lv_timer_create(onCatalogBootstrapTimer, 500, this);
+    if (catalog_bootstrap_timer_) (void)resources().track(CrystalResourceKind::Timer, catalog_bootstrap_timer_);
     evaluateCatalogBootstrap();
 
     // Start refresh timer (30s)
     eta_refresh_timer_ = lv_timer_create(onRefreshTimer, 30000, this);
+    if (eta_refresh_timer_) (void)resources().track(CrystalResourceKind::Timer, eta_refresh_timer_);
     refreshFavoriteETAs();
 
     return true;
@@ -212,6 +218,7 @@ bool BusApp::onPause()
     ESP_LOGI(TAG, "onPause");
 
     if (eta_refresh_timer_) {
+        (void)resources().release(CrystalResourceKind::Timer, eta_refresh_timer_);
         lv_timer_del(eta_refresh_timer_);
         eta_refresh_timer_ = nullptr;
     }
@@ -240,6 +247,7 @@ bool BusApp::onResume()
 
     if (!eta_refresh_timer_) {
         eta_refresh_timer_ = lv_timer_create(onRefreshTimer, 30000, this);
+        if (eta_refresh_timer_) (void)resources().track(CrystalResourceKind::Timer, eta_refresh_timer_);
     }
 
     refreshFavoriteETAs();
@@ -263,10 +271,12 @@ bool BusApp::onDestroy()
     }
 
     if (eta_refresh_timer_) {
+        (void)resources().release(CrystalResourceKind::Timer, eta_refresh_timer_);
         lv_timer_del(eta_refresh_timer_);
         eta_refresh_timer_ = nullptr;
     }
     if (catalog_bootstrap_timer_) {
+        (void)resources().release(CrystalResourceKind::Timer, catalog_bootstrap_timer_);
         lv_timer_del(catalog_bootstrap_timer_);
         catalog_bootstrap_timer_ = nullptr;
     }

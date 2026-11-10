@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "src/crystal_app.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES esp-brookesia crystal_hal nvs_flash
+    REQUIRES esp-brookesia crystal_hal nvs_flash crystal_package
 )
 
 # Brookesia's public default-data macros intentionally leave optional style

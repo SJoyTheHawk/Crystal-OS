@@ -24,9 +24,16 @@
 #include "crystal_update.h"
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
+#include "crystal_package.hpp"
 #include "crystal_shell.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
+#ifdef CRYSTAL_PHASE14_DEVICE_TEST
+#include "crystal_phase14_device_test.h"
+#include "esp_system.h"
+extern const uint8_t phase14_package_start[] asm("_binary_phase14_calculator_capp_start");
+extern const uint8_t phase14_package_end[] asm("_binary_phase14_calculator_capp_end");
+#endif
 
 static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
@@ -35,6 +42,19 @@ static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
 static CrystalApp *make_weather_app() { return new WeatherApp(); }
 static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
+
+static CrystalApp *make_package_app(const CrystalPackageManifest &manifest)
+{
+    // Phase 14 native apps are curated firmware factories. Packages cannot
+    // supply machine code or select arbitrary symbols in kernel memory.
+    bool curated_calculator = manifest.id == "org.crystal.calculator";
+#ifdef CRYSTAL_PHASE14_DEVICE_TEST
+    curated_calculator = curated_calculator || manifest.id == "org.crystal.phase14.calculator";
+#endif
+    if (curated_calculator && manifest.runtime == "native" &&
+        manifest.entry == "calculator.native") return new CalculatorApp(manifest.name.c_str());
+    return nullptr;
+}
 
 static const CrystalAppEntry kApps[] = {
     {"dev_tester", make_dev_tester_app, true, 0},
@@ -151,6 +171,16 @@ extern "C" void app_main(void)
     // the first frame is fully rendered.
     (void)bsp_display_brightness_set(0);
     crystal_hal_init();
+    crystal_registry_set_package_factory(make_package_app);
+    std::string package_error;
+    if (!crystal_packages_mount() ||
+        !crystal_packages_init("/littlefs/apps",
+            {static_cast<size_t>(hal().system_info->free_psram()) * 3 / 4,
+             0x580000 - 128 * 1024, 4}, &package_error)) {
+        ESP_LOGE(TAG, "Package storage unavailable: %s", package_error.c_str());
+    } else {
+        ESP_LOGI(TAG, "LittleFS mounted at /littlefs; package storage ready (%zu packages)", crystal_packages().size());
+    }
     if (display->driver != nullptr) {
         display->driver->rounder_cb = my_rounder_cb;
     }
@@ -234,6 +264,11 @@ extern "C" void app_main(void)
         "Failed to install app registry"
     );
     require_boot_step(crystal_shell_init(phone), "Failed to start card shell");
+#ifdef CRYSTAL_PHASE14_DEVICE_TEST
+    (void)crystal_phase14_device_test_start(phone, phase14_package_start,
+        static_cast<size_t>(phase14_package_end - phase14_package_start),
+        "/littlefs/apps", esp_restart, CRYSTAL_PHASE14_DEVICE_TEST_RUN);
+#endif
     // The update subsystem checks the bootloader result before UI creation.
     // Queue the one-shot rollback notification only after the shell exists.
     if (crystal_update_did_rollback()) {

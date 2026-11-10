@@ -6,16 +6,20 @@
 #include <string>
 
 #include "esp_brookesia.hpp"
+#include "crystal_resources.hpp"
 
 // Returns true when the shell dismissed a layer of its own and the app should
 // stay open. crystal_app cannot call crystal_shell directly because the shell
 // already depends on crystal_app, so the shell installs this hook at init.
 using crystal_shell_back_hook_t = bool (*)();
 void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook);
+class CrystalApp;
+using crystal_app_cleanup_hook_t = void (*)(CrystalApp *app);
+void crystal_app_set_cleanup_hook(crystal_app_cleanup_hook_t hook);
 
 class CrystalState final {
 public:
-    explicit CrystalState(const char *app_name);
+    explicit CrystalState(const char *app_name, bool package = false);
 
     bool get(const char *key, void *value, size_t *length) const;
     bool set(const char *key, const void *value, size_t length);
@@ -31,6 +35,7 @@ public:
 private:
     bool make_key(const char *key, std::string *out) const;
     std::string prefix_;
+    bool package_ = false;
 };
 
 class CrystalApp : public ESP_Brookesia_PhoneApp {
@@ -49,6 +54,12 @@ public:
 
     CrystalState &state() { return state_; }
     const CrystalState &state() const { return state_; }
+    CrystalResources &resources() { return resources_; }
+    const CrystalResources &resources() const { return resources_; }
+    // Bind only before install/launch. Builtin namespaces remain compatible.
+    bool bindPackage(const char *id, size_t memory_bytes, unsigned workers);
+    const std::string &packageId() const { return package_id_; }
+    bool trackObject(lv_obj_t *object);
     // LVGL task only, after the manager stops the app. Resets retained state
     // and clears the constructor-name namespace, never the registry ID.
     bool clearData();
@@ -87,5 +98,7 @@ private:
 
     std::string app_name_;
     CrystalState state_;
+    CrystalResources resources_;
+    std::string package_id_;
     LifecycleState lifecycle_state_ = LifecycleState::Destroyed;
 };

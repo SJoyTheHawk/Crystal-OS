@@ -177,6 +177,9 @@ typedef void (*bus_listener_t)(const bus_event_t *event, void *user_data);
 
 // Initialize service (creates worker task)
 void bus_service_init(void);
+// Phase 14 validation: expose the retained singleton resources so the app's
+// ledger detects the worker/queue that cancel_all() does not destroy.
+void bus_service_get_resources(void **worker_task, void **request_queue);
 
 // Set event listener
 void bus_service_set_listener(bus_listener_t cb, void *user_data);

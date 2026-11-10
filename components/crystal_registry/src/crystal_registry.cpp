@@ -6,9 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <deque>
 
 #include "crystal_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_package.hpp"
 #include "esp_brookesia.hpp"
 #include "esp_log.h"
 
@@ -27,8 +29,31 @@ struct InstalledRow {
 };
 
 std::vector<InstalledRow> s_installed;
-std::vector<CrystalAppEntry> s_catalog;
+std::deque<CrystalAppEntry> s_catalog;
+std::deque<CrystalPackageManifest> s_package_manifests;
+crystal_package_factory_t s_package_factory = nullptr;
 ESP_Brookesia_Phone *s_phone = nullptr;
+
+void sync_package_catalog()
+{
+    for (const auto &record : crystal_packages()) {
+        bool found = false;
+        for (const auto &entry : s_catalog) if (entry.available && record.manifest.id == entry.id) found = true;
+        if (found) continue;
+        CrystalAppEntry *reuse = nullptr;
+        CrystalPackageManifest *manifest = nullptr;
+        for (auto &entry : s_catalog) if (!entry.available && entry.origin == CRYSTAL_ORIGIN_PACKAGE) {
+            for (auto &m : s_package_manifests) if (m.id == entry.id) { manifest = &m; break; }
+            if (manifest) { reuse = &entry; break; }
+        }
+        if (manifest) *manifest = record.manifest;
+        else { s_package_manifests.push_back(record.manifest); manifest = &s_package_manifests.back(); }
+        CrystalAppEntry entry{manifest->id.c_str(), nullptr, true, record.slot,
+                              CRYSTAL_ORIGIN_PACKAGE, manifest->name.c_str(), true};
+        if (reuse) *reuse = entry;
+        else s_catalog.push_back(entry);
+    }
+}
 
 bool make_key(const char *id, char suffix, char *out, size_t out_size)
 {
@@ -75,7 +100,7 @@ size_t crystal_registry_catalog_count()
 
 const CrystalAppEntry *crystal_registry_catalog_entry(size_t index)
 {
-    return index < s_catalog.size() ? &s_catalog[index] : nullptr;
+    return index < s_catalog.size() && s_catalog[index].available ? &s_catalog[index] : nullptr;
 }
 
 CrystalApp *crystal_registry_installed_app(size_t index)
@@ -90,18 +115,26 @@ const char *crystal_registry_installed_id(size_t index)
 
 bool crystal_registry_enabled(const char *id, bool default_value)
 {
+    if (id) for (const auto &r : crystal_packages()) if (r.manifest.id == id) return r.enabled;
     uint8_t stored = 0;
     return read_value(id, 'e', &stored) ? stored != 0 : default_value;
 }
 
 uint16_t crystal_registry_slot(const char *id, uint16_t default_value)
 {
+    if (id) for (const auto &r : crystal_packages()) if (r.manifest.id == id) return r.slot;
     uint16_t stored = 0;
     return read_value(id, 's', &stored) ? stored : default_value;
 }
 
 bool crystal_registry_set_enabled(const char *id, bool enabled)
 {
+    if (id && enabled) for (const auto &row : s_installed)
+        if (!strcmp(row.id, id) &&
+            (row.app->lifecycle_state() == CrystalApp::LifecycleState::Installed ||
+             row.app->lifecycle_state() == CrystalApp::LifecycleState::Destroyed) &&
+            !row.app->resources().report().clean()) return false;
+    if (id) for (const auto &r : crystal_packages()) if (r.manifest.id == id) return crystal_package_set_enabled(id, enabled);
     const uint8_t stored = enabled ? 1 : 0;
     const bool ok = write_value(id, 'e', stored);
     if (ok) {
@@ -114,6 +147,7 @@ bool crystal_registry_set_enabled(const char *id, bool enabled)
 
 bool crystal_registry_set_slot(const char *id, uint16_t slot)
 {
+    if (id) for (const auto &r : crystal_packages()) if (r.manifest.id == id) return crystal_package_set_slot(id, slot);
     const bool ok = write_value(id, 's', slot);
     if (ok) {
         ESP_LOGI(TAG, "%s slot=%u (applies next boot)", id, static_cast<unsigned>(slot));
@@ -130,9 +164,11 @@ bool crystal_registry_apply_changes(void)
         return false;
     }
 
+    sync_package_catalog();
     ESP_LOGI(TAG, "Applying registry changes live");
     bool ok = true;
     for (const CrystalAppEntry &entry : s_catalog) {
+        if (!entry.available) continue;
         if (!crystal_registry_enabled(entry.id, entry.default_enabled)) continue;
 
         bool installed = false;
@@ -145,7 +181,7 @@ bool crystal_registry_apply_changes(void)
         if (installed) continue;
 
         ESP_LOGI(TAG, "Installing %s", entry.id);
-        CrystalApp *app = entry.factory();
+        CrystalApp *app = crystal_registry_create_app(&entry);
         if (app == nullptr || s_phone->installApp(app) < 0) {
             ESP_LOGE(TAG, "install failed: %s", entry.id);
             delete app;
@@ -182,6 +218,16 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
     }
 
     s_phone = phone;
+    crystal_app_set_cleanup_hook([](CrystalApp *app) {
+        CrystalCleanupReport report;
+        if (crystal_app_verify_cleanup(app->resources(), &report)) return;
+        for (const auto &row : s_installed) if (row.app == app) {
+            (void)crystal_registry_set_enabled(row.id, false);
+            ESP_LOGE(TAG, "%s disabled: tasks=%zu timers=%zu queues=%zu heap=%zu objects=%zu",
+                     row.id, report.tasks, report.timers, report.queues, report.heap_bytes, report.objects);
+            break;
+        }
+    });
 
     // Validate the entire table before publishing it, including disabled apps.
     for (size_t i = 0; i < count; ++i) {
@@ -191,12 +237,14 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
         }
     }
     s_catalog.clear();
+    s_package_manifests.clear();
     if (count != 0) s_catalog.assign(entries, entries + count);
+    sync_package_catalog();
     s_installed.clear();
     std::vector<RegistryRow> enabled;
     enabled.reserve(count);
-    for (size_t i = 0; i < count; ++i) {
-        const CrystalAppEntry &entry = entries[i];
+    for (size_t i = 0; i < s_catalog.size(); ++i) {
+        const CrystalAppEntry &entry = s_catalog[i];
         if (!crystal_registry_enabled(entry.id, entry.default_enabled)) {
             ESP_LOGI(TAG, "disabled: %s", entry.id);
             continue;
@@ -213,11 +261,13 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
 
     bool ok = true;
     for (const RegistryRow &row : enabled) {
-        CrystalApp *app = row.entry->factory();
+        CrystalApp *app = crystal_registry_create_app(row.entry);
         if (app == nullptr || phone->installApp(app) < 0) {
             ESP_LOGE(TAG, "install failed: %s", row.entry->id);
             delete app;
-            ok = false;
+            // An unsupported/damaged package must not prevent the OS booting.
+            if (row.entry->origin == CRYSTAL_ORIGIN_PACKAGE) (void)crystal_package_set_enabled(row.entry->id, false);
+            else ok = false;
             continue;
         }
         s_installed.push_back({row.entry->id, app});
@@ -225,4 +275,72 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
                  static_cast<unsigned>(row.slot));
     }
     return ok;
+}
+
+void crystal_registry_set_package_factory(crystal_package_factory_t factory) { s_package_factory = factory; }
+
+CrystalApp *crystal_registry_create_app(const CrystalAppEntry *entry)
+{
+    if (!entry || !entry->available) return nullptr;
+    if (entry->origin == CRYSTAL_ORIGIN_BUILTIN) return entry->factory ? entry->factory() : nullptr;
+    for (const auto &r : crystal_packages()) if (r.manifest.id == entry->id && s_package_factory) {
+        // Brookesia retains name/icon pointers. Supply the catalog's stable
+        // manifest copy, never the store vector which can move on install.
+        const CrystalPackageManifest *manifest = nullptr;
+        for (auto it = s_package_manifests.rbegin(); it != s_package_manifests.rend(); ++it)
+            if (it->id == r.manifest.id) { manifest = &*it; break; }
+        if (!manifest) return nullptr;
+        CrystalApp *app = s_package_factory(*manifest);
+        if (app && !app->bindPackage(r.manifest.id.c_str(), size_t(r.manifest.memory_kb) * 1024, r.manifest.worker_threads)) {
+            delete app;
+            return nullptr;
+        }
+        return app;
+    }
+    return nullptr;
+}
+
+bool crystal_registry_uninstall_package(const char *id)
+{
+    if (!id || !s_phone) return false;
+    auto installed = std::find_if(s_installed.begin(), s_installed.end(),
+        [&](const InstalledRow &row) { return strcmp(row.id, id) == 0; });
+    auto catalog = std::find_if(s_catalog.begin(), s_catalog.end(),
+        [&](const CrystalAppEntry &entry) { return entry.available && strcmp(entry.id, id) == 0; });
+    if (catalog == s_catalog.end() || catalog->origin != CRYSTAL_ORIGIN_PACKAGE) return false;
+    bool another_enabled = false;
+    for (const auto &entry : s_catalog) if (entry.available && strcmp(entry.id, id) &&
+        crystal_registry_enabled(entry.id, entry.default_enabled)) another_enabled = true;
+    if (!another_enabled) return false;
+    if (installed != s_installed.end()) {
+        auto *app = installed->app;
+        auto &manager = s_phone->getManager();
+        auto running = [&]() {
+            for (uint8_t i = 0; i < manager.getRunningAppCount(); ++i)
+                if (manager.getRunningAppByIdenx(i) == app) return true;
+            return false;
+        };
+        if (running()) {
+            ESP_Brookesia_CoreAppEventData_t event = {app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP, nullptr};
+            if (!s_phone->sendAppEvent(&event) || running()) return false;
+        }
+        CrystalCleanupReport report;
+        if (!crystal_app_verify_cleanup(app->resources(), &report)) {
+            std::string error;
+            (void)crystal_package_remove(id, false, &error);
+            ESP_LOGE(TAG, "%s", error.c_str());
+            return false;
+        }
+        if (!s_phone->uninstallApp(app)) return false;
+        delete app;
+        s_installed.erase(installed);
+    }
+    std::string error;
+    if (!crystal_package_remove(id, true, &error)) {
+        ESP_LOGE(TAG, "%s", error.c_str());
+        return false;
+    }
+    // Keep catalog addresses valid for Settings callbacks until next boot.
+    catalog->available = false;
+    return true;
 }
