@@ -27,6 +27,9 @@
 #include "crystal_package.hpp"
 #include "crystal_signature.hpp"
 #include "crystal_crypto.hpp"
+#include "crystal_memory.h"
+#include "crystal_control.hpp"
+#include "crystal_declarative.hpp"
 #include "crystal_shell.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
@@ -55,6 +58,10 @@ static CrystalApp *make_package_app(const CrystalPackageManifest &manifest)
 #endif
     if (curated_calculator && manifest.runtime == "native" &&
         manifest.entry == "calculator.native") return new CalculatorApp(manifest.name.c_str());
+    if (manifest.runtime == "declarative") {
+        return new DeclarativeApp(manifest.name.c_str(), manifest.id.c_str(), manifest.entry.c_str(),
+                                  manifest.system_timer);
+    }
     return nullptr;
 }
 
@@ -117,6 +124,7 @@ static void my_rounder_cb(lv_disp_drv_t *disp_drv, lv_area_t *area)
 extern "C" void app_main(void)
 {
     s_boot_start_us = esp_timer_get_time();
+    crystal_memory_init();
     require_boot_step(crystal_crypto_init(), "Failed to initialize cryptography");
 
     esp_err_t err = nvs_flash_init();
@@ -148,6 +156,7 @@ extern "C" void app_main(void)
     (void)bsp_display_brightness_set(0);
     crystal_hal_init();
     require_boot_step(crystal_signature_init(), "Failed to initialize package signature trust store");
+    crystal_app_set_log_hook(crystal_control_log_line);
     crystal_registry_set_package_factory(make_package_app);
     std::string package_error;
     if (!crystal_packages_mount() ||
@@ -241,6 +250,9 @@ extern "C" void app_main(void)
         "Failed to install app registry"
     );
     require_boot_step(crystal_shell_init(phone), "Failed to start card shell");
+    if (!crystal_control_usb_start()) {
+        ESP_LOGW(TAG, "USB developer transport unavailable");
+    }
 #ifdef CRYSTAL_PHASE14_DEVICE_TEST
     (void)crystal_phase14_device_test_start(phone, phase14_package_start,
         static_cast<size_t>(phase14_package_end - phase14_package_start),

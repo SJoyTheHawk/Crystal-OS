@@ -3098,7 +3098,7 @@ void settings_push_developer_tools()
 
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);
-    lv_label_set_text(note, "The panel is read-only in this build. App installation, logs, and USB transfer are still in progress.");
+    lv_label_set_text(note, "Wi-Fi panel supports install, app actions, and live logs. USB transport and hardware validation remain.");
     lv_obj_set_style_text_color(note, lv_color_hex(0x91a0b3), 0);
 }
 
@@ -3133,6 +3133,50 @@ void crystal_shell_control_start_event(const char pairing_pin[7])
         snprintf(url, sizeof(url), "http://%s/", address);
     }
     control_pair_dialog_build(pairing_pin, url);
+}
+
+void crystal_shell_control_action_event(const CrystalControlAction *action)
+{
+    if (action == nullptr || action->id[0] == '\0' || s_phone == nullptr) return;
+    CrystalApp *app = nullptr;
+    for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
+        if (crystal_registry_installed_id(i) != nullptr && !strcmp(crystal_registry_installed_id(i), action->id)) {
+            app = crystal_registry_installed_app(i);
+            break;
+        }
+    }
+    if (action->kind == CRYSTAL_CONTROL_ACTION_LAUNCH) {
+        if (app == nullptr) {
+            (void)crystal_registry_apply_changes();
+            for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
+                if (crystal_registry_installed_id(i) != nullptr && !strcmp(crystal_registry_installed_id(i), action->id)) {
+                    app = crystal_registry_installed_app(i);
+                    break;
+                }
+            }
+        }
+        if (app != nullptr) {
+            ESP_Brookesia_CoreAppEventData_t event = {app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
+            if (s_phone->sendAppEvent(&event)) return;
+        }
+        ESP_LOGW(TAG, "Control-panel launch failed for %s", action->id);
+        return;
+    }
+    if (action->kind == CRYSTAL_CONTROL_ACTION_UNINSTALL) {
+        if (crystal_registry_uninstall_package(action->id)) {
+            ESP_LOGI(TAG, "Control-panel uninstalled %s", action->id);
+        } else {
+            ESP_LOGW(TAG, "Control-panel uninstall failed for %s", action->id);
+        }
+        return;
+    }
+    if (action->kind == CRYSTAL_CONTROL_ACTION_CLEAR_DATA && app != nullptr) {
+        if (app == s_phone->getManager().getActiveApp()) {
+            ESP_Brookesia_CoreAppEventData_t event = {app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP, nullptr};
+            (void)s_phone->sendAppEvent(&event);
+        }
+        ESP_LOGI(TAG, "Control-panel cleared data for %s: %d", action->id, app->clearData());
+    }
 }
 
 void settings_open()

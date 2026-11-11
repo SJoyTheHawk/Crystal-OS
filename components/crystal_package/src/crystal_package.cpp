@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <memory>
 #include <set>
 #include <sys/stat.h>
@@ -342,6 +343,37 @@ bool crystal_packages_mount() {
 }
 
 const std::vector<CrystalPackageRecord> &crystal_packages() { return s_records; }
+
+bool crystal_package_read_file(const std::string &id, const std::string &path,
+                               std::string *out, size_t max_bytes) {
+    if (out == nullptr) return false;
+    out->clear();
+    if (max_bytes == 0 || !crystal_package_valid_id(id) || !relative(path) ||
+        path == "app.json" || path == "data" || path.rfind("data/", 0) == 0) return false;
+    auto record = find_record(id);
+    if (record == s_records.end() || s_root.empty()) return false;
+    // Picolibc allocates a recursive FILE lock lazily on fseek/fread and aborts
+    // if internal RAM is exhausted. Use the VFS descriptor API for assets.
+    struct AssetFile {
+        int fd;
+        ~AssetFile() { if (fd >= 0) close(fd); }
+    } file{open((s_root + "/" + id + "/" + path).c_str(), O_RDONLY)};
+    if (file.fd < 0) return false;
+    struct stat info{};
+    if (fstat(file.fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
+        static_cast<uint64_t>(info.st_size) > max_bytes) return false;
+    out->assign(static_cast<size_t>(info.st_size), '\0');
+    size_t received = 0;
+    while (received < out->size()) {
+        const ssize_t count = read(file.fd, &(*out)[received], out->size() - received);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        received += static_cast<size_t>(count);
+    }
+    const bool ok = received == out->size();
+    if (!ok) out->clear();
+    return ok;
+}
 
 bool crystal_packages_init(const char *root, CrystalPackageLimits limits, std::string *error) {
     if (!root || !*root || !limits.memory_bytes || !limits.storage_bytes) return fail(error, "Invalid package configuration");

@@ -7,10 +7,14 @@ import struct
 import sys
 import base64
 import hashlib
+import os
+import select
 import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
+import tempfile
+import time
 from pathlib import Path
 
 MAX_MANIFEST = 8192
@@ -389,6 +393,166 @@ def catalog_download(url, app_id, destination, trusted_catalog_keys, trusted_pac
     return result, catalog_key_id
 
 
+def device_url(base, path):
+    return base.rstrip('/') + path
+
+
+def device_json(base, path, method='GET', token=None, payload=None):
+    data = None if payload is None else json.dumps(payload).encode('utf-8')
+    headers = {'Cache-Control': 'no-store'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    if payload is not None:
+        headers['Content-Type'] = 'application/json'
+    request = urllib.request.Request(device_url(base, path), data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            body = response.read()
+            return json.loads(body.decode('utf-8')) if body else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail).get('error', detail)
+        except json.JSONDecodeError:
+            pass
+        raise ValueError(f'device request failed ({exc.code}): {detail}') from exc
+
+
+def pair_device(base, pin):
+    result = device_json(base, '/api/v1/pair', method='POST', payload={'pin': pin})
+    token = result.get('token')
+    if not isinstance(token, str) or not token:
+        raise ValueError('device did not return a bearer token')
+    return token
+
+
+def install_wifi(base, package, pin=None, token=None):
+    token = token or pair_device(base, pin) if pin else token
+    if not token:
+        raise ValueError('provide --pin for pairing or --token for an existing session')
+    request = urllib.request.Request(device_url(base, '/api/v1/apps'), data=package.read_bytes(),
+                                     headers={'Authorization': f'Bearer {token}',
+                                              'Content-Type': 'application/octet-stream'}, method='POST')
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail).get('error', detail)
+        except json.JSONDecodeError:
+            pass
+        raise ValueError(f'device install failed ({exc.code}): {detail}') from exc
+    return token, result
+
+
+def install_usb(port, package):
+    """Upload one package over the physical USB developer transport."""
+    if not port:
+        raise ValueError('USB installation requires --port')
+    try:
+        import termios
+    except ImportError as exc:
+        raise ValueError('USB transport requires a POSIX host') from exc
+    temporary = None
+    if package.is_dir():
+        manifest = load_manifest(package / 'app.yaml')
+        temporary = tempfile.TemporaryDirectory(prefix='crystal-usb-')
+        package_path = Path(temporary.name) / f"{manifest['id']}-{manifest['version']}.capp"
+        pack(package, package_path)
+        package = package_path
+    payload = package.read_bytes()
+    if not payload:
+        if temporary is not None:
+            temporary.cleanup()
+        raise ValueError('package is empty')
+    try:
+        fd = os.open(port, os.O_RDWR | os.O_NOCTTY)
+    except OSError as exc:
+        if temporary is not None:
+            temporary.cleanup()
+        raise ValueError(f'could not open USB port {port}: {exc}') from exc
+    try:
+        try:
+            attrs = termios.tcgetattr(fd)
+            attrs[0] &= ~(termios.IXON | termios.IXOFF | termios.IXANY)
+            attrs[1] &= ~termios.OPOST
+            attrs[2] = (attrs[2] & ~termios.CSIZE) | termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[3] &= ~(termios.ICANON | termios.ECHO | termios.ISIG)
+            attrs[4] = termios.B115200
+            attrs[5] = termios.B115200
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        except termios.error:
+            # USB Serial/JTAG endpoints do not expose UART settings on every host.
+            pass
+        deadline = time.monotonic() + 30
+        response = bytearray()
+
+        def protocol_line():
+            while time.monotonic() < deadline:
+                if b'\n' in response:
+                    raw, _, remainder = response.partition(b'\n')
+                    response[:] = remainder
+                    line = raw.decode('utf-8', errors='replace').strip()
+                    marker = line.find('CRYSTAL/1')
+                    if marker >= 0:
+                        return line[marker:]
+                    continue
+                readable, _, _ = select.select([fd], [], [], 0.5)
+                if not readable:
+                    continue
+                chunk = os.read(fd, 1024)
+                if not chunk:
+                    return None
+                response.extend(chunk)
+            return None
+
+        os.write(fd, f'CRYSTAL/1 INSTALL {len(payload)}\n'.encode('ascii'))
+        if protocol_line() != 'CRYSTAL/1 READY':
+            raise ValueError('device did not acknowledge USB upload')
+        offset = 0
+        while offset < len(payload):
+            chunk = payload[offset:offset + 2048]
+            written = 0
+            while written < len(chunk):
+                written += os.write(fd, chunk[written:])
+            offset += written
+            acknowledgement = protocol_line()
+            if acknowledgement != f'CRYSTAL/1 ACK {offset}':
+                if acknowledgement and acknowledgement.startswith('CRYSTAL/1 ERROR '):
+                    raise ValueError(f'device USB install failed: {acknowledgement[len("CRYSTAL/1 ERROR "):]}')
+                raise ValueError('device did not acknowledge USB upload progress')
+        while time.monotonic() < deadline:
+            line = protocol_line()
+            if line is None:
+                break
+            if line.startswith('CRYSTAL/1 OK '):
+                try:
+                    return json.loads(line[len('CRYSTAL/1 OK '):])
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f'invalid USB response: {line}') from exc
+            if line.startswith('CRYSTAL/1 ERROR '):
+                raise ValueError(f'device USB install failed: {line[len("CRYSTAL/1 ERROR "):]}')
+        raise ValueError('timed out waiting for USB install response')
+    finally:
+        os.close(fd)
+        if temporary is not None:
+            temporary.cleanup()
+
+
+def stream_logs(base, token):
+    request = urllib.request.Request(device_url(base, '/api/v1/logs'),
+                                     headers={'Authorization': f'Bearer {token}', 'Accept': 'text/event-stream'})
+    try:
+        with urllib.request.urlopen(request, timeout=75) as response:
+            for raw in response:
+                line = raw.decode('utf-8', errors='replace')
+                if line.startswith('data: '):
+                    print(line[6:].rstrip('\n'), flush=True)
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f'log stream failed ({exc.code})') from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -424,6 +588,25 @@ def main():
                      metavar='KEY_ID=PUBLIC_KEY.pem')
     cmd.add_argument('--trusted-package-key', action='append', type=parse_trusted_key, required=True,
                      metavar='KEY_ID=PUBLIC_KEY.pem')
+    cmd = sub.add_parser('install', help='install a package over Wi-Fi or physical USB')
+    cmd.add_argument('package', type=Path)
+    cmd.add_argument('--wifi', metavar='URL', help='device URL, for example http://192.168.1.20/')
+    cmd.add_argument('--pin', help='six-digit pairing PIN shown on the device')
+    cmd.add_argument('--token', help='reuse an existing bearer token')
+    cmd.add_argument('--usb', action='store_true', help='install unsigned in developer mode over USB Serial/JTAG')
+    cmd.add_argument('--port', help='USB serial port, for example /dev/cu.usbmodem101')
+    cmd = sub.add_parser('logs', help='stream authenticated app logs from a device')
+    cmd.add_argument('-f', '--follow', action='store_true', help='keep the SSE stream open')
+    cmd.add_argument('--wifi', metavar='URL', required=True)
+    cmd.add_argument('--token', required=True)
+    cmd = sub.add_parser('run', help='pack, install, launch, and stream a package over Wi-Fi')
+    cmd.add_argument('folder', type=Path)
+    cmd.add_argument('--wifi', metavar='URL', required=True)
+    cmd.add_argument('--pin')
+    cmd.add_argument('--token')
+    cmd.add_argument('--key', type=Path, required=True, help='Ed25519 PEM key for a signed package')
+    cmd.add_argument('--key-id', type=int, default=1, choices=range(1, 256), metavar='1..255')
+    cmd.add_argument('-o', '--output', type=Path)
     args = parser.parse_args()
     try:
         if args.command in ('inspect', 'verify'):
@@ -453,6 +636,29 @@ def main():
                                                       catalog_keys, package_keys)
             print(json.dumps({'catalog_key_id': catalog_key_id, 'package': str(args.output),
                               'signature': result['signature'], 'manifest': result['manifest']}, indent=2))
+        elif args.command == 'install':
+            if args.usb:
+                if args.wifi:
+                    raise ValueError('choose one install transport: --wifi or --usb')
+                print(json.dumps(install_usb(args.port, args.package), indent=2))
+                return
+            if not args.wifi:
+                raise ValueError('install requires --wifi URL or --usb')
+            token, result = install_wifi(args.wifi, args.package, args.pin, args.token)
+            print(json.dumps({'token': token, **result}, indent=2))
+        elif args.command == 'logs':
+            if not args.follow:
+                raise ValueError('logs requires -f/--follow')
+            stream_logs(args.wifi, args.token)
+        elif args.command == 'run':
+            manifest = load_manifest(args.folder / 'app.yaml')
+            with tempfile.TemporaryDirectory(prefix='crystal-run-') as directory:
+                package = args.output or Path(directory) / f"{manifest['id']}-{manifest['version']}.capp"
+                pack(args.folder, package, args.key, args.key_id)
+                token, result = install_wifi(args.wifi, package, args.pin, args.token)
+                launch = device_json(args.wifi, f"/api/v1/apps/{urllib.parse.quote(manifest['id'], safe='')}/launch", method='POST', token=token)
+                print(json.dumps({'install': result, 'launch': launch}, indent=2))
+                stream_logs(args.wifi, token)
         else:
             m = load_manifest(args.folder / 'app.yaml')
             output = args.output or Path(f"{m['id']}-{m['version']}.capp")

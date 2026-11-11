@@ -275,10 +275,35 @@ public:
         }
 
         wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
-        if (esp_wifi_init(&init_config) != ESP_OK ||
-            esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) {
+        ESP_LOGI(TAG, "WiFi init: internal=%u largest_internal=%u dma=%u largest_dma=%u static_rx=%d static_tx=%d",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)),
+                 init_config.static_rx_buf_num, init_config.static_tx_buf_num);
+        const esp_err_t init_err = esp_wifi_init(&init_config);
+        if (init_err != ESP_OK) {
+            ESP_LOGE(TAG, "WiFi initialization failed: %s; internal=%u largest_dma=%u",
+                     esp_err_to_name(init_err),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)));
+            esp_netif_destroy_default_wifi(netif_);
+            netif_ = nullptr;
+            notify(ConnectFailed);
             return;
         }
+        const esp_err_t mode_err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (mode_err != ESP_OK) {
+            ESP_LOGE(TAG, "WiFi station mode failed: %s", esp_err_to_name(mode_err));
+            (void)esp_wifi_deinit();
+            esp_netif_destroy_default_wifi(netif_);
+            netif_ = nullptr;
+            notify(ConnectFailed);
+            return;
+        }
+        ESP_LOGI(TAG, "WiFi initialized: internal=%u largest_internal=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         // The IDF driver emits a warning whenever a connect request arrives
         // while its scan has not found a matching AP. That is expected during
         // our paced reconnects and is not actionable; keep the HAL's own

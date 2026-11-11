@@ -1,10 +1,20 @@
 idf_component_register(
-    SRCS "main.cpp" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
+    SRCS "main.cpp" "crystal_memory.c" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
     INCLUDE_DIRS "."
-    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_shell esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
+    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_shell esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)
+
+# Brookesia's allocator does not cover LVGL's own widgets/styles. Wire LVGL's
+# allocator itself so package UI construction cannot consume internal RAM.
+idf_component_get_property(crystal_lvgl_lib lvgl__lvgl COMPONENT_LIB)
+target_include_directories(${crystal_lvgl_lib} PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+target_compile_definitions(${crystal_lvgl_lib} PRIVATE
+    LV_MEM_CUSTOM_INCLUDE="crystal_memory.h"
+    LV_MEM_CUSTOM_ALLOC=crystal_ui_malloc
+    LV_MEM_CUSTOM_REALLOC=crystal_ui_realloc
+    LV_MEM_CUSTOM_FREE=crystal_ui_free)
 
 option(CRYSTAL_PHASE14_DEVICE_TEST "Run the Calculator package test on the device (one automatic reboot)" OFF)
 set(CRYSTAL_PHASE14_DEVICE_TEST_RUN "1" CACHE STRING "Increase to repeat a completed Phase 14 device test")

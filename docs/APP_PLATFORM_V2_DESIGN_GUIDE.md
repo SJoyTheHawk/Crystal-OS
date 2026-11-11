@@ -1,7 +1,7 @@
 # Crystal OS App Platform — v2 Design Guide
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phases 15–17 pending  
+**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
 **Date:** 2026-11-11  
 **Audience:** Architects, senior developers reviewing Phase 14-17 designs
 
@@ -608,14 +608,16 @@ esp_err_t crystal_fs_read(const char *app_id, const char *path,
 
 ## 9. Control Panel Architecture
 
-**Phase 15 implementation status:** The current firmware has an opt-in,
-read-only Wi-Fi panel with pairing and app/system queries. Its page is served
+**Phase 15 implementation status:** The current firmware has an opt-in Wi-Fi
+panel with pairing, app/system queries, authenticated package upload, app
+management actions, and a bounded SSE log stream. Its page is served
 from the SPIFFS assets partition at the board-configured mount point
 (`CONFIG_BSP_SPIFFS_MOUNT_POINT`, currently `/spiffs`). The handler previously
 used the partition label `/storage` as a path, producing a false missing-page
 error; it now uses the configured mount point. The board has been flashed with that page;
-pairing and browser requests still need a user-driven hardware check. USB
-transfer, management actions, and live catalog browsing are not implemented.
+pairing, browser requests, package installation, and action consistency still
+need a user-driven hardware check. USB transfer and live catalog browsing are
+not implemented.
 The HTTP server is limited to four client sockets and lwIP provides sixteen
 total sockets so it can coexist with outbound HTTPS requests. The first socket
 limit adjustment did not resolve device startup: the control socket still
@@ -634,8 +636,9 @@ with matching capability-aware task deletion, leaving internal RAM for the
 
 ### 9.1 API-First Design
 
-**Target principle:** One JSON API, two transports (WiFi + USB). The Wi-Fi
-transport has an initial read-only implementation; USB remains planned.
+**Target principle:** One package and management model, with authenticated Wi-Fi
+control and a physical USB developer transport. Wi-Fi remains the production
+path; USB sideloading is explicitly developer-mode only.
 
 **Consequence:** Manage Apps (on-device) and external panel are clients of the same API. They can't disagree.
 
@@ -648,7 +651,9 @@ transport has an initial read-only implementation; USB remains planned.
 
 **USB transport:**
 - The ESP32-S3 board exposes its USB Serial/JTAG serial port to the computer.
-- A framed developer protocol and `crystal install --usb` client remain to be implemented.
+- `CRYSTAL/1 INSTALL <bytes>\n` frames a bounded `.capp` upload; the device
+  writes it through the same atomic package installer in developer mode.
+- `crystal install --usb --port /dev/cu.usbmodem101 package.capp` is the host client.
 - Browser Web Serial support is not implemented.
 
 **Implication:** Developers use the same API whether the device is over WiFi or USB. Seamless.
@@ -893,12 +898,13 @@ verification remains a Phase 15 deliverable.
 
 ### For Phase 16
 
-- [ ] `DeclarativeApp` class implements `CrystalApp` interface
-- [ ] `ui.json` parsing and object tree construction works
-- [ ] Data binding to `crystal.service` values (time, network, timer)
-- [ ] Event routing (buttons → system actions)
-- [ ] All bundled app UIs expressible without ABI additions
-- [ ] ABI v1 frozen; no further changes in this phase
+- [x] `DeclarativeApp` class implements `CrystalApp` interface
+- [x] `ui.json` parsing and object tree construction works
+- [x] Data binding to `crystal.service` values (time, network, timer)
+- [x] Event routing for permission-checked timer actions
+- [ ] Remaining dynamic property/event APIs implemented
+- [x] Visual UI references for Clock, Weather and Calculator pass production host runtime; app behavior remains in current runtimes
+- [ ] Device lifecycle verification and ABI v1 freeze
 
 ### For Phase 17
 

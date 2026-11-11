@@ -1,0 +1,33 @@
+{
+  "screen": {
+    "type": "container",
+    "id": "calculator_screen",
+    "width": 448,
+    "height": 420,
+    "flex_direction": "column",
+    "gap": 12,
+    "style": {"bg_color": 1120287, "padding": 16},
+    "children": [
+      {
+        "type": "container",
+        "id": "calculator_display",
+        "width": 416,
+        "height": 116,
+        "flex_direction": "column",
+        "style": {"bg_color": 1840947, "radius": 8, "padding": 12},
+        "children": [
+          {"type": "label", "text": "12 + 7", "font": "caption", "align": "right", "width": 384, "style": {"text_color": 8161437}},
+          {"type": "label", "text": "45 x 6 - 2", "font": "medium", "align": "right", "width": 384},
+          {"type": "label", "text": "= 268", "font": "medium", "align": "right", "width": 384, "style": {"text_color": 5484726}}
+        ]
+      },
+      {
+        "type": "button_matrix",
+        "id": "calculator_keyboard",
+        "width": 416,
+        "height": 260,
+        "buttons": ["C", "/", "x", "Del", "\n", "7", "8", "9", "-", "\n", "4", "5", "6", "+", "\n", "1", "2", "3", "%", "\n", "0", ".", "=", ""]
+      }
+    ]
+  }
+}

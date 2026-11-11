@@ -7,6 +7,7 @@ import struct
 import subprocess
 import tempfile
 import zlib
+import shutil
 import crystal
 import prepare_phase14_device_test
 
@@ -21,6 +22,7 @@ CONF = '''#pragma once
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_22 1
 #define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_48 1
 #define LV_USE_LOG 0
 '''
 
@@ -40,6 +42,25 @@ def main():
         package = ROOT / 'examples/calculator_package'
         m = crystal.load_manifest(package / 'app.yaml')
         crystal.pack(package, temp / 'calculator.capp')
+        crystal.pack(ROOT / 'examples/declarative_dashboard', temp / 'declarative.capp')
+        for example in ('clock', 'weather', 'calculator'):
+            visual_package = temp / f'declarative-{example}-source'
+            shutil.copytree(ROOT / 'examples/declarative_dashboard', visual_package)
+            visual_manifest = json.loads((visual_package / 'app.yaml').read_text())
+            visual_manifest['id'] = f'org.crystal.visual-{example}'
+            visual_manifest['name'] = f'{example.title()} Visual Reference'
+            visual_manifest['entry'] = f'visual/{example}.json'
+            visual_manifest['storage_kb'] = 64
+            (visual_package / 'app.yaml').write_text(json.dumps(visual_manifest))
+            crystal.pack(visual_package, temp / f'declarative-{example}.capp')
+        denied_package = temp / 'declarative-denied-source'
+        shutil.copytree(ROOT / 'examples/declarative_dashboard', denied_package)
+        denied_manifest = json.loads((denied_package / 'app.yaml').read_text())
+        denied_manifest['id'] = 'org.crystal.declarative-denied'
+        denied_manifest['name'] = 'Denied Dashboard'
+        denied_manifest['permissions'] = {}
+        (denied_package / 'app.yaml').write_text(json.dumps(denied_manifest))
+        crystal.pack(denied_package, temp / 'declarative-denied.capp')
         prepare_phase14_device_test.prepare(temp / 'device-calculator.capp')
         assert crystal.inspect(temp / 'calculator.capp')['manifest']['id'] == m['id']
         data = (temp / 'calculator.capp').read_bytes()
@@ -91,12 +112,13 @@ def main():
             raise SystemExit('Resolve ESP-IDF dependencies first: idf.py reconfigure')
         brookesia = ROOT / 'components/esp-brookesia/src'
         sources = [cjson / 'cJSON.c']
-        for component in ('crystal_package', 'crystal_app', 'crystal_registry', 'calculator_app'):
+        for component in ('crystal_package', 'crystal_app', 'crystal_registry', 'calculator_app', 'crystal_declarative'):
             sources.extend(sorted((ROOT / f'components/{component}/src').glob('*.cpp')))
             sources.extend(sorted((ROOT / f'components/{component}/src').glob('*.c')))
         include_dirs = [brookesia, ROOT / 'sim/screenshots/stubs', work, cjson, ROOT / 'main']
         include_dirs.extend(ROOT / f'components/{component}/include' for component in
-                            ('crystal_package', 'crystal_app', 'crystal_hal', 'crystal_registry', 'calculator_app'))
+                            ('crystal_package', 'crystal_app', 'crystal_hal', 'crystal_registry', 'calculator_app',
+                             'crystal_declarative', 'crystal_core'))
         quoted_sources = '\n'.join(f'"{path}"' for path in sources)
         quoted_includes = '\n'.join(f'"{path}"' for path in include_dirs)
         (work / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)

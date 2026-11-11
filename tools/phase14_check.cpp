@@ -12,9 +12,33 @@
 #include "crystal_registry.hpp"
 #include "calculator_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_core.hpp"
+#include "crystal_network.h"
+#include "crystal_declarative.hpp"
 namespace fs = std::filesystem;
 static CrystalHal test_hal{};
 CrystalHal &hal() { return test_hal; }
+static CrystalTimerState test_timer{};
+bool crystal_timer_start(uint32_t seconds) {
+    if (!seconds) return false;
+    test_timer = {true, false, seconds, seconds, time(nullptr) + seconds}; return true;
+}
+bool crystal_timer_restore(time_t end_at, uint32_t paused_remaining, uint32_t duration_seconds) {
+    test_timer = {paused_remaining == 0, paused_remaining != 0, duration_seconds,
+                  paused_remaining ? paused_remaining : static_cast<uint32_t>(end_at - time(nullptr)), end_at};
+    return true;
+}
+bool crystal_timer_pause() {
+    if (!test_timer.running) return false;
+    test_timer.running = false; test_timer.paused = true; return true;
+}
+bool crystal_timer_resume() {
+    if (!test_timer.paused) return false;
+    test_timer.running = true; test_timer.paused = false; return true;
+}
+void crystal_timer_reset() { test_timer = {}; }
+CrystalTimerState crystal_timer_state() { return test_timer; }
+extern "C" bool crystal_network_has_ip(void) { return true; }
 class Storage : public IStorage {
 public:
     bool fail_write = false;
@@ -43,13 +67,65 @@ static void settle() { for (int i = 0; i < 45; ++i) { lv_tick_inc(10); lv_timer_
 static void flush(lv_disp_drv_t *driver, const lv_area_t *, lv_color_t *) { lv_disp_flush_ready(driver); }
 static void read_touch(lv_indev_drv_t *, lv_indev_data_t *data) { data->state = LV_INDEV_STATE_RELEASED; data->point = {0, 0}; }
 static CrystalApp *factory(const CrystalPackageManifest &m) {
-    return m.id == "org.crystal.calculator" && m.runtime == "native" && m.entry == "calculator.native" ? new CalculatorApp(m.name.c_str()) : nullptr;
+    if (m.id == "org.crystal.calculator" && m.runtime == "native" && m.entry == "calculator.native")
+        return new CalculatorApp(m.name.c_str());
+    if (m.runtime == "declarative")
+        return new DeclarativeApp(m.name.c_str(), m.id.c_str(), m.entry.c_str(), m.system_timer);
+    return nullptr;
 }
 static CrystalApp *builtin() { return new CalculatorApp; }
 static CrystalApp *package_app() {
     for (size_t i = 0; i < crystal_registry_installed_count(); ++i)
         if (!strcmp(crystal_registry_installed_id(i), "org.crystal.calculator")) return crystal_registry_installed_app(i);
     return nullptr;
+}
+static CrystalApp *installed_app(const char *id) {
+    for (size_t i = 0; i < crystal_registry_installed_count(); ++i)
+        if (!strcmp(crystal_registry_installed_id(i), id)) return crystal_registry_installed_app(i);
+    return nullptr;
+}
+static lv_obj_t *find_label(lv_obj_t *root, const char *text) {
+    if (root == nullptr) return nullptr;
+    if (lv_obj_check_type(root, &lv_label_class) && !strcmp(lv_label_get_text(root), text)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(root); ++i) {
+        if (lv_obj_t *found = find_label(lv_obj_get_child(root, i), text)) return found;
+    }
+    return nullptr;
+}
+static lv_obj_t *find_display_label(lv_disp_t *display, const char *text) {
+    if (display == nullptr) return nullptr;
+    lv_obj_t *found = find_label(lv_disp_get_scr_act(display), text);
+    if (found == nullptr) found = find_label(lv_disp_get_scr_prev(display), text);
+    if (found == nullptr) found = find_label(lv_disp_get_layer_top(display), text);
+    if (found == nullptr) found = find_label(lv_disp_get_layer_sys(display), text);
+    return found;
+}
+static lv_obj_t *find_object_type(lv_obj_t *root, const lv_obj_class_t *type) {
+    if (root == nullptr) return nullptr;
+    if (lv_obj_check_type(root, type)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(root); ++i) {
+        if (lv_obj_t *found = find_object_type(lv_obj_get_child(root, i), type)) return found;
+    }
+    return nullptr;
+}
+static void print_labels(lv_obj_t *root) {
+    if (root == nullptr) return;
+    if (lv_obj_check_type(root, &lv_label_class)) std::fprintf(stderr, "LABEL=[%s]\n", lv_label_get_text(root));
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(root); ++i) print_labels(lv_obj_get_child(root, i));
+}
+static void click_button_text(lv_disp_t *display, const char *text) {
+    lv_obj_t *label = find_display_label(display, text);
+    if (label == nullptr) {
+        std::fprintf(stderr, "Could not find requested button label: %s\n", text);
+        print_labels(lv_disp_get_scr_act(display));
+        print_labels(lv_disp_get_scr_prev(display));
+        print_labels(lv_disp_get_layer_top(display));
+        print_labels(lv_disp_get_layer_sys(display));
+    }
+    assert(label != nullptr);
+    lv_obj_t *button = lv_obj_get_parent(label);
+    assert(button != nullptr);
+    lv_event_send(button, LV_EVENT_CLICKED, nullptr);
 }
 int main(int argc, char **argv) {
     assert(argc == 3); fixtures = argv[1]; const fs::path root = argv[2];
@@ -78,6 +154,27 @@ int main(int argc, char **argv) {
     assert(!fs::exists(root / ".staging"));
     assert(install("calculator.capp"));
     assert(!install("calculator.capp"));
+    std::string package_content;
+    assert(crystal_package_read_file("org.crystal.calculator", "calculator.native", &package_content, 128));
+    assert(package_content == "crystal-native:calculator-v1\n");
+    assert(!crystal_package_read_file("org.crystal.calculator", "data/state.json", &package_content, 128));
+    assert(!crystal_package_read_file("org.crystal.calculator", "../outside", &package_content, 128));
+    assert(!crystal_package_read_file("org.crystal.calculator", "calculator.native", &package_content, 2));
+    assert(package_content.empty());
+    assert(!crystal_package_read_file("org.crystal.calculator", "missing.txt", &package_content, 128));
+    {
+        const auto assets = root / "org.crystal.calculator";
+        std::ofstream(assets / "empty.bin", std::ios::binary).close();
+        assert(crystal_package_read_file("org.crystal.calculator", "empty.bin", &package_content, 1));
+        assert(package_content.empty());
+        const std::string binary("A\0B", 3);
+        { std::ofstream file(assets / "binary.bin", std::ios::binary); file.write(binary.data(), binary.size()); }
+        assert(crystal_package_read_file("org.crystal.calculator", "binary.bin", &package_content, 3));
+        assert(package_content == binary);
+        fs::create_directory(assets / "folder");
+        assert(!crystal_package_read_file("org.crystal.calculator", "folder", &package_content, 128));
+        fs::remove(assets / "empty.bin"); fs::remove(assets / "binary.bin"); fs::remove(assets / "folder");
+    }
     assert(crystal_package_set_enabled("org.crystal.calculator", false));
     assert(crystal_package_set_slot("org.crystal.calculator", 42));
     assert(crystal_packages_init(root.c_str(), limits, &error));
@@ -200,6 +297,89 @@ int main(int argc, char **argv) {
     assert(crystal_registry_uninstall_package("org.crystal.calculator")); settle();
     assert(!package_app() && crystal_packages().empty());
     std::puts("PASS: enable/disable with a live UI and uninstall while the package is running");
+    assert(install("declarative.capp") && crystal_registry_apply_changes());
+    CrystalApp *declarative = installed_app("org.crystal.declarative-dashboard"); assert(declarative);
+    ESP_Brookesia_CoreAppEventData_t declarative_start{declarative->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
+    assert(phone.sendAppEvent(&declarative_start)); settle();
+    assert(phone.getManager().getActiveApp() == declarative);
+    assert(declarative->resources().report().objects == 1 && declarative->resources().report().timers == 1);
+    assert(find_display_label(display, "Network: connected") != nullptr);
+    lv_obj_t *offline_hint = find_display_label(display, "Connect to Wi-Fi to bring services online.");
+    assert(offline_hint != nullptr && lv_obj_has_flag(offline_hint, LV_OBJ_FLAG_HIDDEN));
+    lv_obj_t *toggle = find_object_type(lv_disp_get_scr_act(display), &lv_switch_class);
+    assert(toggle != nullptr && lv_obj_has_state(toggle, LV_STATE_CHECKED));
+    lv_obj_t *matrix = find_object_type(lv_disp_get_scr_act(display), &lv_btnmatrix_class);
+    assert(matrix != nullptr);
+    assert(find_object_type(lv_disp_get_scr_act(display), &lv_img_class) != nullptr);
+    assert(find_object_type(lv_disp_get_scr_act(display), &lv_list_class) != nullptr);
+    assert(find_object_type(lv_disp_get_scr_act(display), &lv_chart_class) != nullptr);
+    assert(find_object_type(lv_disp_get_scr_act(display), &lv_textarea_class) != nullptr);
+    assert(find_object_type(lv_disp_get_scr_act(display), &lv_spinner_class) != nullptr);
+    lv_obj_t *dialog = find_object_type(lv_disp_get_scr_act(display), &lv_msgbox_class);
+    assert(dialog != nullptr && lv_obj_has_flag(dialog, LV_OBJ_FLAG_HIDDEN));
+    assert(strcmp(lv_btnmatrix_get_btn_text(lv_msgbox_get_btns(dialog), 0), "OK") == 0);
+    lv_obj_clear_flag(dialog, LV_OBJ_FLAG_HIDDEN);
+    lv_btnmatrix_set_selected_btn(lv_msgbox_get_btns(dialog), 0);
+    lv_event_send(lv_msgbox_get_btns(dialog), LV_EVENT_VALUE_CHANGED, nullptr);
+    settle();
+    assert(!lv_obj_is_valid(dialog));
+    click_button_text(display, "Start 5 min");
+    assert(crystal_timer_state().running && crystal_timer_state().remaining_seconds == 300);
+    for (unsigned i = 0; i < 110; ++i) { lv_tick_inc(10); lv_timer_handler(); }
+    assert(find_display_label(display, "300 seconds · running true") != nullptr);
+    click_button_text(display, "Pause");
+    assert(crystal_timer_state().paused && !crystal_timer_state().running);
+    click_button_text(display, "Resume");
+    assert(crystal_timer_state().running && !crystal_timer_state().paused);
+    click_button_text(display, "Reset");
+    assert(!crystal_timer_state().running && !crystal_timer_state().paused);
+    lv_btnmatrix_set_selected_btn(matrix, 0);
+    lv_event_send(matrix, LV_EVENT_VALUE_CHANGED, nullptr);
+    assert(!crystal_timer_state().running && !crystal_timer_state().paused);
+    declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;
+    assert(phone.sendAppEvent(&declarative_start)); settle();
+    assert(crystal_app_verify_cleanup(declarative->resources(), &report));
+    declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START;
+    assert(phone.sendAppEvent(&declarative_start)); settle();
+    declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;
+    assert(phone.sendAppEvent(&declarative_start)); settle();
+    assert(crystal_app_verify_cleanup(declarative->resources(), &report));
+    assert(crystal_registry_uninstall_package("org.crystal.declarative-dashboard")); settle();
+    assert(installed_app("org.crystal.declarative-dashboard") == nullptr && crystal_packages().empty());
+    assert(install("declarative-denied.capp") && crystal_registry_apply_changes());
+    CrystalApp *denied = installed_app("org.crystal.declarative-denied"); assert(denied);
+    ESP_Brookesia_CoreAppEventData_t denied_start{denied->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
+    assert(phone.sendAppEvent(&denied_start)); settle();
+    assert(phone.getManager().getActiveApp() == denied);
+    click_button_text(display, "Start 5 min");
+    assert(!crystal_timer_state().running && !crystal_timer_state().paused);
+    denied_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;
+    assert(phone.sendAppEvent(&denied_start)); settle();
+    assert(crystal_app_verify_cleanup(denied->resources(), &report));
+    assert(crystal_registry_uninstall_package("org.crystal.declarative-denied")); settle();
+    assert(installed_app("org.crystal.declarative-denied") == nullptr && crystal_packages().empty());
+    std::puts("PASS: declarative package builds LVGL tabs/controls, binds live data/visibility, routes timer events only with permission, and cleans up across reopen");
+    struct VisualCase { const char *file; const char *id; const char *label; const lv_obj_class_t *widget; };
+    const VisualCase visual_cases[] = {
+        {"declarative-clock.capp", "org.crystal.visual-clock", "Hong Kong (UTC+08:00)", &lv_tabview_class},
+        {"declarative-weather.capp", "org.crystal.visual-weather", "24 C", &lv_img_class},
+        {"declarative-calculator.capp", "org.crystal.visual-calculator", "45 x 6 - 2", &lv_btnmatrix_class}
+    };
+    for (const auto &visual : visual_cases) {
+        assert(install(visual.file) && crystal_registry_apply_changes());
+        CrystalApp *visual_app = installed_app(visual.id); assert(visual_app);
+        ESP_Brookesia_CoreAppEventData_t visual_start{visual_app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
+        assert(phone.sendAppEvent(&visual_start)); settle();
+        assert(phone.getManager().getActiveApp() == visual_app);
+        assert(find_display_label(display, visual.label) != nullptr);
+        assert(find_object_type(lv_disp_get_scr_act(display), visual.widget) != nullptr);
+        visual_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;
+        assert(phone.sendAppEvent(&visual_start)); settle();
+        assert(crystal_app_verify_cleanup(visual_app->resources(), &report));
+        assert(crystal_registry_uninstall_package(visual.id)); settle();
+        assert(installed_app(visual.id) == nullptr && crystal_packages().empty());
+    }
+    std::puts("PASS: Clock, Weather and Calculator visual references build, launch, and clean up using production LVGL");
     assert(install("bus-leak.capp")); assert(crystal_registry_apply_changes());
     auto *app = package_app(); assert(app);
     // Reproduce the Bus service's retained worker and queue ownership. A full

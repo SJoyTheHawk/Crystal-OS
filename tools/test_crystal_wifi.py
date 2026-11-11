@@ -46,7 +46,10 @@ struct wifi_config_t { struct {
     struct { int authmode=0; } threshold;
     struct { bool capable=false, required=false; } pmf_cfg;
 } sta; };
-struct wifi_init_config_t {};
+constexpr unsigned MALLOC_CAP_INTERNAL=1, MALLOC_CAP_8BIT=2, MALLOC_CAP_DMA=4;
+size_t heap_caps_get_free_size(unsigned) { return 65536; }
+size_t heap_caps_get_largest_free_block(unsigned) { return 32768; }
+struct wifi_init_config_t { int static_rx_buf_num=10, static_tx_buf_num=8; };
 #define WIFI_INIT_CONFIG_DEFAULT() {}
 struct wifi_event_sta_disconnected_t { uint8_t reason=201; };
 struct wifi_event_sta_scan_done_t { uint32_t status=0; };
@@ -59,6 +62,7 @@ using esp_timer_handle_t = Timer *;
 static Timer timer;
 static bool associated, connecting, scanning;
 static int connect_calls, disconnect_calls, scan_calls, clear_calls, scan_error, count_error, records_error;
+static int init_error, mode_error, netif_created, netif_destroyed, deinit_calls;
 static wifi_config_t saved;
 static std::vector<wifi_ap_record_t> aps;
 static void (*handler)(void *, esp_event_base_t, int32_t, void *);
@@ -68,7 +72,8 @@ static void emit(int base, int id, void *data=nullptr) { handler(handler_arg, ba
 int esp_event_handler_register(int, int, decltype(handler) fn, void *arg) { handler=fn; handler_arg=arg; return 0; }
 int esp_event_loop_create_default() { return 0; }
 int esp_netif_init() { return 0; }
-esp_netif_t *esp_netif_create_default_wifi_sta() { static esp_netif_t n; return &n; }
+esp_netif_t *esp_netif_create_default_wifi_sta() { static esp_netif_t n; ++netif_created; return &n; }
+void esp_netif_destroy_default_wifi(void *) { ++netif_destroyed; }
 int esp_netif_dhcpc_start(esp_netif_t *) { return 0; }
 int esp_netif_dhcpc_stop(esp_netif_t *) { return 0; }
 int esp_netif_set_hostname(esp_netif_t *, const char *) { return 0; }
@@ -76,8 +81,9 @@ int esp_netif_set_ip_info(esp_netif_t *, const esp_netif_ip_info_t *) { return 0
 int esp_netif_get_ip_info(esp_netif_t *, esp_netif_ip_info_t *) { return 0; }
 int esp_netif_set_dns_info(esp_netif_t *, int, const esp_netif_dns_info_t *) { return 0; }
 int esp_netif_get_dns_info(esp_netif_t *, int, esp_netif_dns_info_t *) { return 0; }
-int esp_wifi_init(const wifi_init_config_t *) { return 0; }
-int esp_wifi_set_mode(int) { return 0; }
+int esp_wifi_init(const wifi_init_config_t *) { return init_error; }
+int esp_wifi_deinit() { ++deinit_calls; return 0; }
+int esp_wifi_set_mode(int) { return mode_error; }
 int esp_wifi_set_storage(int) { return 0; }
 int esp_wifi_get_config(int, wifi_config_t *out) { *out=saved; return 0; }
 int esp_wifi_set_config(int, const wifi_config_t *in) { saved=*in; return 0; }
@@ -145,6 +151,22 @@ static void add_ap(const char *ssid, int8_t rssi) {
     wifi_ap_record_t ap; strlcpy(reinterpret_cast<char *>(ap.ssid),ssid,sizeof(ap.ssid)); ap.rssi=rssi; aps.push_back(ap);
 }
 int main() {
+    for (bool fail_mode : {false, true}) {
+        // Allocation/setup failures notify the UI and release the default
+        // netif, so a later start does not duplicate its registered key.
+        DeviceWifi w; notifications.clear();
+        w.set_event_callback(on_event, nullptr);
+        init_error=fail_mode ? 0 : ESP_FAIL; mode_error=fail_mode ? ESP_FAIL : 0;
+        netif_created=netif_destroyed=deinit_calls=0;
+        w.start();
+        assert(netif_created==1 && netif_destroyed==1);
+        assert(deinit_calls==(fail_mode ? 1 : 0));
+        assert(notifications.size()==1 && notifications[0]==IWifi::ConnectFailed);
+        init_error=mode_error=0;
+        w.start();
+        assert(netif_created==2 && netif_destroyed==1);
+        const int created=netif_created; w.start(); assert(netif_created==created);
+    }
     { // Out-of-range saved SSID, including a timer callback already dispatched.
         DeviceWifi w; boot(w); drop(); assert(timer.armed);
         timer.armed=false; timer.callback(timer.arg); assert(connecting);

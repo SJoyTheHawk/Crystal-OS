@@ -531,6 +531,9 @@ void drain_event_queue(lv_timer_t *)
         } else if (message.type == UI_EVT_CONTROL_START) {
             crystal_shell_control_start_event(message.length == 7 ?
                 reinterpret_cast<const char *>(message.data) : nullptr);
+        } else if (message.type == UI_EVT_CONTROL_ACTION &&
+                   message.length == sizeof(CrystalControlAction)) {
+            crystal_shell_control_action_event(reinterpret_cast<const CrystalControlAction *>(message.data));
         } else if (message.type == UI_EVT_OTA_CHANGED) {
             crystal_update_snapshot_t snapshot = {};
             crystal_update_snapshot(&snapshot);

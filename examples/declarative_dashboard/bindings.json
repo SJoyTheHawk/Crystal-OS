@@ -1,0 +1,14 @@
+{
+  "bindings": [
+    {
+      "id": "network_status",
+      "property": "text",
+      "value": "Network: {{crystal.service.net.status.state}}"
+    },
+    {
+      "id": "offline_hint",
+      "property": "visible",
+      "value": "{{crystal.service.net.status.state == 'disconnected'}}"
+    }
+  ]
+}

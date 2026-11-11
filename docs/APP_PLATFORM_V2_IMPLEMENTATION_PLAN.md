@@ -1,7 +1,7 @@
 # Crystal OS App Platform — v2 Implementation Plan
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phases 15–17 pending  
+**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
 **Date:** 2026-11-11  
 **Scope:** Package format, registry system, control panel, and three runtime tiers (declarative, script, native)
 
@@ -670,11 +670,11 @@ crystal pack ./com.example.myapp/
 crystal install --usb ./com.example.myapp/
   # Push folder over USB, install unsigned (dev mode only)
 
-crystal logs -f
-  # Stream Lua errors and debug output
+crystal logs -f --wifi http://192.168.1.20/ --token TOKEN
+  # Stream authenticated app lifecycle/debug output over Wi-Fi
 
-crystal run com.example.myapp
-  # Install + launch + stream logs in one go
+crystal run ./com.example.myapp/ --wifi http://192.168.1.20/ --pin 123456
+  # Pack + install + launch + stream logs in one go
 ```
 
 These are not conveniences; without them the edit-test loop is unusable.
@@ -761,7 +761,7 @@ Phases 14-17 build the app platform. Phase 14 is foundational; 15-17 are indepen
 2. `ui.json` + `bindings.json` parser
 3. Widget facade implementation (§6.1-6.2)
 4. Live data binding to `crystal.service` values
-5. Convert Weather to declarative runtime (or keep as bundled; decision deferred)
+5. Keep Weather bundled; provide a declarative visual reference while retaining its native data/fetch behavior (decision confirmed)
 
 **Exit criteria:**
 - Declarative app renders and binds live values (time, network status)
@@ -769,6 +769,18 @@ Phases 14-17 build the app platform. Phase 14 is foundational; 15-17 are indepen
 - All three bundled apps' UIs expressible without ABI additions
 
 **ABI v1 is frozen at end of Phase 16.** This is the last moment changing it is free.
+
+**Implementation status (2026-11-12):** The package-backed declarative runtime
+slice is implemented and validated on the host in `components/crystal_declarative`:
+bounded package-backed JSON loading,
+container/control construction, all documented visual widget types, tab views,
+button matrices, allowlisted styles, text/visibility bindings, and
+permission-checked timer actions. Visual references for Clock, Weather and
+Calculator are packaged in `examples/declarative_dashboard/visual` and pass
+the production host runtime. The user clarified that bundled-app parity means
+visual UI expressibility; Calculator computation and Weather fetching remain
+in their current runtimes, and Weather stays bundled. Dynamic property/event
+operations, device lifecycle verification, and ABI freeze remain open.
 
 ### Phase 17: Script Runtime, Async HTTP, Worker Threads
 
@@ -1017,26 +1029,30 @@ curated native resource contract, validation evidence, and deferred follow-ups.
 
 ### Phase 15 Checklist
 
-- [x] Local HTTP API scaffold implemented for pairing, app list, and system status; hardware/API validation remains
-- [ ] Web UI static files served over WiFi and USB (WiFi asset serving is implemented; USB transport remains)
+- [x] Local HTTP API implements pairing, app list/system status, package upload, app actions, and bounded logs; hardware/API validation remains
+- [ ] Web UI static files served over WiFi and USB (WiFi asset serving and package progress are implemented; Browser Web Serial remains)
 - [ ] Pairing PIN flow working (6-digit code shown on device); hardware flow remains to validate
 - [ ] Bearer token exchange and validation; hardware flow remains to validate
 - [x] Ed25519 signature verification for packages with configurable trusted public keys (release key still needs configuration)
 - [x] `crystal pack --sign` adds signature to `.capp`; host signing and verification tests pass
 - [x] Host tooling signs, lists, and downloads packages from a signed HTTPS catalog; device catalog browsing/downloading remains
-- [ ] `crystal install --usb` pushes folder over CDC-ACM
-- [ ] `crystal logs -f` streams app stderr
-- [ ] `crystal run` installs + launches + logs
-- [ ] Install progress bar for packages > 1 MB
+- [x] `crystal install --usb` pushes a framed `.capp` over USB Serial/JTAG (unsigned developer package installed and reboot-reconciled on the board)
+- [x] `crystal logs -f` streams authenticated app lifecycle/debug lines over Wi-Fi SSE
+- [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi
+- [x] Install progress bar for packages > 1 MB in the browser upload flow
 - [ ] Exit gate: Install via web UI and CLI both work; API rejects unauthenticated requests
 
 ### Phase 16 Checklist
 
-- [ ] `DeclarativeApp` class implementing `CrystalApp` interface
-- [ ] `ui.json` + `bindings.json` parser
-- [ ] Data binding to `crystal.service` (time, network, timer)
-- [ ] Event routing (button clicks → system actions)
-- [ ] Exit gate: Bundled app UIs expressible without ABI additions; ABI v1 frozen
+- [x] `DeclarativeApp` class implementing `CrystalApp` interface
+- [x] Bounded `ui.json` + optional `bindings.json` parser for containers, labels, buttons, basic controls, tab views and button matrices
+- [x] Implement the documented visual widget types: image, list, chart, textarea, spinner and dialog
+- [ ] Complete documented property/event operations, including dynamic list/chart APIs and input focus
+- [x] Data binding to `crystal.service` (time, network, timer)
+- [x] Event routing for the allowlisted timer system actions
+- [ ] Verify documented lifecycle and binding behavior on device
+- [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; their behavior remains in existing runtimes
+- [ ] Freeze ABI v1 after the required facade surface is implemented and reviewed
 
 ### Phase 17 Checklist
 

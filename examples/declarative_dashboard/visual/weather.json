@@ -1,0 +1,51 @@
+{
+  "screen": {
+    "type": "container",
+    "id": "weather_screen",
+    "width": 448,
+    "height": 420,
+    "flex_direction": "column",
+    "gap": 12,
+    "style": {"bg_color": 1120287, "padding": 16},
+    "children": [
+      {
+        "type": "row",
+        "width": 416,
+        "height": 30,
+        "children": [
+          {"type": "label", "text": "Hong Kong", "font": "medium", "width": 350},
+          {"type": "button", "text": "\u21bb", "width": 44, "height": 40}
+        ]
+      },
+      {
+        "type": "container",
+        "id": "weather_hero",
+        "width": 416,
+        "height": 168,
+        "flex_direction": "row",
+        "style": {"bg_color": 1840947, "radius": 8, "padding": 12},
+        "children": [
+          {
+            "type": "col",
+            "width": 280,
+            "children": [
+              {"type": "label", "text": "24 C", "font": "display", "style": {"text_color": 16777215}},
+              {"type": "label", "text": "Partly cloudy", "font": "medium", "style": {"text_color": 13296094}}
+            ]
+          },
+          {"type": "image", "src": "assets/weather.cr16", "scale": 7, "width": 84, "height": 84}
+        ]
+      },
+      {
+        "type": "row",
+        "width": 416,
+        "height": 88,
+        "children": [
+          {"type": "container", "width": 202, "height": 88, "flex_direction": "column", "style": {"bg_color": 1840947, "radius": 8, "padding": 8}, "children": [{"type": "label", "text": "HUMIDITY", "font": "caption", "style": {"text_color": 8161437}}, {"type": "label", "text": "68%", "font": "medium"}]},
+          {"type": "container", "width": 202, "height": 88, "flex_direction": "column", "style": {"bg_color": 1840947, "radius": 8, "padding": 8}, "children": [{"type": "label", "text": "WIND", "font": "caption", "style": {"text_color": 8161437}}, {"type": "label", "text": "12 km/h", "font": "medium"}]}
+        ]
+      },
+      {"type": "label", "text": "Updated just now", "font": "caption", "style": {"text_color": 8161437}}
+    ]
+  }
+}

@@ -16,6 +16,8 @@ void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook);
 class CrystalApp;
 using crystal_app_cleanup_hook_t = void (*)(CrystalApp *app);
 void crystal_app_set_cleanup_hook(crystal_app_cleanup_hook_t hook);
+using crystal_app_log_hook_t = void (*)(const char *app_id, const char *line);
+void crystal_app_set_log_hook(crystal_app_log_hook_t hook);
 
 class CrystalState final {
 public:

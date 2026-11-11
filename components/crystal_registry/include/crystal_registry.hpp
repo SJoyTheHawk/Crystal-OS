@@ -32,6 +32,9 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
 // Install newly enabled catalog entries into the running phone. Disabling an
 // app remains a reboot-time change because the launcher owns its live removal.
 bool crystal_registry_apply_changes(void);
+// Refresh the merged catalog after package-store changes without touching the
+// live LVGL app manager. Safe for read-only control-plane requests.
+void crystal_registry_refresh_catalog(void);
 
 // Full validated firmware catalog, including disabled and failed-install apps,
 // in table order. Entry pointers remain valid until the next install() call;

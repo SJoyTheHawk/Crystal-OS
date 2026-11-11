@@ -210,6 +210,11 @@ bool crystal_registry_apply_changes(void)
     return ok;
 }
 
+void crystal_registry_refresh_catalog(void)
+{
+    sync_package_catalog();
+}
+
 bool crystal_registry_install(ESP_Brookesia_Phone *phone,
                               const CrystalAppEntry *entries, size_t count)
 {

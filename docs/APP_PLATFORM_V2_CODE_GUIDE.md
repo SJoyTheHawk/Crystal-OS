@@ -1,7 +1,7 @@
 # Crystal OS App Platform — v2 Code Guide
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phases 15–17 pending  
+**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
 **Date:** 2026-11-11  
 **Audience:** Developers writing Phase 14-17 code, agents implementing the architecture
 
@@ -73,12 +73,11 @@ crystal pack ./com.example.clock3p/
   # Hashes each file, signs with developer key
   # Emits: com.example.clock3p-1.0.0.capp
 
-# Install over USB (unsigned, dev mode only)
-crystal install --usb ./com.example.clock3p/
-  # Opens pairing dialog if not yet paired
-  # Streams folder contents to device
-  # Device writes to /apps/.staging/
-  # On completion, device verifies and renames to /apps/<id>/
+# Install over USB (unsigned, developer mode only)
+crystal pack ./com.example.clock3p/ --unsigned -o /tmp/clock3p.capp
+crystal install --usb --port /dev/cu.usbmodem101 /tmp/clock3p.capp
+  # Device accepts CRYSTAL/1 framing and writes through /apps/.staging/
+  # On completion, the package is verified and atomically published
 
 # Run: pack + install + launch + log stream
 crystal run ./com.example.clock3p/
@@ -855,7 +854,7 @@ public:
       {
         "type": "button",
         "text": "OK",
-        "on_click": "navigate('home')"
+        "on_click": "timer.reset"
       }
     ]
   }
@@ -873,8 +872,7 @@ public:
       {
         "type": "label",
         "text": "{{crystal.service.time.now | format '%H:%M:%S'}}",
-        "font": "large",
-        "refresh_interval_ms": 1000
+        "font": "large"
       },
       {
         "type": "label",
@@ -890,6 +888,8 @@ public:
   }
 }
 ```
+
+Timer actions require `permissions.system_timer: true` in `app.yaml`.
 
 ### 4.3 Declarative App with Conditional Rendering
 
@@ -913,6 +913,38 @@ public:
   }
 }
 ```
+
+### 4.4 Implemented Phase 16 Runtime
+
+The package manifest selects `runtime: declarative` and points `entry` at the
+JSON screen document. A document can name a separate `bindings.json` file.
+The runtime builds a fresh LVGL tree in `onCreate()`, updates bindings once per
+second while visible, stops that timer in `onPause()`, and deletes its tree in
+`onDestroy()`.
+
+Implemented widgets are `container`, `row`, `col`, `scroll_view`, `label`,
+`button`, `button_matrix`, `switch`, `slider`, `arc`, `image`, `list`, `chart`,
+`textarea`, `spinner`, `dialog`, and `tabview` with `tab` children. Images use
+the bounded, package-relative RGB format documented in the dashboard README.
+Lists and charts are statically populated from the document. Layout supports
+width/height/position, flex direction/wrap and gap.
+Styles accept only the documented colors, radius, padding, opacity, font,
+border and text alignment fields. Dynamic bindings update label text or
+visibility and currently resolve time, network state, timer remaining, running
+and paused values. Timer actions are `timer.arm(seconds)`, `timer.pause`,
+`timer.resume`, and `timer.reset`; the package must declare `system_timer`.
+Unknown widgets, styles, expressions and actions fail closed. The runtime does
+not evaluate JavaScript/Lua or expose LVGL pointers to package content.
+
+See [`examples/declarative_dashboard`](../examples/declarative_dashboard) for a
+packable UI and the host package check. The bundled Clock and Calculator UI
+behavior remains in their existing runtimes. Phase 16's bundled-app gate is
+visual UI expressibility, as clarified by the user; Weather data fetching and
+Calculator computation stay with their existing apps. The complete documented
+remaining dynamic property/event APIs, device lifecycle testing and ABI freeze
+remain Phase 16 exit-gate work. Visual layout documents for the bundled apps
+are in [`examples/declarative_dashboard/visual`](../examples/declarative_dashboard/visual),
+and the host integration test launches each document through the production runtime.
 
 ---
 
@@ -1435,27 +1467,30 @@ key still needs configuration.
 
 ### Phase 15 Code Checklist
 
-- [ ] HTTP API endpoints all return JSON with matching schema
-- [ ] Web UI loads and serves static files over WiFi and USB (asset flashed; board HTTP check and USB transport remain)
+- [x] HTTP API endpoints return JSON with matching schema; logs use authenticated SSE
+- [ ] Web UI loads and serves static files over WiFi and USB (WiFi install/actions/logs are implemented; Browser Web Serial remains)
 - [ ] Pairing PIN: generated at enable, displayed on device screen, accepted in external panel (hardware check remains)
 - [ ] Bearer token: exchanged once per PIN, validated on all requests (hardware check remains)
 - [x] Ed25519 package verifier uses configurable trusted public keys and rejects unknown keys; release key is not configured
 - [x] `crystal pack --sign` adds signature to `.capp`; host signature tests pass
 - [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; device browsing remains
-- [ ] `crystal install --usb` streams to `/apps/.staging/` and verifies
-- [ ] `crystal logs -f` tails app stderr in real-time
-- [ ] `crystal run` packs + installs + launches + streams logs end-to-end
-- [ ] Install progress bar: shown for packages > 1 MB, updates smoothly
-- [ ] On-device Manage Apps and external panel agree after edits (no divergence)
+- [x] `crystal install --usb` streams to `/apps/.staging/` and verifies (unsigned developer package installed and reboot-reconciled on the board)
+- [x] `crystal logs -f --wifi URL --token TOKEN` tails authenticated app lifecycle/debug lines in real-time over Wi-Fi
+- [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi
+- [x] Install progress bar: shown during browser uploads, including packages > 1 MB
+- [ ] On-device Manage Apps and external panel agree after edits (hardware consistency check remains)
 
 ### Phase 16 Code Checklist
 
-- [ ] `DeclarativeApp` class inherits from `CrystalApp` and implements lifecycle
-- [ ] `ui.json` parser: creates LVGL objects from JSON structure
-- [ ] Data binding: `{{crystal.service.time.now}}` updates every 1s without callback overhead
-- [ ] Event routing: button clicks → `on_click` actions (system or app-defined)
-- [ ] All bundled app UIs expressible: Clock, Weather, Calculator can be declarative
-- [ ] No ABI additions in this phase: ABI v1 frozen at end
+- [x] `DeclarativeApp` class inherits from `CrystalApp` and implements lifecycle
+- [x] Bounded `ui.json` parser builds the implemented containers, labels, buttons, basic controls, tab views and button matrices
+- [x] Visual widgets: bundled image, list, chart, textarea, spinner and dialog controls
+- [ ] Complete remaining documented property/event APIs, including dynamic list/chart operations and input focus
+- [x] Data binding: time/network/timer values refresh on the visible app timer
+- [x] Event routing: supported controls dispatch allowlisted timer actions
+- [ ] Device lifecycle and binding behavior verified on hardware
+- [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; app behavior remains in existing runtimes
+- [ ] Freeze ABI v1 after implementing and reviewing the documented facade
 
 ### Phase 17 Code Checklist
 

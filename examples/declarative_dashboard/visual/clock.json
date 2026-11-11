@@ -1,0 +1,54 @@
+{
+  "screen": {
+    "type": "container",
+    "id": "clock_screen",
+    "width": 448,
+    "height": 420,
+    "flex_direction": "column",
+    "style": {"bg_color": 1120287, "padding": 0},
+    "children": [
+      {
+        "type": "tabview",
+        "id": "clock_tabs",
+        "width": 448,
+        "height": 380,
+        "children": [
+          {
+            "type": "tab",
+            "id": "clock_tab",
+            "title": "Clock",
+            "children": [
+              {"type": "label", "id": "clock_time", "text": "{{time.now | format '%H:%M:%S'}}", "font": "large", "align": "center", "width": 400, "x": 8, "y": 72, "style": {"text_color": 15198197}},
+              {"type": "label", "text": "Thursday, November 12", "font": "medium", "align": "center", "width": 400, "x": 8, "y": 124},
+              {"type": "label", "text": "Hong Kong (UTC+08:00)", "align": "center", "width": 400, "x": 8, "y": 164}
+            ]
+          },
+          {
+            "type": "tab",
+            "id": "timer_tab",
+            "title": "Timer",
+            "children": [
+              {"type": "arc", "id": "timer_progress", "min": 0, "max": 100, "value": 72, "width": 112, "height": 112, "x": 144, "y": 12},
+              {"type": "label", "text": "04:32", "font": "large", "align": "center", "width": 160, "x": 120, "y": 48},
+              {"type": "label", "text": "Running", "align": "center", "width": 160, "x": 120, "y": 94},
+              {"type": "button_matrix", "buttons": ["30s", "1m", "3m", "5m", "10m", "20m", "30m"], "width": 420, "height": 96, "x": 0, "y": 140},
+              {"type": "row", "x": 0, "y": 248, "children": [{"type": "button", "text": "-30s", "width": 92}, {"type": "button", "text": "Start", "width": 92}, {"type": "button", "text": "Pause", "width": 92}, {"type": "button", "text": "Resume", "width": 92}]},
+              {"type": "button", "text": "Reset", "width": 150, "x": 135, "y": 300}
+            ]
+          },
+          {
+            "type": "tab",
+            "title": "Stopwatch",
+            "children": [
+              {"type": "label", "text": "00:12:48", "font": "large", "align": "center", "width": 400, "x": 8, "y": 52},
+              {"type": "label", "text": "Stopped", "align": "center", "width": 400, "x": 8, "y": 96},
+              {"type": "row", "x": 24, "y": 136, "children": [{"type": "button", "text": "Start/Pause", "width": 122}, {"type": "button", "text": "Lap", "width": 122}, {"type": "button", "text": "Reset", "width": 122}]},
+              {"type": "button", "text": "Resume", "width": 122, "x": 139, "y": 194},
+              {"type": "label", "text": "No laps", "align": "center", "width": 360, "x": 28, "y": 256}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

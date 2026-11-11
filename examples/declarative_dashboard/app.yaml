@@ -1,0 +1,17 @@
+{
+  "abi": 1,
+  "id": "org.crystal.declarative-dashboard",
+  "name": "Status Dashboard",
+  "version": "1.0.0",
+  "min_os": "0.12.14",
+  "author": "Crystal OS",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Declarative example for time, network, and timer service bindings.",
+  "runtime": "declarative",
+  "entry": "ui.json",
+  "bar_style": "dark",
+  "memory_kb": 160,
+  "storage_kb": 64,
+  "worker_threads": 0,
+  "permissions": {"system_timer": true}
+}

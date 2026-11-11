@@ -36,6 +36,10 @@ bool crystal_packages_mount();
 // reconciliation failure, returns false without publishing an incomplete list.
 bool crystal_packages_init(const char *root, CrystalPackageLimits limits, std::string *error);
 const std::vector<CrystalPackageRecord> &crystal_packages();
+// Read immutable package content for a running package app. The path is
+// package-relative and is bounded to keep declarative documents predictable.
+bool crystal_package_read_file(const std::string &id, const std::string &relative,
+                               std::string *out, size_t max_bytes = 32768);
 bool crystal_package_install(FILE *stream, bool developer_mode, std::string *error,
                              crystal_package_verify_t verifier = nullptr);
 bool crystal_package_set_enabled(const std::string &id, bool enabled);

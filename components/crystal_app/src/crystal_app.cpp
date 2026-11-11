@@ -15,6 +15,12 @@
 
 static const char *TAG = "crystal_app";
 
+static crystal_app_log_hook_t s_log_hook = nullptr;
+static void control_log(const char *app_id, const char *line)
+{
+    if (s_log_hook != nullptr) s_log_hook(app_id, line);
+}
+
 namespace {
 constexpr size_t kMaxStateBytes = 2048;
 constexpr size_t kMaxKeyBytes = 7;
@@ -38,6 +44,7 @@ void crystal_app_set_shell_back_hook(crystal_shell_back_hook_t hook)
 }
 
 void crystal_app_set_cleanup_hook(crystal_app_cleanup_hook_t hook) { s_cleanup_hook = hook; }
+void crystal_app_set_log_hook(crystal_app_log_hook_t hook) { s_log_hook = hook; }
 
 CrystalState::CrystalState(const char *app_name, bool package)
     : prefix_("a"), package_(package)
@@ -238,6 +245,7 @@ bool CrystalApp::run()
         if (!enabled || !resources_.report().clean()) return false;
     }
     ESP_LOGI(TAG, "%s lifecycle: onCreate", app_name_.c_str());
+    control_log(package_id_.empty() ? app_name_.c_str() : package_id_.c_str(), "onCreate");
     const uint32_t start = lv_tick_get();
     const bool ok = onCreate();
     const uint32_t elapsed = lv_tick_elaps(start);
@@ -263,6 +271,7 @@ bool CrystalApp::pause()
     }
     assert(is_active());
     ESP_LOGI(TAG, "%s lifecycle: onPause", app_name_.c_str());
+    control_log(package_id_.empty() ? app_name_.c_str() : package_id_.c_str(), "onPause");
     if (!onPause()) {
         ESP_LOGW(TAG, "%s onPause reported failure; continuing teardown", app_name_.c_str());
     }
@@ -274,6 +283,7 @@ bool CrystalApp::resume()
 {
     assert(lifecycle_state_ == LifecycleState::Paused);
     ESP_LOGI(TAG, "%s lifecycle: onResume", app_name_.c_str());
+    control_log(package_id_.empty() ? app_name_.c_str() : package_id_.c_str(), "onResume");
     const uint32_t start = lv_tick_get();
     const bool ok = onResume();
     const uint32_t elapsed = lv_tick_elaps(start);
@@ -295,6 +305,7 @@ bool CrystalApp::close()
         (void)pause();
     }
     ESP_LOGI(TAG, "%s lifecycle: onDestroy", app_name_.c_str());
+    control_log(package_id_.empty() ? app_name_.c_str() : package_id_.c_str(), "onDestroy");
     if (!onDestroy()) {
         ESP_LOGW(TAG, "%s onDestroy reported failure; continuing teardown", app_name_.c_str());
     }
@@ -305,6 +316,7 @@ bool CrystalApp::close()
         if (!crystal_app_verify_cleanup(resources_, &report)) {
             ESP_LOGE(TAG, "%s resources remain: tasks=%zu timers=%zu queues=%zu heap=%zu objects=%zu",
                      package_id_.c_str(), report.tasks, report.timers, report.queues, report.heap_bytes, report.objects);
+            control_log(package_id_.c_str(), "resources remain during teardown");
             (void)crystal_package_set_enabled(package_id_, false);
         }
     }

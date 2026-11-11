@@ -23,6 +23,11 @@ overlays or measure frame pacing on the physical panel.
 
 ## Wi-Fi scan/reconnect regression check
 
+Run `python3 tools/test_crystal_memory.py` to check the production LVGL and
+cJSON allocation paths with capability-checked host heaps under ASan/UBSan.
+It verifies PSRAM allocation, reallocation, failure without internal-RAM
+fallback, and cleanup. It does not measure the board's available memory.
+
 Run `python3 tools/test_crystal_wifi.py` to exercise the production Wi-Fi
 adapter with a scripted host driver under AddressSanitizer and UBSan. It checks
 scanning during saved-network retries and backoff, queued retry callbacks,
@@ -82,6 +87,31 @@ creates the development proof package. `./tools/crystal inspect /tmp/calculator.
 checks the stream layout and CRCs. General YAML and Ed25519 signing use the
 optional dependencies in `requirements-pack.txt`; this JSON-syntax example
 needs only Python's standard library.
+
+For the Phase 16 declarative runtime example, run
+`python3 tools/test_crystal_declarative.py`. It validates the dashboard's
+widget/binding/action references and packs and inspects its `.capp` stream.
+
+The authenticated Wi-Fi developer commands are:
+
+```sh
+./tools/crystal install ./signed.capp --wifi http://DEVICE/ --pin 123456
+./tools/crystal logs -f --wifi http://DEVICE/ --token TOKEN
+./tools/crystal run ./myapp --wifi http://DEVICE/ --pin 123456 --key /secure/package.pem
+./tools/crystal pack ./myapp --unsigned -o /tmp/myapp.capp
+./tools/crystal install --usb --port /dev/cu.usbmodem101 /tmp/myapp.capp
+```
+
+The device must have a matching trusted public key configured for signed
+package installation over Wi-Fi. USB is a physical developer-mode transport;
+it accepts unsigned packages and uses the same atomic installer. Browser Web
+Serial support and hardware transport validation remain open.
+
+Before `install --usb`, exit IDF Monitor with `Ctrl+]` and close other serial
+terminals using the selected port. The installer must have exclusive access to
+the protocol replies. Reopen the monitor after the command returns. A successful
+response with `restart_required: true` means the package is stored; reboot the
+board to load it into the running app registry.
 
 ## Curated online catalog
 

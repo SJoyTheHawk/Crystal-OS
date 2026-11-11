@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "src/crystal_control.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES crystal_hal crystal_registry crystal_signature esp_http_server espressif__cjson esphome__libsodium spiffs
+    REQUIRES crystal_hal crystal_registry crystal_signature crystal_core esp_http_server espressif__cjson esphome__libsodium spiffs esp_driver_usb_serial_jtag
 )

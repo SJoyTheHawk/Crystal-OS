@@ -1,12 +1,20 @@
 # Crystal OS App Platform v2 — Documentation Overview
 
 **Date:** 2026-11-11  
-**Status:** Phase 14 closed; Phase 15 in progress
+**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
 **Documents:** 3 guides + this overview
 
 **Versioning note:** Crystal OS v1 = Phases 1-13 (baseline OS with bundled apps). Crystal OS v2 = Phase 14+ (app platform, publication release). All documents describe v2.
 
-**Phase 14 closure (2026-11-11):** Closed at the user's request after successful firmware builds, host validation, and the Calculator board run. The plan, design, and code checklists are marked complete for the implemented Phase 14 scope. The `crystal_service`/TLS watchdog investigation and deferred hardware checks are tracked separately in [Phase 14 closure notes](PHASE_14_IMPLEMENTATION.md). Phase 15 is in progress: signed package verification and host-side signed catalog tooling are implemented; the local Wi-Fi panel is an early read-only pairing/API slice. USB developer transport, catalog browsing/downloading on-device, app management actions, and broader hardware validation remain open.
+**Phase 14 closure (2026-11-11):** Closed at the user's request after successful firmware builds, host validation, and the Calculator board run. The plan, design, and code checklists are marked complete for the implemented Phase 14 scope. The `crystal_service`/TLS watchdog investigation and deferred hardware checks are tracked separately in [Phase 14 closure notes](PHASE_14_IMPLEMENTATION.md). Phase 15 is in progress: signed package verification, host-side signed catalog tooling, authenticated Wi-Fi control, and the physical USB developer upload path are implemented. Browser Web Serial, on-device catalog browsing, and remaining hardware validation remain open.
+
+**Phase 16 progress (2026-11-12):** The package-backed declarative runtime
+slice builds and has a packable dashboard example. Clock, Weather and
+Calculator visual references launch in production LVGL under the host
+integration suite. Dynamic property/event APIs, device lifecycle checks, and
+the ABI freeze remain open; see the Phase 16 checklists in the plan and code
+guide. Weather fetching and Calculator computation remain in their current
+runtimes, and Weather stays bundled.
 
 ---
 
