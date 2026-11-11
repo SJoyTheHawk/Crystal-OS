@@ -32,6 +32,7 @@ extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 extern void crystal_shell_ota_event();
 extern void crystal_shell_update_failure_event(const char *message);
 extern void crystal_shell_update_success_event();
+extern void crystal_shell_control_start_event(const char pairing_pin[7]);
 
 namespace {
 constexpr size_t kQueueDepth = 12;
@@ -527,6 +528,9 @@ void drain_event_queue(lv_timer_t *)
             crystal_shell_update_failure_event("Update failed, rolled back");
         } else if (message.type == UI_EVT_OTA_SUCCEEDED) {
             crystal_shell_update_success_event();
+        } else if (message.type == UI_EVT_CONTROL_START) {
+            crystal_shell_control_start_event(message.length == 7 ?
+                reinterpret_cast<const char *>(message.data) : nullptr);
         } else if (message.type == UI_EVT_OTA_CHANGED) {
             crystal_update_snapshot_t snapshot = {};
             crystal_update_snapshot(&snapshot);

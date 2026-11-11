@@ -743,6 +743,8 @@ Phases 14-17 build the app platform. Phase 14 is foundational; 15-17 are indepen
 4. Package signature verification (Ed25519)
 5. `crystal` CLI: `pack`, `install --usb`, `logs -f`, `run`
 6. Install progress bar for packages > 1 MB
+7. HTTPS curated catalog using a signed JSON index and separately hosted,
+   prebuilt signed `.capp` downloads (no server-side build service)
 
 **Bus app evidence:** 943 KB stop catalogs alone; realistic data-heavy apps may be 2-5 MB. Progress visibility matters.
 
@@ -944,19 +946,22 @@ Implications:
 
 Recommend: `abi: 1` minimum 18 months; announce `abi: 2` requirements 6 months in advance.
 
-### 15.2 Curated Catalog Transport
+### 15.2 Curated Catalog Transport — resolved before Phase 15
 
-**Decision needed:** Static signed JSON index + CDN packages, or server-side build service?
+**Decision:** Publish a signed JSON catalog and prebuilt, signed `.capp`
+packages on HTTPS static hosting. The user's computer-side catalog client
+fetches the live listing and selected package, so curated listings and app
+releases can change independently of firmware OTA. The downloaded `.capp` is
+then installed onto the device through the developer transport. The project
+does not build apps on a server; maintainers build, review, sign, and upload
+each package and then publish an updated index.
 
-Static catalog (recommended):
-- On-device: fetch catalog.json weekly, show "Updates available" badges.
-- No server build infra needed; nearly zero cost.
-- Curation is manual (better quality control).
-
-Server-side:
-- Automated build, versioning, releases.
-- Requires build infra + deployment process.
-- Scales to arbitrary number of apps, but higher ops cost.
+“Static” describes the files and hosting model, not a catalog embedded in
+firmware or an infrequently updated listing. The catalog URL and release public
+keys are deployment configuration and remain unset until project hosting and
+key ownership are established. The signed document format and host-side
+workflow are defined in [APP_CATALOG_FORMAT.md](APP_CATALOG_FORMAT.md). Device
+firmware verifies package signatures but does not yet fetch the online catalog.
 
 ### 15.3 Native App Isolation
 
@@ -1012,12 +1017,13 @@ curated native resource contract, validation evidence, and deferred follow-ups.
 
 ### Phase 15 Checklist
 
-- [ ] HTTP API endpoints implemented
-- [ ] Web UI static files served over WiFi and USB
-- [ ] Pairing PIN flow working (6-digit code shown on device)
-- [ ] Bearer token exchange and validation
-- [ ] Ed25519 signature verification for packages
-- [ ] `crystal pack --sign` adds signature to `.capp`
+- [x] Local HTTP API scaffold implemented for pairing, app list, and system status; hardware/API validation remains
+- [ ] Web UI static files served over WiFi and USB (WiFi asset serving is implemented; USB transport remains)
+- [ ] Pairing PIN flow working (6-digit code shown on device); hardware flow remains to validate
+- [ ] Bearer token exchange and validation; hardware flow remains to validate
+- [x] Ed25519 signature verification for packages with configurable trusted public keys (release key still needs configuration)
+- [x] `crystal pack --sign` adds signature to `.capp`; host signing and verification tests pass
+- [x] Host tooling signs, lists, and downloads packages from a signed HTTPS catalog; device catalog browsing/downloading remains
 - [ ] `crystal install --usb` pushes folder over CDC-ACM
 - [ ] `crystal logs -f` streams app stderr
 - [ ] `crystal run` installs + launches + logs

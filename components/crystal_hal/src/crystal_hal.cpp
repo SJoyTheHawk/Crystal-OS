@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
+#include <mutex>
 
 #include "esp_app_desc.h"
 #include "esp_err.h"
@@ -255,6 +256,7 @@ public:
 
     void start() override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (started_) {
             return;
         }
@@ -326,13 +328,39 @@ public:
 
     void scan() override
     {
-        if (started_ && enabled_) {
-            (void)esp_wifi_scan_start(nullptr, false);
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+        if (scan_active_) return;
+        scan_count_ = 0;
+        if (!started_ || !enabled_) {
+            notify(ScanDone);
+            return;
+        }
+
+        // A connect attempt owns the driver's scan engine until it finishes.
+        // Give an explicit network scan priority over automatic reconnection.
+        // Hold the same lock as retry_cb so an already dispatched timer cannot
+        // sneak another connect in between disconnect and scan_start.
+        scan_active_ = true;
+        const bool associated = connected();
+        resume_after_scan_ = !associated && last_ssid_[0] != '\0';
+        pending_connect_ = false;
+        if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+        if (!associated) {
+            const esp_err_t err = esp_wifi_disconnect();
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Stopping WiFi connection for scan failed: %s", esp_err_to_name(err));
+            }
+        }
+        const esp_err_t err = esp_wifi_scan_start(nullptr, false);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "WiFi scan failed to start: %s", esp_err_to_name(err));
+            finish_scan();
         }
     }
 
     size_t scan_results(Network *out, size_t capacity) const override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         const size_t count = scan_count_ < capacity ? scan_count_ : capacity;
         if (out != nullptr && count != 0) memcpy(out, scan_results_, count * sizeof(Network));
         return scan_count_;
@@ -340,6 +368,7 @@ public:
 
     void connect(const char *ssid, const char *pass) override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (!started_ || !enabled_ || ssid == nullptr || pass == nullptr) {
             return;
         }
@@ -363,7 +392,7 @@ public:
         backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         // Cancel any in-flight scan; esp_wifi_connect() fails while one is running.
-        (void)esp_wifi_scan_stop();
+        cancel_scan();
         (void)esp_wifi_disconnect();
         if (esp_wifi_set_config(WIFI_IF_STA, &config) == ESP_OK) {
             strlcpy(last_ssid_, ssid, sizeof(last_ssid_));
@@ -378,6 +407,7 @@ public:
 
     void forget() override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (!started_) return;
         pending_connect_ = false;
         retries_ = 0;
@@ -409,6 +439,7 @@ public:
     bool enabled() const override { return enabled_; }
     void set_enabled(bool enabled) override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (enabled == enabled_) return;
         enabled_ = enabled;
         write_enabled(enabled_);
@@ -434,7 +465,7 @@ public:
             // Cancel any in-flight scan and drop its results: they are void once
             // the radio cycles, and a late SCAN_DONE would repopulate the UI with
             // networks from before the toggle.
-            (void)esp_wifi_scan_stop();
+            cancel_scan();
             scan_count_ = 0;
             (void)esp_wifi_disconnect(); (void)esp_wifi_stop(); notify(Disconnected);
         }
@@ -460,6 +491,7 @@ public:
 
     bool set_ip_config(const IpConfig &config) override
     {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (netif_ == nullptr) return false;
         if (config.dhcp) {
             const esp_err_t err = esp_netif_dhcpc_start(netif_);
@@ -486,6 +518,8 @@ public:
             return false;
         }
         if (started_ && enabled_ && last_ssid_[0] != '\0') {
+            cancel_scan();
+            if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
             (void)esp_wifi_disconnect();
             pending_connect_ = false;
             (void)esp_wifi_connect();
@@ -587,13 +621,14 @@ private:
     {
         auto *self = static_cast<DeviceWifi *>(arg);
         if (self == nullptr) return;
+        std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
         if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
             self->has_ip_ = true;
             self->notify(GotIp);
         } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
             self->has_ip_ = false;
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-            if (self->pending_connect_) {
+            if (self->pending_connect_ && !self->scan_active_ && self->enabled_) {
                 self->pending_connect_ = false;
                 const esp_err_t err = esp_wifi_connect();
                 if (err != ESP_OK) {
@@ -608,6 +643,12 @@ private:
             const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
             const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
             if (disconnected != nullptr) ESP_LOGW(TAG, "WiFi disconnected, reason=%u", reason);
+            if (self->scan_active_) {
+                // Includes the intentional disconnect that made room for the
+                // scan, and a link loss during a connected background scan.
+                self->resume_after_scan_ = self->enabled_ && self->last_ssid_[0] != '\0';
+                return;
+            }
             // AUTH_EXPIRE / handshake timeouts are routinely transient, especially
             // on the first attempt after boot while the panel and PSRAM are still
             // settling. Retry ten times before moving to the long reconnect
@@ -628,9 +669,32 @@ private:
             self->retries_ = 0;
             self->notify(self->has_connected_ ? Disconnected : ConnectFailed);
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+            if (self->cancelled_scan_events_ != 0) {
+                --self->cancelled_scan_events_;
+                if (!self->scan_active_) (void)esp_wifi_clear_ap_list();
+                return;
+            }
+            // scan_stop also produces SCAN_DONE. Do not publish cancelled or
+            // radio-off results or let them restart a previous connection.
+            if (!self->scan_active_ || !self->enabled_) {
+                (void)esp_wifi_clear_ap_list();
+                return;
+            }
+            self->scan_count_ = 0;
+            const auto *done = static_cast<const wifi_event_sta_scan_done_t *>(data);
+            if (done != nullptr && done->status != 0) {
+                ESP_LOGW(TAG, "WiFi scan failed, status=%u", static_cast<unsigned>(done->status));
+                (void)esp_wifi_clear_ap_list();
+                self->finish_scan();
+                return;
+            }
             uint16_t count = 0;
-            if (esp_wifi_scan_get_ap_num(&count) != ESP_OK) { self->notify(ScanDone); return; }
-            uint16_t fetch = count < 20 ? count : 20;
+            if (esp_wifi_scan_get_ap_num(&count) != ESP_OK || count == 0) {
+                (void)esp_wifi_clear_ap_list();
+                self->finish_scan();
+                return;
+            }
+            uint16_t fetch = count < kWifiMaxNetworks ? count : kWifiMaxNetworks;
             if (esp_wifi_scan_get_ap_records(&fetch, s_wifi_records) == ESP_OK) {
                 self->scan_count_ = 0;
                 for (uint16_t i = 0; i < fetch && self->scan_count_ < 20; ++i) {
@@ -665,11 +729,41 @@ private:
                         }
                     }
                 }
+            } else {
+                (void)esp_wifi_clear_ap_list();
             }
-            self->notify(ScanDone);
+            self->finish_scan();
         }
         (void)data;
     }
+
+    void finish_scan()
+    {
+        scan_active_ = false;
+        const bool resume = resume_after_scan_;
+        resume_after_scan_ = false;
+        if (resume && started_ && enabled_ && last_ssid_[0] != '\0' && !connected()) {
+            schedule_retry();
+        }
+        // Even start/read failures must finish the UI's "Scanning..." state.
+        notify(ScanDone);
+    }
+
+    void cancel_scan()
+    {
+        const bool was_active = scan_active_;
+        scan_active_ = false;
+        resume_after_scan_ = false;
+        // The accepted scan has one completion event, even if already queued
+        // before scan_stop. Consume it before accepting a newer scan's results.
+        if (was_active) ++cancelled_scan_events_;
+        (void)esp_wifi_scan_stop();
+        if (was_active) {
+            scan_count_ = 0;
+            notify(ScanDone);
+        }
+    }
+
     // Reconnect off the event-loop task: esp_wifi_connect() from inside the
     // disconnect handler re-enters the driver while it is still tearing the
     // previous association down.
@@ -688,7 +782,8 @@ private:
         (void)esp_timer_stop(retry_timer_);
         // Keep the first ten attempts responsive; the long backoff starts only
         // after all ten have failed.
-        (void)esp_timer_start_once(retry_timer_, static_cast<uint64_t>(retries_) * 1000000ULL);
+        const uint8_t delay_seconds = retries_ == 0 ? 1 : retries_;
+        (void)esp_timer_start_once(retry_timer_, static_cast<uint64_t>(delay_seconds) * 1000000ULL);
     }
 
     void schedule_backoff()
@@ -715,7 +810,10 @@ private:
     static void retry_cb(void *arg)
     {
         auto *self = static_cast<DeviceWifi *>(arg);
-        if (self == nullptr || !self->enabled_ || !self->started_) return;
+        if (self == nullptr) return;
+        std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
+        if (!self->enabled_ || !self->started_ || self->scan_active_ ||
+                self->last_ssid_[0] == '\0' || self->connected()) return;
         const esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Retry esp_wifi_connect failed: %s", esp_err_to_name(err));
@@ -725,10 +823,19 @@ private:
 
     void notify(Event event)
     {
-        if (event == GotIp) { has_connected_ = true; retries_ = 0; backoff_index_ = 0; }
+        if (event == GotIp) {
+            has_connected_ = true; retries_ = 0; backoff_index_ = 0;
+            if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
+        }
         if (callback_ != nullptr) callback_(event, callback_context_);
     }
     static constexpr uint8_t kMaxRetries = 10;
+    // UI, ESP event-loop and retry-timer tasks all issue driver operations.
+    // Recursive because startup applies stored IP settings through this class.
+    mutable std::recursive_mutex state_mutex_;
+    bool scan_active_ = false;
+    bool resume_after_scan_ = false;
+    size_t cancelled_scan_events_ = 0;
     esp_netif_t *netif_ = nullptr;
     bool started_ = false;
     bool enabled_ = true;

@@ -25,6 +25,8 @@
 #include "crystal_core.hpp"
 #include "crystal_registry.hpp"
 #include "crystal_package.hpp"
+#include "crystal_signature.hpp"
+#include "crystal_crypto.hpp"
 #include "crystal_shell.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
@@ -115,6 +117,7 @@ static void my_rounder_cb(lv_disp_drv_t *disp_drv, lv_area_t *area)
 extern "C" void app_main(void)
 {
     s_boot_start_us = esp_timer_get_time();
+    require_boot_step(crystal_crypto_init(), "Failed to initialize cryptography");
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -144,6 +147,7 @@ extern "C" void app_main(void)
     // the first frame is fully rendered.
     (void)bsp_display_brightness_set(0);
     crystal_hal_init();
+    require_boot_step(crystal_signature_init(), "Failed to initialize package signature trust store");
     crystal_registry_set_package_factory(make_package_app);
     std::string package_error;
     if (!crystal_packages_mount() ||

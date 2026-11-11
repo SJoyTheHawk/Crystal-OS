@@ -55,3 +55,4 @@ void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 void crystal_shell_ota_event();
 void crystal_shell_update_failure_event(const char *message);
 void crystal_shell_update_success_event();
+void crystal_shell_control_start_event(const char pairing_pin[7]);

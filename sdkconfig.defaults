@@ -14,10 +14,18 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_SPEED_80M=y
 
+# Keep eligible network allocations in PSRAM so HTTP server socket mailboxes
+# and task stacks still have internal RAM during concurrent HTTPS traffic.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
 CONFIG_ESP_CONSOLE_UART_CUSTOM=y
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=2000000
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+
+# Reserve headroom for the opt-in HTTP control panel alongside outbound HTTPS
+# clients. The HTTP server itself needs three sockets before serving clients.
+CONFIG_LWIP_MAX_SOCKETS=16
 
 CONFIG_NVS_ENCRYPTION=y
 CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0

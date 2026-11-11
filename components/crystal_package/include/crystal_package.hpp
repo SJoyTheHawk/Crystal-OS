@@ -23,8 +23,10 @@ struct CrystalPackageLimits {
     size_t memory_bytes = 0, storage_bytes = 0;
     unsigned workers = 4;
 };
-// Future signature verifier consumes the original file (including end marker,
-// excluding the 66-byte trailer). No verifier => signed packages rejected.
+// Verifier consumes the original file (including end marker, excluding the
+// 66-byte trailer). On firmware, a null verifier selects the configured
+// crystal_signature trust store. Host builds without that component reject
+// signed packages unless a test verifier is supplied.
 using crystal_package_verify_t = bool (*)(FILE *, size_t, const uint8_t[64], uint8_t);
 
 bool crystal_package_valid_id(const std::string &id);

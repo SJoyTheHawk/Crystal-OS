@@ -27,6 +27,7 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_OTA_CHANGED,
     UI_EVT_OTA_ROLLED_BACK,
     UI_EVT_OTA_SUCCEEDED,
+    UI_EVT_CONTROL_START,
 };
 
 struct CrystalWeatherReading {

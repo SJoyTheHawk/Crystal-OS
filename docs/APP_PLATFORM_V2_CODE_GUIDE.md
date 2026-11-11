@@ -1418,8 +1418,9 @@ void test_memory_leak_on_destroy() {
 Closed on 2026-11-11. The illustrative function names above are implemented
 through the production package/resource APIs and `tools/test_app_platform_v2.py`.
 See [closure notes](PHASE_14_IMPLEMENTATION.md) for the NVS and native ownership
-adaptations. Host signing is tested; production signature verification remains
-in Phase 15's checklist.
+adaptations. Host signing is tested. Phase 15 now implements package
+verification against a configurable public-key store; the project's release
+key still needs configuration.
 
 - [x] LittleFS factory image generated; successful partition mounting confirmed on the board
 - [x] Boot reconciliation tested with a hand-deleted folder on the host and a persisted package after device reboot
@@ -1435,11 +1436,12 @@ in Phase 15's checklist.
 ### Phase 15 Code Checklist
 
 - [ ] HTTP API endpoints all return JSON with matching schema
-- [ ] Web UI loads and serves static files over WiFi and USB
-- [ ] Pairing PIN: generated at enable, displayed on device screen, accepted in external panel
-- [ ] Bearer token: exchanged once per PIN, validated on all requests
-- [ ] Ed25519 signature verification prevents unsigned packages in production mode
-- [ ] `crystal pack --sign` adds signature to `.capp`
+- [ ] Web UI loads and serves static files over WiFi and USB (asset flashed; board HTTP check and USB transport remain)
+- [ ] Pairing PIN: generated at enable, displayed on device screen, accepted in external panel (hardware check remains)
+- [ ] Bearer token: exchanged once per PIN, validated on all requests (hardware check remains)
+- [x] Ed25519 package verifier uses configurable trusted public keys and rejects unknown keys; release key is not configured
+- [x] `crystal pack --sign` adds signature to `.capp`; host signature tests pass
+- [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; device browsing remains
 - [ ] `crystal install --usb` streams to `/apps/.staging/` and verifies
 - [ ] `crystal logs -f` tails app stderr in real-time
 - [ ] `crystal run` packs + installs + launches + streams logs end-to-end

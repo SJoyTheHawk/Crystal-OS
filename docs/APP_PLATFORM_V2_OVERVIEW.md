@@ -1,12 +1,12 @@
 # Crystal OS App Platform v2 — Documentation Overview
 
 **Date:** 2026-11-11  
-**Status:** Phase 14 closed; Phase 15 next  
+**Status:** Phase 14 closed; Phase 15 in progress
 **Documents:** 3 guides + this overview
 
 **Versioning note:** Crystal OS v1 = Phases 1-13 (baseline OS with bundled apps). Crystal OS v2 = Phase 14+ (app platform, publication release). All documents describe v2.
 
-**Phase 14 closure (2026-11-11):** Closed at the user's request after successful firmware builds, host validation, and the Calculator board run. The plan, design, and code checklists are marked complete for the implemented Phase 14 scope. The `crystal_service`/TLS watchdog investigation and deferred hardware checks are tracked separately in [Phase 14 closure notes](PHASE_14_IMPLEMENTATION.md). Phase 15 is next; it has not started.
+**Phase 14 closure (2026-11-11):** Closed at the user's request after successful firmware builds, host validation, and the Calculator board run. The plan, design, and code checklists are marked complete for the implemented Phase 14 scope. The `crystal_service`/TLS watchdog investigation and deferred hardware checks are tracked separately in [Phase 14 closure notes](PHASE_14_IMPLEMENTATION.md). Phase 15 is in progress: signed package verification and host-side signed catalog tooling are implemented; the local Wi-Fi panel is an early read-only pairing/API slice. USB developer transport, catalog browsing/downloading on-device, app management actions, and broader hardware validation remain open.
 
 ---
 
@@ -206,7 +206,7 @@ These are documented in Implementation Plan §12 and Design Guide §14. Decide b
 | Question | Phase to Decide | Location |
 |----------|-----------------|----------|
 | ABI stability: How long does `abi: 1` live? | Before Phase 16 ships | Plan §12.1 |
-| Curated catalog: Static JSON or server build service? | Before Phase 15 | Plan §12.2 |
+| Curated catalog delivery | Resolved before Phase 15: a computer-side client fetches a manually published, signed JSON catalog and prebuilt `.capp` files over HTTPS; install to device uses the developer transport; no server build service | Plan §12.2 |
 | Native app isolation: Coding rules or force-disable on uninstall? | Before Phase 18 | Plan §12.3 |
 | App lifecycle during OTA: Graceful shutdown or forced termination? | Before Phase 12 OTA ships | Plan §12.4 |
 

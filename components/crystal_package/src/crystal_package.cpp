@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 #include "crystal_package.hpp"
 #include "crystal_hal.hpp"
+#ifdef ESP_PLATFORM
+#include "crystal_signature.hpp"
+#endif
 #include "cJSON.h"
 #include <algorithm>
 #include <array>
@@ -424,6 +427,9 @@ bool crystal_packages_init(const char *root, CrystalPackageLimits limits, std::s
 }
 
 bool crystal_package_install(FILE *stream, bool developer_mode, std::string *error, crystal_package_verify_t verifier) {
+#ifdef ESP_PLATFORM
+    if (verifier == nullptr) verifier = crystal_signature_verify_package;
+#endif
     if (!stream || s_root.empty()) return fail(error, "App storage is unavailable");
     if (s_records.size() >= kAppsMax) return fail(error, "App limit reached");
     const std::string staging = s_root + "/.staging";

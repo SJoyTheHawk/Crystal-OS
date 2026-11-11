@@ -608,9 +608,34 @@ esp_err_t crystal_fs_read(const char *app_id, const char *path,
 
 ## 9. Control Panel Architecture
 
+**Phase 15 implementation status:** The current firmware has an opt-in,
+read-only Wi-Fi panel with pairing and app/system queries. Its page is served
+from the SPIFFS assets partition at the board-configured mount point
+(`CONFIG_BSP_SPIFFS_MOUNT_POINT`, currently `/spiffs`). The handler previously
+used the partition label `/storage` as a path, producing a false missing-page
+error; it now uses the configured mount point. The board has been flashed with that page;
+pairing and browser requests still need a user-driven hardware check. USB
+transfer, management actions, and live catalog browsing are not implemented.
+The HTTP server is limited to four client sockets and lwIP provides sixteen
+total sockets so it can coexist with outbound HTTPS requests. The first socket
+limit adjustment did not resolve device startup: the control socket still
+returned `ENOBUFS` (105). Eligible Wi-Fi/lwIP allocations now prefer PSRAM to
+preserve internal RAM for socket mailboxes and task stacks. Startup logs include
+the socket limits and available internal/PSRAM memory. This memory adjustment
+passed socket creation on the device; the read-only notice does not disable
+the panel. That retest then exposed libsodium's Unix RNG abort during startup.
+The firmware now registers an ESP32 RNG provider before initializing libsodium
+once in early boot, temporarily enabling hardware entropy before RF/ADC startup.
+Pairing uses the live Wi-Fi entropy source; package verification works offline.
+The RNG fix booted on the board. A subsequent enable attempt during HTTPS
+returned `ESP_ERR_HTTPD_TASK`; the temporary 6 KiB startup worker now uses PSRAM
+with matching capability-aware task deletion, leaving internal RAM for the
+8 KiB HTTP server stack. Startup under HTTPS and browser pairing need retesting.
+
 ### 9.1 API-First Design
 
-**Principle:** One JSON API, two transports (WiFi + USB).
+**Target principle:** One JSON API, two transports (WiFi + USB). The Wi-Fi
+transport has an initial read-only implementation; USB remains planned.
 
 **Consequence:** Manage Apps (on-device) and external panel are clients of the same API. They can't disagree.
 
@@ -622,10 +647,9 @@ esp_err_t crystal_fs_read(const char *app_id, const char *path,
 - Served by `esp_http_server` (built-in)
 
 **USB transport:**
-- USB CDC-ACM (serial emulation)
-- Messages framed as JSON with newline delimiters
-- Served by TinyUSB driver
-- Accessible via Web Serial in browser (same web UI, different transport)
+- The ESP32-S3 board exposes its USB Serial/JTAG serial port to the computer.
+- A framed developer protocol and `crystal install --usb` client remain to be implemented.
+- Browser Web Serial support is not implemented.
 
 **Implication:** Developers use the same API whether the device is over WiFi or USB. Seamless.
 
@@ -862,7 +886,8 @@ verification remains a Phase 15 deliverable.
 - [ ] Web UI works over WiFi and USB
 - [ ] Pairing PIN flow generates PIN on device, accepts PIN in external panel
 - [ ] Bearer token validated on every request
-- [ ] Ed25519 signature verification prevents unsigned packages (outside dev mode)
+- [x] Ed25519 package verification uses a configurable trusted public-key store; release key configuration and board package test remain
+- [x] Host CLI signs packages and signs/lists/downloads from the signed HTTPS catalog
 - [ ] Install progress bar shown for packages > 1 MB
 - [ ] On-device Manage Apps and external panel agree after edits
 

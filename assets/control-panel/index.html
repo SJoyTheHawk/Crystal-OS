@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark"><title>Crystal OS Control Panel</title>
+<style>
+:root{font:16px/1.5 system-ui,-apple-system,sans-serif;color:#eef2f7;background:#11151a}*{box-sizing:border-box}body{margin:0 auto;padding:32px 20px;max-width:760px}header{margin:12px 0 28px}h1{font-size:28px;line-height:1.2;margin:0 0 8px}.muted{color:#a4afbc}.card{background:#1c222a;border:1px solid #333c47;border-radius:14px;padding:20px;margin:16px 0}h2{font-size:18px;margin:0 0 12px}input{background:#11151a;color:#fff;border:1px solid #596575;border-radius:8px;padding:11px 13px;font:inherit;letter-spacing:.14em;width:150px}button{background:#3478e5;color:#fff;border:0;border-radius:8px;padding:11px 16px;font:600 15px system-ui,sans-serif;cursor:pointer;margin-left:8px}button.secondary{background:#343d48}.status{min-height:24px;margin-top:10px;color:#b7c4d3}.app{padding:13px 0;border-top:1px solid #333c47}.app:first-child{border-top:0}.app strong{display:block}.tag{font-size:13px;color:#a4afbc}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.metric{background:#11151a;border-radius:8px;padding:12px}.metric span{display:block;color:#a4afbc;font-size:13px}.hidden{display:none}
+</style>
+</head>
+<body>
+<header><h1>Crystal OS</h1><div class="muted">Local device control panel</div></header>
+<section class="card"><h2>Pair this browser</h2><div class="muted">Enter the six-digit code shown on your device. Pairing is one-use.</div><p><input id="pin" inputmode="numeric" maxlength="6" autocomplete="one-time-code" aria-label="Six digit pairing code"><button id="pair">Pair</button></p><div id="pair-status" class="status" role="status"></div></section>
+<section id="device" class="hidden"><section class="card"><h2>Device</h2><div id="system" class="grid"></div><p><button id="refresh" class="secondary">Refresh</button></p></section><section class="card"><h2>Apps</h2><div id="apps" class="muted">Pair to load the installed app list.</div></section></section>
+<script>
+let token='';
+const status=document.querySelector('#pair-status');
+async function api(path){const response=await fetch(path,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'});if(!response.ok)throw Error(response.status===401?'Session expired. Pair again.':`Request failed (${response.status})`);return response.json()}
+function metric(label,value){const item=document.createElement('div');item.className='metric';const name=document.createElement('span');name.textContent=label;const val=document.createElement('strong');val.textContent=value;item.append(name,val);return item}
+async function refresh(){try{const [system,apps]=await Promise.all([api('/api/v1/system'),api('/api/v1/apps')]);const grid=document.querySelector('#system');grid.replaceChildren(metric('Firmware',system.os_version),metric('Free memory',`${system.free_psram_kb} KiB PSRAM`),metric('App storage',`${system.free_storage_kb} KiB free`),metric('Device',system.serial));const list=document.querySelector('#apps');list.replaceChildren();for(const app of apps.apps){const row=document.createElement('div');row.className='app';const name=document.createElement('strong');name.textContent=app.name;const detail=document.createElement('span');detail.className='tag';detail.textContent=`${app.id} · ${app.origin} · ${app.version||'built in'} · ${app.enabled?'enabled':'disabled'}`;row.append(name,detail);list.append(row)}document.querySelector('#device').classList.remove('hidden');status.textContent='Connected to Crystal OS.'}catch(error){token='';document.querySelector('#device').classList.add('hidden');status.textContent=error.message}}
+document.querySelector('#pair').addEventListener('click',async()=>{status.textContent='Pairing…';try{const response=await fetch('/api/v1/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:document.querySelector('#pin').value})});const result=await response.json();if(!response.ok)throw Error(result.error||'Pairing failed');token=result.token;document.querySelector('#pin').value='';await refresh()}catch(error){status.textContent=error.message}});
+document.querySelector('#refresh').addEventListener('click',refresh);
+</script>
+</body>
+</html>

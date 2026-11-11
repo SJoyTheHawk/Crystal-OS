@@ -1,0 +1,19 @@
+menu "Crystal OS"
+
+config CRYSTAL_PACKAGE_TRUSTED_KEY_ID
+    int "Initial trusted app signing key ID"
+    range 1 255
+    default 1
+    help
+        Key ID paired with the initial trusted public key below. Additional
+        keys can be provisioned through crystal_signature_trust_key().
+
+config CRYSTAL_PACKAGE_TRUSTED_PUBLIC_KEY_HEX
+    string "Initial trusted app signing public key (64 hex characters)"
+    default ""
+    help
+        Optional Ed25519 public key in lowercase or uppercase hex. Leave empty
+        until the project has established its release key. Never enter a
+        private signing key here.
+
+endmenu

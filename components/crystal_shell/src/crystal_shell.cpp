@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 #include "crystal_app.hpp"
+#include "crystal_control.hpp"
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_registry.hpp"
@@ -21,6 +22,9 @@ extern "C" void crystal_update_snapshot(crystal_update_snapshot_t *out);
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lvgl.h"
 
@@ -34,6 +38,106 @@ static lv_obj_t *s_ota_progress = nullptr;
 static lv_obj_t *s_ota_percent = nullptr;
 static lv_obj_t *s_update_dialog = nullptr;
 static lv_obj_t *s_update_failure_dialog = nullptr;
+static lv_obj_t *s_control_pair_dialog = nullptr;
+static lv_obj_t *s_developer_tools_page = nullptr;
+static lv_obj_t *s_control_api_row = nullptr;
+static lv_obj_t *s_control_status_label = nullptr;
+static bool s_control_start_pending = false;
+
+static void control_panel_start_worker(void *)
+{
+    char pairing_pin[7] = {};
+    const bool started = crystal_control_enable(pairing_pin);
+    bool posted = false;
+    for (unsigned attempt = 0; attempt < 10 && !posted; ++attempt) {
+        posted = crystal_ui_post(UI_EVT_CONTROL_START,
+            started ? pairing_pin : nullptr, started ? sizeof(pairing_pin) : 0);
+        if (!posted) vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (!posted) {
+        ESP_LOGE(TAG, "Could not report local panel startup result to the UI");
+        if (started) crystal_control_disable();
+    }
+    memset(pairing_pin, 0, sizeof(pairing_pin));
+    vTaskDeleteWithCaps(nullptr);
+}
+
+static void control_pair_dialog_close()
+{
+    if (s_control_pair_dialog != nullptr) {
+        lv_obj_del(s_control_pair_dialog);
+        s_control_pair_dialog = nullptr;
+        crystal_shell_set_modal_open(false);
+    }
+}
+
+static void control_pair_dialog_build(const char *pin, const char *url)
+{
+    control_pair_dialog_close();
+    s_control_pair_dialog = lv_obj_create(lv_layer_top());
+    if (s_control_pair_dialog == nullptr) return;
+    lv_obj_set_size(s_control_pair_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_control_pair_dialog, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_control_pair_dialog, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_control_pair_dialog, 0, 0);
+    lv_obj_add_flag(s_control_pair_dialog, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_control_pair_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_control_pair_dialog);
+    lv_obj_set_size(card, 400, 330);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x59636e), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 22, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(card);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, "Pair Control Panel");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *code = lv_label_create(card);
+    lv_label_set_text(code, pin);
+    lv_obj_set_style_text_color(code, lv_color_hex(0x72a7ff), 0);
+    lv_obj_set_style_text_font(code, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_letter_space(code, 5, 0);
+    lv_obj_align(code, LV_ALIGN_TOP_MID, 0, 55);
+
+    lv_obj_t *detail = lv_label_create(card);
+    lv_obj_set_width(detail, 350);
+    lv_obj_set_height(detail, 75);
+    lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
+    lv_label_set_text_fmt(detail, "Open %s on a computer on this WiFi network.\nThe code expires in 10 minutes and can be used once.", url);
+    lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 112);
+
+    lv_obj_t *notice = lv_label_create(card);
+    lv_label_set_text(notice, "Keep this code private. The panel is available until restart or disabled here.");
+    lv_obj_set_width(notice, 350);
+    lv_label_set_long_mode(notice, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(notice, lv_color_hex(0xf0b35a), 0);
+    lv_obj_set_style_text_align(notice, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(notice, &lv_font_montserrat_14, 0);
+    lv_obj_align(notice, LV_ALIGN_BOTTOM_MID, 0, -54);
+
+    lv_obj_t *done = lv_btn_create(card);
+    lv_obj_set_size(done, 140, 42);
+    lv_obj_align(done, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(done, lv_color_hex(0x3b82f6), 0);
+    lv_obj_t *done_label = lv_label_create(done);
+    lv_label_set_text(done_label, "Done");
+    lv_obj_center(done_label);
+    lv_obj_add_event_cb(done, [](lv_event_t *) { control_pair_dialog_close(); }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_move_foreground(s_control_pair_dialog);
+    crystal_shell_set_modal_open(true);
+}
 
 static void update_failure_dialog_close()
 {
@@ -1870,6 +1974,20 @@ void settings_push_display_power();
 void settings_push_sound();
 void settings_push_region_time();
 void settings_push_system();
+void settings_push_developer_tools();
+
+// Settings supplies its own pressed colors. Do not also inherit the theme's
+// grow/filter animation or its delayed release transition: those briefly
+// expand a dense row over its neighbours and pulse when navigating back.
+void settings_button_feedback(lv_obj_t *button)
+{
+    // Remove theme styles rather than assigning a null transition descriptor:
+    // LVGL 8 dereferences descriptors when changing state.
+    lv_obj_remove_style_all(button);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(button, 8, 0);
+    lv_obj_set_style_text_color(button, lv_color_hex(0xf2f4f7), 0);
+}
 
 lv_obj_t *system_page_push(const char *title)
 {
@@ -1903,6 +2021,7 @@ lv_obj_t *system_page_push(const char *title)
     s_system_page_stack[s_system_page_depth++] = page;
 
     lv_obj_t *back = lv_btn_create(page);
+    settings_button_feedback(back);
     lv_obj_set_size(back, 64, 44);
     lv_obj_set_pos(back, 8, 4);
     lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
@@ -1978,6 +2097,11 @@ void clear_page_cache(lv_obj_t *page)
             crystal_shell_set_modal_open(false);
         }
     }
+    if (page == s_developer_tools_page) {
+        s_developer_tools_page = nullptr;
+        s_control_api_row = nullptr;
+        s_control_status_label = nullptr;
+    }
     if (page == s_location_form.page) s_location_form = {};
     if (page == s_manual_time_form.page) s_manual_time_form = {};
     memset(s_ip_fields, 0, sizeof(s_ip_fields));
@@ -2036,6 +2160,7 @@ void close_settings_and_restore_app()
 lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)
 {
     lv_obj_t *row = lv_btn_create(parent);
+    settings_button_feedback(row);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, 60);
     lv_obj_set_style_radius(row, 0, 0);
@@ -2918,6 +3043,98 @@ void settings_push_system()
     lv_obj_add_event_cb(restart, [](lv_event_t *) { open_restart_confirm(); }, LV_EVENT_CLICKED, nullptr);
 }
 
+void settings_push_developer_tools()
+{
+    lv_obj_t *content = system_page_push("Developer Tools");
+    if (content == nullptr) return;
+    s_developer_tools_page = s_system_page_stack[s_system_page_depth - 1];
+
+    lv_obj_t *status = settings_status_label(content);
+    s_control_status_label = status;
+    lv_label_set_text(status, s_control_start_pending ?
+        "Starting the local control panel..." : "The local API is off until you enable it.");
+    lv_obj_set_style_text_color(status, lv_color_hex(0x91a0b3), 0);
+
+    const bool enabled = crystal_control_enabled();
+    lv_obj_t *api = settings_row(content, "Local Control Panel",
+        s_control_start_pending ? "Starting..." :
+        enabled ? "Enabled for this boot" : "Off - enable to pair a browser");
+    s_control_api_row = api;
+    lv_obj_add_event_cb(api, [](lv_event_t *event) {
+        auto *row = static_cast<lv_obj_t *>(lv_event_get_target(event));
+        auto *status_label = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+        if (s_control_start_pending) {
+            lv_label_set_text(status_label, "Starting the local control panel...");
+            return;
+        }
+        if (crystal_control_enabled()) {
+            crystal_control_disable();
+            settings_row_set_summary(row, "Off - enable to pair a browser");
+            lv_label_set_text(status_label, "Local control panel disabled.");
+            lv_obj_set_style_text_color(status_label, lv_color_hex(0x91a0b3), 0);
+            return;
+        }
+        IWifi *wifi = hal().wifi;
+        if (wifi == nullptr || !wifi->has_ip()) {
+            lv_label_set_text(status_label, "Connect the device to WiFi before enabling the local panel.");
+            lv_obj_set_style_text_color(status_label, lv_color_hex(0xf59e0b), 0);
+            return;
+        }
+        s_control_start_pending = true;
+        settings_row_set_summary(row, "Starting...");
+        lv_label_set_text(status_label, "Starting the local control panel...");
+        lv_obj_set_style_text_color(status_label, lv_color_hex(0x91a0b3), 0);
+        // This temporary worker otherwise competes with the HTTP server's
+        // 8 KiB internal stack while TLS is active. Keep its stack in PSRAM.
+        if (xTaskCreateWithCaps(control_panel_start_worker, "control_start", 6144,
+                        nullptr, 2, nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+            s_control_start_pending = false;
+            settings_row_set_summary(row, "Off - enable to pair a browser");
+            lv_label_set_text(status_label, "Could not start the local panel. Try again.");
+            lv_obj_set_style_text_color(status_label, lv_color_hex(0xf87171), 0);
+            return;
+        }
+    }, LV_EVENT_CLICKED, status);
+
+    (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
+    lv_obj_t *note = settings_status_label(content);
+    lv_label_set_text(note, "The panel is read-only in this build. App installation, logs, and USB transfer are still in progress.");
+    lv_obj_set_style_text_color(note, lv_color_hex(0x91a0b3), 0);
+}
+
+void crystal_shell_control_start_event(const char pairing_pin[7])
+{
+    s_control_start_pending = false;
+    // If the user left Developer Tools while the worker was starting, do not
+    // leave an enabled server running without showing its one-time pairing PIN.
+    if (s_developer_tools_page == nullptr || s_control_api_row == nullptr ||
+            s_control_status_label == nullptr || s_system_page_depth == 0 ||
+            s_system_page_stack[s_system_page_depth - 1] != s_developer_tools_page) {
+        if (pairing_pin != nullptr) crystal_control_disable();
+        return;
+    }
+    if (pairing_pin == nullptr) {
+        settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
+        lv_label_set_text(s_control_status_label, "Could not start the local panel. Try again.");
+        lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0xf87171), 0);
+        return;
+    }
+
+    settings_row_set_summary(s_control_api_row, "Enabled for this boot - tap to disable");
+    lv_label_set_text(s_control_status_label, "Panel enabled. Pair within 10 minutes using the code on screen.");
+    lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0x4ade80), 0);
+
+    IWifi *wifi = hal().wifi;
+    IWifi::IpConfig config = {};
+    char address[24] = {};
+    char url[48] = "http://device/";
+    if (wifi != nullptr && wifi->ip_config(&config)) {
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.ip), address, sizeof(address));
+        snprintf(url, sizeof(url), "http://%s/", address);
+    }
+    control_pair_dialog_build(pairing_pin, url);
+}
+
 void settings_open()
 {
     if (s_system_page_depth != 0) return;
@@ -2951,6 +3168,8 @@ void settings_open()
     lv_obj_add_event_cb(region, [](lv_event_t *) { settings_push_region_time(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *manage = settings_row(content, "Manage Apps", "View installed and available apps");
     lv_obj_add_event_cb(manage, [](lv_event_t *) { manage_apps_page_open(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *developer = settings_row(content, "Developer Tools", "Local control panel and pairing");
+    lv_obj_add_event_cb(developer, [](lv_event_t *) { settings_push_developer_tools(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *system = settings_row(content, "System", hal().system_info != nullptr ? hal().system_info->app_version() : "About and status");
     lv_obj_add_event_cb(system, [](lv_event_t *) { settings_push_system(); }, LV_EVENT_CLICKED, nullptr);
 }

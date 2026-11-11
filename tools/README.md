@@ -21,6 +21,19 @@ page limits, vertical drags, page dots, app taps after settling, returning from
 an app, and teardown during animation. It does not exercise Crystal's shell
 overlays or measure frame pacing on the physical panel.
 
+## Wi-Fi scan/reconnect regression check
+
+Run `python3 tools/test_crystal_wifi.py` to exercise the production Wi-Fi
+adapter with a scripted host driver under AddressSanitizer and UBSan. It checks
+scanning during saved-network retries and backoff, queued retry callbacks,
+connected scans, scan failures, radio-off/forget cancellation, and late scan
+events. It requires a C++17 compiler and does not simulate ESP32 radio timing.
+
+For device verification, boot with a saved SSID out of range and open WiFi
+Networks while it is retrying. Nearby networks should appear; leaving the
+saved credentials in place should still allow reconnection when that SSID
+returns. Also check scanning while connected and toggling Wi-Fi off mid-scan.
+
 ## USB recovery
 
 The recovery tool uses the ESP-IDF build metadata in `build/flasher_args.json`,
@@ -69,6 +82,35 @@ creates the development proof package. `./tools/crystal inspect /tmp/calculator.
 checks the stream layout and CRCs. General YAML and Ed25519 signing use the
 optional dependencies in `requirements-pack.txt`; this JSON-syntax example
 needs only Python's standard library.
+
+## Curated online catalog
+
+The catalog client runs on the user's computer and fetches a manually maintained
+signed JSON index plus prebuilt, signed `.capp` files from HTTPS hosting. The
+host serves files; it does not build apps. The downloaded package is then
+transferred to the device by the developer transport.
+See [`docs/APP_CATALOG_FORMAT.md`](../docs/APP_CATALOG_FORMAT.md) for the schema,
+canonical signature bytes, and publish workflow. The production hosting URL and
+release public keys are deployment configuration and are not checked in.
+
+```sh
+./tools/crystal catalog-sign catalog-source.json \
+  --key /secure/catalog-private.pem --key-id 7 -o public/catalog.json
+./tools/crystal catalog https://apps.example.org/catalog.json \
+  --trusted-key 7=/secure/catalog-public.pem
+./tools/crystal catalog-download https://apps.example.org/catalog.json \
+  org.crystal.example -o ./org.crystal.example.capp \
+  --trusted-catalog-key 7=/secure/catalog-public.pem \
+  --trusted-package-key 12=/secure/package-public.pem
+```
+
+`python3 tools/test_crystal_signatures.py` exercises package and catalog
+signing, key separation, unknown-key rejection, tampering, and HTTPS URL policy.
+`python3 tools/test_crystal_crypto.py` compiles the production ESP32 entropy
+adapter against the bundled libsodium with host RNG doubles. It checks provider
+selection, boot entropy cleanup, repeated initialization, token/PIN generation,
+and an offline RFC 8032 Ed25519 verification/tamper vector. Hardware randomness
+and browser pairing still require a board check.
 
 Run `python3 tools/test_app_platform_v2.py` after ESP-IDF has resolved the
 managed dependencies. It builds the production package store, registry,
