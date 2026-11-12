@@ -15,11 +15,14 @@
         "text": "{{crystal.service.time.now | format '%H:%M:%S'}}",
         "font": "large",
         "align": "center",
-        "style": {"text_color": 15198197}
+        "style": {
+          "text_color": 15198197
+        },
+        "width": 448
       },
       {
         "type": "tabview",
-        "height": 250,
+        "height": 332,
         "children": [
           {
             "type": "tab",
@@ -30,16 +33,24 @@
                 "type": "label",
                 "id": "network_status",
                 "text": "Network: checking",
-                "font": "medium"
+                "font": "medium",
+                "width": 416,
+                "align": "center"
               },
               {
                 "type": "label",
                 "id": "offline_hint",
                 "text": "Connect to Wi-Fi to bring services online.",
                 "visible": true,
-                "style": {"text_color": 8161437}
+                "style": {
+                  "text_color": 8161437
+                },
+                "width": 416,
+                "align": "center"
               }
-            ]
+            ],
+            "flex_direction": "column",
+            "gap": 16
           },
           {
             "type": "tab",
@@ -48,20 +59,69 @@
               {
                 "type": "label",
                 "id": "timer_state",
-                "text": "{{timer.remaining}} seconds · running {{timer.running}}",
-                "font": "medium"
+                "text": "{{timer.remaining}} s remaining",
+                "font": "medium",
+                "width": 416,
+                "align": "center"
+              },
+              {
+                "type": "label",
+                "text": "Running",
+                "visible": "{{timer.running}}",
+                "font": "small",
+                "width": 416,
+                "align": "center",
+                "style": {
+                  "text_color": 5484726
+                }
+              },
+              {
+                "type": "label",
+                "text": "Paused",
+                "visible": "{{timer.paused}}",
+                "font": "small",
+                "width": 416,
+                "align": "center",
+                "style": {
+                  "text_color": 8161437
+                }
               },
               {
                 "type": "row",
-                "gap": 8,
+                "gap": 12,
                 "children": [
-                  {"type": "button", "text": "Start 5 min", "on_click": "timer.arm(300)"},
-                  {"type": "button", "text": "Pause", "on_click": "timer.pause"},
-                  {"type": "button", "text": "Resume", "on_click": "timer.resume"},
-                  {"type": "button", "text": "Reset", "on_click": "timer.reset"}
-                ]
+                  {
+                    "type": "button",
+                    "text": "Start 5 min",
+                    "on_click": "timer.arm(300)",
+                    "width": 196
+                  },
+                  {
+                    "type": "button",
+                    "text": "Pause",
+                    "on_click": "timer.pause",
+                    "width": 196
+                  },
+                  {
+                    "type": "button",
+                    "text": "Resume",
+                    "on_click": "timer.resume",
+                    "width": 196
+                  },
+                  {
+                    "type": "button",
+                    "text": "Reset",
+                    "on_click": "timer.reset",
+                    "width": 196
+                  }
+                ],
+                "width": 416,
+                "height": 100,
+                "flex_wrap": true
               }
-            ]
+            ],
+            "flex_direction": "column",
+            "gap": 12
           },
           {
             "type": "tab",
@@ -69,25 +129,115 @@
             "children": [
               {
                 "type": "scroll_view",
-                "width": 380,
-                "height": 190,
+                "width": 416,
+                "height": 250,
                 "flex_direction": "column",
                 "gap": 8,
                 "children": [
-                  {"type": "button_matrix", "buttons": ["One", "Two", "Three", "\n", "Four", "Five", "Six"], "on_click": "timer.reset", "width": 300, "height": 64},
-                  {"type": "switch", "value": true},
-                  {"type": "slider", "min": 0, "max": 100, "value": 40, "width": 300},
-                  {"type": "image", "id": "sample_image", "src": "assets/weather.cr16", "scale": 3, "width": 36, "height": 36},
-                  {"type": "list", "id": "sample_list", "items": ["Primary item", {"primary": "Rich item", "secondary": "Secondary detail"}], "width": 300, "height": 72},
-                  {"type": "chart", "id": "sample_chart", "chart_type": "line", "point_count": 4, "min": 0, "max": 100, "width": 300, "height": 72, "series": [{"color": 5484726, "values": [10, 40, 25, 70]}]},
-                  {"type": "textarea", "id": "sample_input", "placeholder": "Enter a note", "max_length": 64, "one_line": true, "width": 300, "height": 44},
-                  {"type": "spinner", "id": "sample_spinner", "spin_time": 1000, "arc_length": 60, "width": 32, "height": 32},
-                  {"type": "dialog", "id": "sample_dialog", "title": "Example", "message": "Declarative dialog", "buttons": ["OK", "Cancel"], "visible": false}
+                  {
+                    "type": "button_matrix",
+                    "buttons": [
+                      "One",
+                      "Two",
+                      "Three",
+                      "\n",
+                      "Four",
+                      "Five",
+                      "Six"
+                    ],
+                    "on_click": "timer.reset",
+                    "width": 300,
+                    "height": 96
+                  },
+                  {
+                    "type": "switch",
+                    "value": true
+                  },
+                  {
+                    "type": "slider",
+                    "min": 0,
+                    "max": 100,
+                    "value": 40,
+                    "width": 300
+                  },
+                  {
+                    "type": "image",
+                    "id": "sample_image",
+                    "src": "assets/weather.cr16",
+                    "scale": 3,
+                    "width": 36,
+                    "height": 36
+                  },
+                  {
+                    "type": "list",
+                    "id": "sample_list",
+                    "items": [
+                      "Primary item",
+                      {
+                        "primary": "Rich item",
+                        "secondary": "Secondary detail"
+                      }
+                    ],
+                    "width": 300,
+                    "height": 72
+                  },
+                  {
+                    "type": "chart",
+                    "id": "sample_chart",
+                    "chart_type": "line",
+                    "point_count": 4,
+                    "min": 0,
+                    "max": 100,
+                    "width": 300,
+                    "height": 72,
+                    "series": [
+                      {
+                        "color": 5484726,
+                        "values": [
+                          10,
+                          40,
+                          25,
+                          70
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "textarea",
+                    "id": "sample_input",
+                    "placeholder": "Enter a note",
+                    "max_length": 64,
+                    "one_line": true,
+                    "width": 300,
+                    "height": 44
+                  },
+                  {
+                    "type": "spinner",
+                    "id": "sample_spinner",
+                    "spin_time": 1000,
+                    "arc_length": 60,
+                    "width": 32,
+                    "height": 32
+                  },
+                  {
+                    "type": "dialog",
+                    "id": "sample_dialog",
+                    "title": "Example",
+                    "message": "Declarative dialog",
+                    "buttons": [
+                      "OK",
+                      "Cancel"
+                    ],
+                    "visible": false
+                  }
                 ]
               }
-            ]
+            ],
+            "flex_direction": "column",
+            "gap": 16
           }
-        ]
+        ],
+        "width": 448
       }
     ]
   }

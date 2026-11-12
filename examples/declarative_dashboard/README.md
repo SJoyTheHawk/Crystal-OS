@@ -5,6 +5,11 @@ surface, a three-tab view, live time/network/timer text, conditional offline
 visibility, and timer actions. The app uses only bundled fonts and LVGL
 primitives; its source JSON is ordinary package content.
 
+The dashboard fills the 480×440 app area below the system status bar. The three
+tabs stay on one line, Timer has four 44-pixel-tall buttons in two rows, and
+Controls scrolls vertically to reveal the remaining widgets. The app background
+and tabs use the system's dark surfaces and teal accent.
+
 Package and inspect it with:
 
 ```sh
@@ -15,6 +20,13 @@ python3 tools/crystal inspect /tmp/declarative-dashboard.capp
 Installing an unsigned package requires Developer Mode. The timer buttons
 require `system_timer: true`; the runtime rejects timer actions when that
 permission is absent. This example is not included in the factory app image.
+
+After changing the runtime, flash the application with `idf.py app-flash`.
+After changing this package's JSON, repack it, uninstall the previous Status
+Dashboard from Settings → Manage Apps, and install the new package. A firmware
+app-only flash preserves the installed `.capp`, so it does not update its JSON.
+Close the serial monitor before a USB install and reopen it after the command
+finishes.
 
 The declarative runtime currently supports containers, rows/columns, scroll
 views, labels, buttons, button matrices, switches, sliders, arcs, tab views,

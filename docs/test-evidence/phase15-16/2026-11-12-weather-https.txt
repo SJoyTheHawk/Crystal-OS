@@ -1,0 +1,47 @@
+I (4575) crystal_hal: WiFi initialized: internal=41207 largest_internal=31744
+I (4582) phy_init: phy_version 712,87e8c20e,Apr 13 2026,18:51:10
+I (4655) pm: Frequency switching config: CPU_MAX: 240, APB_MAX: 240, APB_MIN: 240, Light sleep: DISABLED
+I (5900) esp_netif_handlers: sta ip: 192.168.1.158, mask: 255.255.255.0, gw: 192.168.1.1
+I (5900) crystal_core: publishing network connected signal
+I (5902) crystal_core: network connected signal received; starting SNTP
+I (5908) crystal_core: toast queued (1 pending): Connected to WiFi
+I (5909) crystal_core: SNTP request started
+I (6665) crystal_http: request queued id=1 owner=1464156500
+I (6665) crystal_core_http: JSON request queued id=1; service task waiting
+I (6666) crystal_http: request attempt id=1 attempt=1/1
+I (6671) crystal_http: heap before id=1 internal=37707 largest_internal=28672 psram=4478128 largest_psram=4325376
+I (7366) crystal_core: toast displayed: Connected to WiFi
+I (10718) crystal_core: SNTP synchronized system clock and RTC
+I (14228) crystal_http: TLS connected id=1
+I (14566) crystal_http: body allocation id=1 bytes=1024 memory=PSRAM
+I (14566) crystal_http: body received id=1 bytes=468
+I (14571) crystal_http: heap after id=1 internal=36755 largest_internal=21504 psram=4477128 largest_psram=4325376
+I (14577) crystal_http: heap tls-peak id=1 internal=28771 largest_internal=19456 psram=4455740
+I (14584) crystal_http: request completed id=1 attempts=1 elapsed=7918 ms status=200
+I (14592) crystal_http: request callback id=1 error=ESP_OK
+I (14597) crystal_http: stats requests=1 successes=1 retries=0 failures=0 cancelled=0 peak_body=468
+I (14606) crystal_http: stats tls-min internal=28771 largest_internal=19456 psram=4455740
+I (14614) crystal_core_http: JSON request finished id=1 status=200 bytes=468 error=ESP_OK accepted=1
+I (14622) crystal_core: weather fetched: 25.7 C, humidity 53%, code 3, wind 11.0 km/h
+I (14630) crystal_core: Startup: weather step finished; queuing HTTPS smoke test
+I (14650) crystal_http: request queued id=2 owner=1179795789
+I (14651) crystal_http: response released id=1
+I (14651) crystal_http: heap released id=1 internal=36755 largest_internal=21504 psram=4478032
+I (14660) crystal_http: request attempt id=2 attempt=1/1
+I (14665) crystal_http: heap before id=2 internal=36907 largest_internal=21504 psram=4478032 largest_psram=4325376
+I (20093) crystal_http: TLS connected id=2
+I (20125) crystal_http: body allocation id=2 bytes=1024 memory=PSRAM
+I (20130) crystal_http: body received id=2 bytes=577
+I (20135) crystal_http: heap after id=2 internal=36699 largest_internal=21504 psram=4477128 largest_psram=4325376
+I (20137) crystal_http: heap tls-peak id=2 internal=28027 largest_internal=16384 psram=4455600
+I (20144) crystal_http: request completed id=2 attempts=1 elapsed=5484 ms status=200
+I (20151) crystal_http: request callback id=2 error=ESP_OK
+I (20156) crystal_http: stats requests=2 successes=2 retries=0 failures=0 cancelled=0 peak_body=577
+I (20166) crystal_http: stats tls-min internal=28027 largest_internal=16384 psram=4455600
+I (20174) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=5484 ms error=ESP_OK
+I (20182) crystal_core: HTTPS smoke heap id=2 before_internal=36907 before_largest=21504 before_psram=4478032 tls_internal=28027 tls_largest=16384 tls_psram=4455600
+I (20196) crystal_core: HTTPS smoke test passed
+I (20201) crystal_http: response released id=2
+I (20205) crystal_http: heap released id=2 internal=36815 largest_internal=21504 psram=4478156
+I (61467) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 97% (original: 3%)
+I (61492) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 100% (original: 0%)

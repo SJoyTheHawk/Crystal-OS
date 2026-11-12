@@ -248,11 +248,15 @@ bool DeclarativeApp::load_document()
         root_ = nullptr;
         return false;
     }
+    // Dimensions and position are local styles too. Clear the theme before
+    // assigning them, otherwise LVGL resets the root to its default 130x130.
+    lv_obj_remove_style_all(root_);
     lv_obj_set_size(root_, lv_area_get_width(&area), lv_area_get_height(&area));
     lv_obj_set_pos(root_, 0, 0);
-    lv_obj_remove_style_all(root_);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(root_, lv_color_hex(0x11181F), 0);
+    lv_obj_set_style_text_color(root_, lv_color_hex(0xE6EDF5), 0);
+    lv_obj_set_style_text_font(root_, &lv_font_montserrat_20, 0);
     lv_obj_set_style_pad_all(root_, 16, 0);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
     if (!apply_node_options(root_, screen, false)) return false;
@@ -407,6 +411,14 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
     else if (!strcmp(type, "button_matrix")) object = lv_btnmatrix_create(parent);
     else return nullptr;
     if (object == nullptr) return nullptr;
+    if (container) {
+        // Layout groups fill their parent's content width and fit their own
+        // children; scroll views retain scrolling within an explicit height.
+        lv_obj_remove_style_all(object);
+        lv_obj_set_width(object, LV_PCT(100));
+        lv_obj_set_height(object, LV_SIZE_CONTENT);
+        if (strcmp(type, "scroll_view")) lv_obj_clear_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+    }
     // Match the OS's dark slate surfaces and quiet teal accent. Package JSON
     // may refine these through the small style allowlist below.
     lv_obj_set_style_border_width(object, 0, 0);
@@ -423,6 +435,9 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
     } else if (!strcmp(type, "switch")) {
         lv_obj_set_style_bg_color(object, lv_color_hex(0x344553), LV_PART_MAIN);
         lv_obj_set_style_bg_color(object, lv_color_hex(0x53C8B6), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(object, lv_color_hex(0x53C8B6),
+            static_cast<lv_style_selector_t>(static_cast<uint32_t>(LV_PART_INDICATOR) |
+                                            static_cast<uint32_t>(LV_STATE_CHECKED)));
         lv_obj_set_style_bg_color(object, lv_color_hex(0xF4F7FA), LV_PART_KNOB);
     } else if (!strcmp(type, "slider")) {
         lv_obj_set_style_bg_color(object, lv_color_hex(0x344553), LV_PART_MAIN);
@@ -454,6 +469,9 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
         lv_obj_set_style_bg_color(object, lv_color_hex(0x1C2733), LV_PART_MAIN);
         lv_obj_set_style_text_color(object, lv_color_hex(0xE6EDF5), LV_PART_MAIN);
     } else if (!strcmp(type, "button_matrix")) {
+        lv_obj_set_style_pad_all(object, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_row(object, 8, LV_PART_MAIN);
+        lv_obj_set_style_pad_column(object, 8, LV_PART_MAIN);
         lv_obj_set_style_bg_color(object, lv_color_hex(0x11181F), LV_PART_MAIN);
         lv_obj_set_style_bg_color(object, lv_color_hex(0x273541), LV_PART_ITEMS);
         lv_obj_set_style_bg_color(object, lv_color_hex(0x344553),
@@ -468,6 +486,9 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
 
     if (!strcmp(type, "image")) {
         if (!load_image(object, string_field(node, "src"))) return nullptr;
+        // Scale inside the layout's declared bounds. Virtual mode treats an
+        // enlarged object as tiled source space and paints repeated icons.
+        lv_img_set_size_mode(object, LV_IMG_SIZE_MODE_REAL);
         if (field(node, "scale")) {
             double scale = 1;
             if (!finite_number(field(node, "scale"), &scale) || scale < 0.25 || scale > 8) return nullptr;
@@ -502,7 +523,12 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
                 text = primary;
                 if (secondary != nullptr) { text += "\n"; text += secondary; }
             } else return nullptr;
-            if (text.size() > 193 || lv_list_add_btn(object, nullptr, text.c_str()) == nullptr) return nullptr;
+            if (text.size() > 193) return nullptr;
+            lv_obj_t *row = lv_list_add_btn(object, nullptr, text.c_str());
+            if (row == nullptr) return nullptr;
+            lv_obj_set_style_bg_color(row, lv_color_hex(0x1C2733), 0);
+            lv_obj_set_style_bg_color(row, lv_color_hex(0x344553), LV_STATE_PRESSED);
+            lv_obj_set_style_text_color(row, lv_color_hex(0xE6EDF5), 0);
         }
     } else if (!strcmp(type, "chart")) {
         double point_count = 16;
@@ -571,6 +597,7 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
         if (text == nullptr) text = "";
         text_object = !strcmp(type, "button") ? lv_label_create(object) : object;
         lv_label_set_text(text_object, text);
+        if (!strcmp(type, "button")) lv_obj_center(text_object);
         if (field(node, "font") != nullptr) {
             const char *font = string_field(node, "font");
             const lv_font_t *value = font_value(font);
@@ -617,6 +644,12 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
                 if (tab_type == nullptr || strcmp(tab_type, "tab") || title == nullptr || strlen(title) > 24) return nullptr;
                 lv_obj_t *tab = lv_tabview_add_tab(object, title);
                 if (tab == nullptr) return nullptr;
+                lv_obj_set_style_bg_color(tab, lv_color_hex(0x11181F), 0);
+                lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
+                lv_obj_set_style_border_width(tab, 0, 0);
+                lv_obj_set_style_radius(tab, 0, 0);
+                lv_obj_set_style_pad_all(tab, 16, 0);
+                if (!apply_node_options(tab, tab_spec, false)) return nullptr;
                 if (const char *tab_id = string_field(tab_spec, "id")) {
                     if (!*tab_id || strlen(tab_id) > 31) return nullptr;
                     for (const auto &named : named_objects_) if (named.id == tab_id) return nullptr;
@@ -641,6 +674,12 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
             lv_obj_set_style_text_color(tab_buttons, lv_color_hex(0x53C8B6),
                 static_cast<lv_style_selector_t>(static_cast<uint32_t>(LV_PART_ITEMS) |
                                                  static_cast<uint32_t>(LV_STATE_CHECKED)));
+            const auto checked = static_cast<lv_style_selector_t>(
+                static_cast<uint32_t>(LV_PART_ITEMS) | static_cast<uint32_t>(LV_STATE_CHECKED));
+            lv_obj_set_style_bg_color(tab_buttons, lv_color_hex(0x273541), checked);
+            lv_obj_set_style_border_color(tab_buttons, lv_color_hex(0x53C8B6), checked);
+            lv_obj_set_style_border_width(tab_buttons, 2, checked);
+            lv_obj_set_style_border_side(tab_buttons, LV_BORDER_SIDE_BOTTOM, checked);
         } else {
             if (!container) return nullptr;
             cJSON *child = nullptr;

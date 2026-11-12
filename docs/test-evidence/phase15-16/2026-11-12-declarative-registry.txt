@@ -1,0 +1,55 @@
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_declarative.py
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_registry.py
+crystal_registry: failed to save enabled state: <null>
+crystal_registry: failed to save enabled state:
+crystal_registry: failed to save slot: <null>
+crystal_registry: failed to save slot:
+crystal_registry: clock enabled=0 (applies next boot)
+crystal_registry: clock enabled=1 (applies next boot)
+crystal_registry: clock slot=0 (applies next boot)
+crystal_registry: clock slot=42 (applies next boot)
+crystal_registry: clock slot=65535 (applies next boot)
+crystal_registry: org.crystal.phase13.long-app-id enabled=0 (applies next boot)
+crystal_registry: org.crystal.phase13.long-app-id enabled=1 (applies next boot)
+crystal_registry: org.crystal.phase13.long-app-id slot=0 (applies next boot)
+crystal_registry: org.crystal.phase13.long-app-id slot=42 (applies next boot)
+crystal_registry: org.crystal.phase13.long-app-id slot=65535 (applies next boot)
+crystal_registry: failed to save enabled state: clock
+crystal_registry: failed to save slot: clock
+crystal_registry: failed to save enabled state: clock
+crystal_registry: failed to save slot: clock
+crystal_registry: clock slot=42 (applies next boot)
+crystal_registry: clock enabled=1 (applies next boot)
+crystal_registry: installed: dev_tester (slot 0)
+crystal_registry: installed: clock (slot 2)
+crystal_registry: installed: weather (slot 3)
+crystal_registry: installed: calculator (slot 4)
+[0] dev_tester: enabled=1, slot=0
+[1] clock: enabled=1, slot=2
+[2] weather: enabled=1, slot=3
+[3] calculator: enabled=1, slot=4
+crystal_registry: weather enabled=0 (applies next boot)
+crystal_registry: calculator slot=0 (applies next boot)
+crystal_registry: disabled: weather
+crystal_registry: installed: dev_tester (slot 0)
+crystal_registry: installed: calculator (slot 0)
+crystal_registry: installed: clock (slot 2)
+crystal_registry: dev_tester enabled=0 (applies next boot)
+crystal_registry: clock enabled=0 (applies next boot)
+crystal_registry: weather enabled=0 (applies next boot)
+crystal_registry: calculator enabled=0 (applies next boot)
+crystal_registry: disabled: dev_tester
+crystal_registry: disabled: clock
+crystal_registry: disabled: weather
+crystal_registry: disabled: calculator
+crystal_registry: invalid app table entry at index 0
+crystal_registry: invalid app table entry at index 0
+crystal_registry: install failed: dev_tester
+crystal_registry: install failed: clock
+crystal_registry: install failed: weather
+crystal_registry: install failed: calculator
+crystal_registry: disabled: disabled
+crystal_registry: install failed: broken
+crystal_registry: installed: clock (slot 1)
+PASS: registry queries, defaults, enable/slot roundtrips, bounds, storage errors, boot ordering and installfailures
+szemy@MacBook-Air-3 ESP32 Crystal OS %

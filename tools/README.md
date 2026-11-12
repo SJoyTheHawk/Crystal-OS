@@ -149,6 +149,14 @@ installation and lifecycle teardown, malformed packages, resource admission,
 state isolation, and leak refusal. Phase 14 is closed; board evidence and open
 follow-ups are recorded in [Phase 14 closure notes](../docs/PHASE_14_IMPLEMENTATION.md).
 
+The same integration test checks the declarative dashboard's app bounds, tabs,
+Timer button spacing, and scrolling. To save rendered PPM previews of Status,
+Timer, and Controls, run:
+
+```sh
+CRYSTAL_LAYOUT_CAPTURE_DIR="$PWD/.cache/declarative-layout" python3 tools/test_app_platform_v2.py
+```
+
 For the Calculator test on a board already using the Phase 14 partition layout,
 run `idf.py -DCRYSTAL_PHASE14_DEVICE_TEST=ON build app-flash monitor`. It embeds
 a dedicated development fixture, runs 10 install/launch/save/uninstall cycles,
@@ -156,3 +164,36 @@ and reboots once to verify persisted state. Leave the panel untouched and wait
 for `PASS: Phase 14 device test complete`. Turn the cached option off afterward
 with `idf.py -DCRYSTAL_PHASE14_DEVICE_TEST=OFF build app-flash monitor`.
 See the implementation notes for expected logs, reruns, and failure handling.
+
+## Browser control panel
+
+The device serves the self-contained page in assets/control-panel/index.html.
+Its fonts, icons, styles, and scripts require no external downloads. The pairing
+screen and app dashboard adapt to desktop and mobile browsers.
+
+Run the browser regression suite with Node 22+ and Chrome installed:
+
+    node tools/test_control_panel.mjs
+
+Optional desktop/mobile screenshots outside the repository:
+
+    CRYSTAL_PANEL_PREVIEW_DIR=/tmp/crystal-control-panel-preview node tools/test_control_panel.mjs
+
+On macOS the suite uses Google Chrome's standard application path; elsewhere it
+uses google-chrome. Set CHROME_BIN to override it. Tests launch an isolated
+headless browser with simulated API responses; they do not connect to a board.
+Coverage includes pairing, invalid codes, expiry, app actions and confirmation,
+ordering, uploads, errors, log framing, and responsive layouts. Actual device
+pairing, signed-package installation, Safari, and hardware logs remain board
+checks in the Phase 15/16 test guide.
+
+To deploy a page change, close the serial monitor, then run:
+
+    idf.py build
+    idf.py -p /dev/cu.usbmodem1101 storage-flash
+
+The storage-flash target rewrites the system asset partition from assets/. It
+leaves the separate LittleFS app partition and NVS intact. The app-flash target
+alone does not update the page. After flashing, enable Local Control Panel again
+on the device, reload the browser page, and pair with the new code. Use the
+current port if it changes.

@@ -1,0 +1,13 @@
+User-supplied serial output:
+I (1528173) crystal_control: Starting local panel: sockets=16 clients=4 internal=36595 largest_internal=19456 psram=3994460
+I (1528176) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+
+Observed in the user-supplied photo IMG_7914.JPG:
+- Developer Tools displays a Pair Control Panel dialog.
+- A six-digit pairing PIN is visible; its value is omitted from this record.
+- The dialog gives the address http://192.168.1.158/.
+- Displayed instructions say the code expires in 10 minutes and can be used once.
+- The panel is described as available until restart or disabled here.
+
+This confirms startup and displayed pairing details, not browser loading,
+successful PIN exchange, rejection of PIN reuse, or expiry enforcement.

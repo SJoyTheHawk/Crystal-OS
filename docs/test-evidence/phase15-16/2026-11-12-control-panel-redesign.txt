@@ -1,0 +1,37 @@
+Control panel redesign verification — 2026-11-12
+
+Scope: assets/control-panel/index.html, browser regression suite, documentation.
+
+PASS: node tools/test_control_panel.mjs
+Chrome headless, simulated API responses, isolated browser profile.
+Checks: six-digit PIN validation, rejected PIN feedback, successful pairing,
+session expiry, app rendering, enable/disable, disabled launch, order slots,
+destructive-action confirmation/cancellation, queued-action feedback,
+transient server errors preserving the session, authenticated package upload,
+signature rejection, split SSE frames, and desktop/mobile layout overflow.
+No uncaught browser exceptions. Viewports include 1440, 768, 390 and 320 px.
+Desktop pairing/dashboard and mobile pairing/dashboard screenshots reviewed.
+Previews saved outside the repository at /tmp/crystal-control-panel-preview/.
+
+PASS: inline JavaScript syntax parse and node --check tools/test_control_panel.mjs.
+PASS: idf.py build (ESP-IDF v6.1); storage.bin regenerated with the updated page.
+Application size unchanged: 0x2f1000 bytes; app partition 26% free.
+PASS: git diff --check.
+
+These are host checks, not device acceptance tests. No board flash performed.
+Safari, real pairing, signed Wi-Fi install, and live hardware logs must be
+rechecked after storage-flash. Existing physical-device checklist items are
+not marked complete by mocked browser results.
+
+Reference-guided revision — 2026-11-12
+User supplied Genican/esp32s3_ov2640_v3/v3_ino_2/html_pages.h as a visual
+reference. Adopted its compact charcoal panels, blue primary buttons, smaller
+corner radii, bordered header, concise labels, and dense device metrics.
+Replaced the decorative introductory section with a centered pairing form.
+Kept the existing Crystal pairing/API behavior and responsive layouts.
+
+PASS: inline JavaScript parses; git diff --check.
+PASS: node tools/test_control_panel.mjs (isolated Chrome, simulated responses).
+Desktop pairing/dashboard and mobile pairing screenshots visually reviewed.
+Previews: /tmp/crystal-control-panel-reference-preview/.
+No board flash performed; device and Safari acceptance remain pending.

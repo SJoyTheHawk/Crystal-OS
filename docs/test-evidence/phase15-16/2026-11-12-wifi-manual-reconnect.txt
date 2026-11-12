@@ -1,0 +1,9 @@
+I (1396846) crystal_core: publishing network disconnected signal (disconnected)
+W (1396849) crystal_hal: WiFi disconnected, reason=8
+I (1396849) crystal_core: publishing network disconnected signal (disconnected)
+I (1405392) esp_netif_handlers: sta ip: 192.168.1.158, mask: 255.255.255.0, gw: 192.168.1.1
+I (1405392) crystal_core: publishing network connected signal
+I (1405395) crystal_core: network connected signal received; starting SNTP
+I (1405401) crystal_core: SNTP request started
+I (1405411) crystal_core: toast displayed: Connected to WiFi
+I (1409764) crystal_core: SNTP synchronized system clock and RTC

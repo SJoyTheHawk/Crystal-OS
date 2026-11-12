@@ -1,0 +1,11 @@
+User-supplied terminal excerpts collected across messages.
+Explicit numeric exit codes were not included.
+
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 -m py_compile tools/crystal.py
+szemy@MacBook-Air-3 ESP32 Crystal OS % git diff --check
+szemy@MacBook-Air-3 ESP32 Crystal OS %
+
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_signatures.py
+PASS: Ed25519 package and catalog signing, trusted-key lookup, tamper rejection, and HTTPS policy
+szemy@MacBook-Air-3 ESP32 Crystal OS % node -e "const fs=require('fs');const s=fs.readFileSync('assets/control-panel/index.html','utf8').match(/<script>([\\s\\S]*)<\\/script>/)[1];new Function(s);console.log('PASS: control-panel JavaScript parses')"
+PASS: control-panel JavaScript parses

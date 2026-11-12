@@ -1,0 +1,109 @@
+User-supplied cold-boot transcript, recorded 2026-11-12.
+Selected log lines retained below; unchanged initialization lines are omitted.
+Markdown escape backslashes from the pasted message are removed.
+The supplied capture extends through 120251 ms after startup.
+
+I (1199) app_init: Project name:     crystal_os
+I (1203) app_init: App version:      0.12.14
+I (1207) app_init: Compile time:     Nov 12 2026 04:53:57
+I (1212) app_init: ELF file SHA256:  27bdd384f...
+I (1217) app_init: ESP-IDF:          v6.1
+I (1331) crystal_memory: UI and JSON allocators use PSRAM; task stacks remain internal
+I (1361) nvs: NVS partition "nvs" is encrypted.
+I (1361) crash: No coredump found
+W (1363) crystal_core: RTC unavailable or unset; waiting for SNTP
+W (3137) crystal_signature: No initial package signing key configured; signed packages will be rejected
+I (3177) crystal_boot: LittleFS mounted at /littlefs; package storage ready (1 packages)
+I (3394) crystal_registry: installed: org.crystal.declarative-dashboard (slot 16)
+I (3417) crystal_app: Dev Tester lifecycle: onCreate
+I (3588) crystal_control: USB developer transport ready (CRYSTAL/1 INSTALL <bytes>)
+I (3593) crystal_boot: Startup baseline: automatic Phase 14 device test disabled
+I (3882) crystal_boot: first-frame baseline: 2550 ms
+I (3882) crystal_boot: main task stack headroom: 4656 bytes
+I (3954) main_task: Returned from app_main()
+I (4441) crystal_hal: WiFi init: internal=92735 largest_internal=31744 dma=84947 largest_dma=31744 static_rx=10 static_tx=8
+I (4575) crystal_hal: WiFi initialized: internal=41219 largest_internal=31744
+I (6302) esp_netif_handlers: sta ip: 192.168.1.158, mask: 255.255.255.0, gw: 192.168.1.1
+I (6302) crystal_core: publishing network connected signal
+I (6304) crystal_core: network connected signal received; starting SNTP
+I (6311) crystal_core: SNTP request started
+I (6325) crystal_core: toast queued (1 pending): Connected to WiFi
+I (6664) crystal_http: request queued id=1 owner=1464156500
+I (6665) crystal_core_http: JSON request queued id=1; service task waiting
+I (6666) crystal_http: request attempt id=1 attempt=1/1
+I (6671) crystal_http: heap before id=1 internal=37747 largest_internal=28672 psram=4478116 largest_psram=4325376
+I (7383) crystal_core: toast displayed: Connected to WiFi
+I (9236) crystal_http: TLS connected id=1
+I (9527) crystal_http: body allocation id=1 bytes=1024 memory=PSRAM
+I (9527) crystal_http: body received id=1 bytes=468
+I (9531) crystal_http: heap after id=1 internal=36695 largest_internal=19456 psram=4477088 largest_psram=4325376
+I (9537) crystal_http: heap tls-peak id=1 internal=28715 largest_internal=19456 psram=4455716
+I (9546) crystal_http: request completed id=1 attempts=1 elapsed=2881 ms status=200
+I (9552) crystal_http: request callback id=1 error=ESP_OK
+I (9557) crystal_http: stats requests=1 successes=1 retries=0 failures=0 cancelled=0 peak_body=468
+I (9567) crystal_http: stats tls-min internal=28715 largest_internal=19456 psram=4455716
+I (9574) crystal_core_http: JSON request finished id=1 status=200 bytes=468 error=ESP_OK accepted=1
+I (9583) crystal_core: weather fetched: 25.3 C, humidity 56%, code 3, wind 10.8 km/h
+I (9590) crystal_core: Startup: weather step finished; queuing HTTPS smoke test
+I (9598) crystal_http: request queued id=2 owner=1179795789
+I (9605) crystal_http: response released id=1
+I (9607) crystal_http: heap released id=1 internal=36695 largest_internal=19456 psram=4478116
+I (9615) crystal_http: request attempt id=2 attempt=1/1
+I (9621) crystal_http: heap before id=2 internal=36847 largest_internal=19456 psram=4478116 largest_psram=4325376
+I (10394) crystal_core: SNTP synchronized system clock and RTC
+I (10604) crystal_http: request queued id=3 owner=1464156500
+I (10604) crystal_core_http: JSON request queued id=3; service task waiting
+I (16031) crystal_http: TLS connected id=2
+I (16067) crystal_http: body allocation id=2 bytes=1024 memory=PSRAM
+I (16073) crystal_http: body received id=2 bytes=577
+I (16079) crystal_http: heap after id=2 internal=36347 largest_internal=19456 psram=4477116 largest_psram=4325376
+I (16081) crystal_http: heap tls-peak id=2 internal=27667 largest_internal=14848 psram=4455576
+I (16089) crystal_http: request completed id=2 attempts=1 elapsed=6474 ms status=200
+I (16095) crystal_http: request callback id=2 error=ESP_OK
+I (16101) crystal_http: stats requests=3 successes=2 retries=0 failures=0 cancelled=0 peak_body=577
+I (16109) crystal_http: stats tls-min internal=27667 largest_internal=14848 psram=4455576
+I (16117) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=6474 ms error=ESP_OK
+I (16126) crystal_core: HTTPS smoke heap id=2 before_internal=36847 before_largest=19456 before_psram=4478116 tls_internal=27667 tls_largest=14848 tls_psram=4455576
+I (16142) crystal_core: HTTPS smoke test passed
+I (16145) crystal_http: response released id=2
+I (16149) crystal_http: heap released id=2 internal=36463 largest_internal=19456 psram=4478124
+I (16157) crystal_http: request attempt id=3 attempt=1/1
+I (16164) crystal_http: heap before id=3 internal=36463 largest_internal=19456 psram=4478144 largest_psram=4325376
+I (18472) crystal_http: TLS connected id=3
+I (18704) crystal_http: body allocation id=3 bytes=1024 memory=PSRAM
+I (18704) crystal_http: body received id=3 bytes=468
+I (18709) crystal_http: heap after id=3 internal=36135 largest_internal=19456 psram=4477116 largest_psram=4325376
+I (18716) crystal_http: heap tls-peak id=3 internal=28131 largest_internal=18432 psram=4455736
+I (18722) crystal_http: request completed id=3 attempts=1 elapsed=2565 ms status=200
+I (18731) crystal_http: request callback id=3 error=ESP_OK
+I (18736) crystal_http: stats requests=3 successes=3 retries=0 failures=0 cancelled=0 peak_body=577
+I (18744) crystal_http: stats tls-min internal=27667 largest_internal=14848 psram=4455576
+I (18752) crystal_core_http: JSON request finished id=3 status=200 bytes=468 error=ESP_OK accepted=1
+I (18761) crystal_core: weather fetched: 25.3 C, humidity 56%, code 3, wind 10.8 km/h
+I (18769) crystal_http: response released id=3
+I (18772) crystal_http: heap released id=3 internal=36135 largest_internal=19456 psram=4478144
+I (50396) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4477352
+I (51403) crystal_shell: card crossover cancelled; active=1, PSRAM free=4478064
+I (69281) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4477352
+I (69850) crystal_shell: card crossover cancelled; active=1, PSRAM free=4478044
+I (87435) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4477352
+I (88049) crystal_shell: card crossover cancelled; active=1, PSRAM free=4478044
+I (104483) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4477328
+I (105088) crystal_shell: card crossover cancelled; active=1, PSRAM free=4478024
+I (113396) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4477352
+W (114325) esp-brookesia: [esp_brookesia_core_manager.cpp:171](startApp)Running app num(1) is already at the limit, will close the oldest app(2)
+I (114326) crystal_app: Dev Tester lifecycle: onPause
+I (114331) crystal_app: Dev Tester lifecycle: onDestroy
+I (114342) crystal_app: Clock lifecycle: onCreate
+I (114343) crystal_core: timer reset
+I (114392) crystal_shell: active card 2/5: clock
+I (114557) crystal_shell: card crossover committed; active=2, PSRAM free=4471496
+I (115556) crystal_shell: card crossover started: 2 -> 3, PSRAM free=4470668
+W (116480) esp-brookesia: [esp_brookesia_core_manager.cpp:171](startApp)Running app num(1) is already at the limit, will close the oldest app(3)
+I (116481) crystal_app: Clock lifecycle: onPause
+I (116494) crystal_app: Clock lifecycle: onDestroy
+I (116505) crystal_app: Weather lifecycle: onCreate
+I (116535) crystal_shell: active card 3/5: weather
+I (116662) crystal_shell: card crossover committed; active=3, PSRAM free=4477288
+I (119418) crystal_shell: card crossover started: 3 -> 2, PSRAM free=4476460
+I (120251) crystal_shell: card crossover cancelled; active=3, PSRAM free=4477228

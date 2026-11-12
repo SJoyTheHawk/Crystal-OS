@@ -1,0 +1,960 @@
+[ 72%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/ffmpeg/lv_example_ffmpeg_1.c.o
+[ 72%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/ffmpeg/lv_example_ffmpeg_2.c.o
+[ 72%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/freetype/lv_example_freetype_1.c.o
+[ 73%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/gif/img_bulb_gif.c.o
+[ 74%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone_home.cpp.o
+[ 74%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/gif/lv_example_gif_1.c.o
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone.cpp:17:87: warning: 
+      array designators are a C99 extension [-Wc99-designator]
+   17 |   ...ESP_Brookesia_Phone::_default_stylesheet_dark = ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET();
+      |                                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/stylesheet.h:72:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET'
+   72 |         .manager = ESP_BROOKESIA_PHONE_DEFAULT_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/stylesheet.h:51:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_MANAGER_DATA'
+   51 |         .gesture = ESP_BROOKESIA_PHONE_DEFAULT_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/gesture_data.h:65:13: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_GESTURE_DATA'
+   65 |             [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] =                             \
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone.cpp:17:87: warning: 
+      array designators are a C99 extension [-Wc99-designator]
+   17 |   ...ESP_Brookesia_Phone::_default_stylesheet_dark = ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET();
+      |                                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/stylesheet.h:72:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET'
+   72 |         .manager = ESP_BROOKESIA_PHONE_DEFAULT_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/stylesheet.h:51:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_MANAGER_DATA'
+   51 |         .gesture = ESP_BROOKESIA_PHONE_DEFAULT_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/gesture_data.h:74:17: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_GESTURE_DATA'
+   74 |                 [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] = 0,                      \
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone.cpp:17:87: warning: 
+      brace elision for designated initializer is a C99 extension [-Wc99-designator]
+   17 |   ...ESP_Brookesia_Phone::_default_stylesheet_dark = ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET();
+      |                                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/stylesheet.h:70:17: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_STYLESHEET'
+   70 |         .core = ESP_BROOKESIA_PHONE_DEFAULT_DARK_CORE_DATA(),       \
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/core_data.h:78:17: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_CORE_DATA'
+   78 |         .home = ESP_BROOKESIA_PHONE_DEFAULT_DARK_CORE_HOME_DATA(),       \
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/default/dark/core_data.h:21:41: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_DEFAULT_DARK_CORE_HOME_DATA'
+   21 |             .wallpaper_image_resource = NULL,                                           \
+      |                                         ^~~~
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/21/include/__stddef_null.h:21:14: note: 
+      expanded from macro 'NULL'
+   21 | #define NULL __null
+      |              ^~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone.cpp:20:24: warning: 
+      base class 'ESP_Brookesia_StyleSheetTemplate<ESP_Brookesia_PhoneStylesheet_t>' is uninitialized when
+      used here to access
+      'ESP_Brookesia_StyleSheetTemplate<ESP_Brookesia_PhoneStylesheet_t>::_active_stylesheet'
+      [-Wuninitialized]
+   20 |     ESP_Brookesia_Core(_active_stylesheet.core, _home, _manager, display),
+      |                        ^
+[ 74%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/png/img_wink_png.c.o
+[ 74%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/systems/phone/esp_brookesia_phone_manager.cpp.o
+[ 74%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/app_launcher/esp_brookesia_app_launcher.cpp.o
+[ 74%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/png/lv_example_png_1.c.o
+[ 74%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/app_launcher/esp_brookesia_app_launcher_icon.cpp.o
+[ 74%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/gesture/esp_brookesia_gesture.cpp.o
+[ 74%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/qrcode/lv_example_qrcode_1.c.o
+[ 75%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/rlottie/lv_example_rlottie_1.c.o
+4 warnings generated.
+[ 76%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/navigation_bar/esp_brookesia_navigation_bar.cpp.o
+[ 76%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/rlottie/lv_example_rlottie_2.c.o
+[ 76%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/rlottie/lv_example_rlottie_approve.c.o
+[ 76%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/libs/sjpg/lv_example_sjpg_1.c.o
+[ 76%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/fragment/lv_example_fragment_1.c.o
+[ 76%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/fragment/lv_example_fragment_2.c.o
+[ 76%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/recents_screen/esp_brookesia_recents_screen.cpp.o
+[ 77%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/gridnav/lv_example_gridnav_1.c.o
+[ 77%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/gridnav/lv_example_gridnav_2.c.o
+[ 77%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/gridnav/lv_example_gridnav_3.c.o
+[ 77%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/gridnav/lv_example_gridnav_4.c.o
+[ 77%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/recents_screen/esp_brookesia_recents_screen_snapshot.cpp.o
+[ 77%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/status_bar/esp_brookesia_status_bar.cpp.o
+[ 77%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/ime/lv_example_ime_pinyin_1.c.o
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/widgets/navigation_bar/esp_brookesia_navigation_bar.cpp:212:16: warning: 
+      logical not is only applied to the left hand side of this comparison [-Wlogical-not-parentheses]
+  212 |     } else if (!_visual_mode == ESP_BROOKESIA_NAVIGATION_BAR_VISUAL_MODE_HIDE) {
+      |                ^             ~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/widgets/navigation_bar/esp_brookesia_navigation_bar.cpp:212:16: note: 
+      add parentheses after the '!' to evaluate the comparison first
+  212 |     } else if (!_visual_mode == ESP_BROOKESIA_NAVIGATION_BAR_VISUAL_MODE_HIDE) {
+      |                ^                                                             
+      |                 (                                                            )
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/widgets/navigation_bar/esp_brookesia_navigation_bar.cpp:212:16: note: 
+      add parentheses around left hand side expression to silence this warning
+  212 |     } else if (!_visual_mode == ESP_BROOKESIA_NAVIGATION_BAR_VISUAL_MODE_HIDE) {
+      |                ^
+      |                (            )
+[ 77%] Building CXX object CMakeFiles/platform.dir/Users/szemy/Workspace/ESP32_Crystal_OS/components/esp-brookesia/src/widgets/status_bar/esp_brookesia_status_bar_icon.cpp.o
+[ 78%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/ime/lv_example_ime_pinyin_2.c.o
+[ 78%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/imgfont/lv_example_imgfont_1.c.o
+1 warning generated.
+[ 78%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/monkey/lv_example_monkey_1.c.o
+[ 78%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/monkey/lv_example_monkey_2.c.o
+[ 78%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/monkey/lv_example_monkey_3.c.o
+[ 79%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/msg/lv_example_msg_1.c.o
+[ 79%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/msg/lv_example_msg_2.c.o
+[ 79%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/msg/lv_example_msg_3.c.o
+[ 79%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/others/snapshot/lv_example_snapshot_1.c.o
+[ 79%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/porting/lv_port_disp_template.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/porting/lv_port_fs_template.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/porting/lv_port_indev_template.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_1.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_2.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_4.c.o
+[ 80%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_3.c.o
+[ 81%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_5.c.o
+[ 81%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/scroll/lv_example_scroll_6.c.o
+[ 81%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_1.c.o
+[ 81%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_10.c.o
+[ 81%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_11.c.o
+[ 82%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_12.c.o
+[ 82%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_13.c.o
+[ 82%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_14.c.o
+[ 82%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_15.c.o
+[ 82%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_2.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_3.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_4.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_5.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_6.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_7.c.o
+[ 83%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_8.c.o
+[ 84%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/styles/lv_example_style_9.c.o
+[ 84%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/animimg/lv_example_animimg_1.c.o
+[ 84%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/arc/lv_example_arc_1.c.o
+[ 84%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/arc/lv_example_arc_2.c.o
+[ 84%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_1.c.o
+[ 85%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_3.c.o
+[ 85%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_2.c.o
+[ 85%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_4.c.o
+[ 85%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_5.c.o
+[ 85%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/bar/lv_example_bar_6.c.o
+[ 86%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btn/lv_example_btn_1.c.o
+[ 86%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btn/lv_example_btn_2.c.o
+[ 86%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btn/lv_example_btn_3.c.o
+[ 86%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btnmatrix/lv_example_btnmatrix_1.c.o
+[ 86%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btnmatrix/lv_example_btnmatrix_2.c.o
+[ 87%] Linking CXX static library libplatform.a
+[ 87%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/calendar/lv_example_calendar_1.c.o
+[ 88%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/btnmatrix/lv_example_btnmatrix_3.c.o
+[ 88%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/canvas/lv_example_canvas_1.c.o
+[ 88%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_1.c.o
+[ 88%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/canvas/lv_example_canvas_2.c.o
+[ 88%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_2.c.o
+[ 89%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_3.c.o
+[ 89%] Built target platform
+[ 89%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_4.c.o
+[ 89%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_5.c.o
+[ 89%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_6.c.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_8.c.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_7.c.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/chart/lv_example_chart_9.c.o
+[ 90%] Building CXX object CMakeFiles/check.dir/Users/szemy/Workspace/ESP32_Crystal_OS/tools/phase14_check.cpp.o
+[ 90%] Building CXX object CMakeFiles/device_check.dir/Users/szemy/Workspace/ESP32_Crystal_OS/tools/phase14_device_check.cpp.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/checkbox/lv_example_checkbox_1.c.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/checkbox/lv_example_checkbox_2.c.o
+[ 90%] Building CXX object CMakeFiles/device_check.dir/Users/szemy/Workspace/ESP32_Crystal_OS/main/crystal_phase14_device_test.cpp.o
+[ 90%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/colorwheel/lv_example_colorwheel_1.c.o
+[ 91%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/dropdown/lv_example_dropdown_1.c.o
+[ 91%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/dropdown/lv_example_dropdown_2.c.o
+[ 91%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/dropdown/lv_example_dropdown_3.c.o
+[ 91%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/img/lv_example_img_1.c.o
+[ 91%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/img/lv_example_img_2.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/img/lv_example_img_3.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/img/lv_example_img_4.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/imgbtn/lv_example_imgbtn_1.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/label/lv_example_label_1.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/keyboard/lv_example_keyboard_1.c.o
+[ 92%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/label/lv_example_label_2.c.o
+[ 93%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/label/lv_example_label_3.c.o
+[ 93%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/label/lv_example_label_4.c.o
+[ 93%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/label/lv_example_label_5.c.o
+[ 93%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/line/lv_example_line_1.c.o
+[ 93%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/led/lv_example_led_1.c.o
+[ 94%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/list/lv_example_list_1.c.o
+[ 94%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/list/lv_example_list_2.c.o
+[ 94%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/menu/lv_example_menu_1.c.o
+[ 94%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/menu/lv_example_menu_2.c.o
+[ 94%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/menu/lv_example_menu_3.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/menu/lv_example_menu_4.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/menu/lv_example_menu_5.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/meter/lv_example_meter_1.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/meter/lv_example_meter_2.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/meter/lv_example_meter_4.c.o
+[ 95%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/meter/lv_example_meter_3.c.o
+[ 96%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/msgbox/lv_example_msgbox_1.c.o
+[ 96%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/obj/lv_example_obj_1.c.o
+[ 96%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/obj/lv_example_obj_2.c.o
+[ 96%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/roller/lv_example_roller_1.c.o
+[ 96%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/roller/lv_example_roller_2.c.o
+[ 97%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/roller/lv_example_roller_3.c.o
+[ 97%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/slider/lv_example_slider_1.c.o
+[ 97%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/slider/lv_example_slider_3.c.o
+[ 97%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/slider/lv_example_slider_2.c.o
+[ 97%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/span/lv_example_span_1.c.o
+/Users/szemy/Workspace/ESP32 Crystal OS/tools/phase14_device_check.cpp:84:49: warning: 
+      array designators are a C99 extension [-Wc99-designator]
+   84 |         ESP_Brookesia_PhoneStylesheet_t sheet = ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+      |                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:73:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET'
+   73 |         .manager = ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:52:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA'
+   52 |         .gesture = ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/gesture_data.h:65:13: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA'
+   65 |             [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] =                             \
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/tools/phase14_device_check.cpp:84:49: warning: 
+      array designators are a C99 extension [-Wc99-designator]
+   84 |         ESP_Brookesia_PhoneStylesheet_t sheet = ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+      |                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:73:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET'
+   73 |         .manager = ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:52:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA'
+   52 |         .gesture = ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/gesture_data.h:74:17: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA'
+   74 |                 [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] = 0,                      \
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/tools/phase14_check.cpp:290:45: warning: array
+      designators are a C99 extension [-Wc99-designator]
+  290 |     ESP_Brookesia_PhoneStylesheet_t sheet = ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:73:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET'
+   73 |         .manager = ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:52:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA'
+   52 |         .gesture = ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/gesture_data.h:65:13: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA'
+   65 |             [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] =                             \
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/tools/phase14_check.cpp:290:45: warning: array
+      designators are a C99 extension [-Wc99-designator]
+  290 |     ESP_Brookesia_PhoneStylesheet_t sheet = ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:73:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET'
+   73 |         .manager = ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/stylesheet.h:52:20: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_MANAGER_DATA'
+   52 |         .gesture = ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA(), \
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/szemy/Workspace/ESP32 Crystal OS/components/esp-brookesia/src/systems/phone/stylesheets/480_480/dark/gesture_data.h:74:17: note: 
+      expanded from macro 'ESP_BROOKESIA_PHONE_480_480_DARK_GESTURE_DATA'
+   74 |                 [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_LEFT] = 0,                      \
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[ 98%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/spinbox/lv_example_spinbox_1.c.o
+[ 98%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/switch/lv_example_switch_1.c.o
+[ 98%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/spinner/lv_example_spinner_1.c.o
+[ 98%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/table/lv_example_table_1.c.o
+[ 98%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/table/lv_example_table_2.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/tabview/lv_example_tabview_1.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/tabview/lv_example_tabview_2.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/textarea/lv_example_textarea_1.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/textarea/lv_example_textarea_2.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/textarea/lv_example_textarea_3.c.o
+[ 99%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/tileview/lv_example_tileview_1.c.o
+[100%] Building C object lvgl/CMakeFiles/lvgl_examples.dir/examples/widgets/win/lv_example_win_1.c.o
+[100%] Linking C static library liblvgl_examples.a
+2 warnings generated.
+[100%] Linking CXX executable device_check
+[100%] Built target lvgl_examples
+2 warnings generated.
+[100%] Linking CXX executable check
+[100%] Built target device_check
+[100%] Built target check
+PASS: package bounds, CRC, traversal, duplicates, reserved paths, ABI, permissions, quotas, signature rejection, rollback, staging and persistence
+PASS: per-instance resource ownership, typed/stale handles, memory and worker ceilings, task/timer/queue/object/allocation leak scans
+[INFO] [esp_brookesia_core.cpp:204](beginCore): Library version: 0.4.1
+installed: calculator (slot 4)
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+PASS: real Calculator package 10 install/uninstall cycles, 100 launches with production LVGL/Brookesia, zero tracked leaks, builtin state preserved
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+PASS: enable/disable with a live UI and uninstall while the package is running
+Applying registry changes live
+Installing org.crystal.declarative-dashboard
+[WARN] [esp_brookesia_phone_home.cpp:119](processAppInstall): No launcher icon provided, use default icon
+Applied org.crystal.declarative-dashboard live at slot 16
+Status Dashboard lifecycle: onCreate
+Status Dashboard lifecycle: onPause
+Status Dashboard lifecycle: onDestroy
+Status Dashboard lifecycle: onCreate
+Status Dashboard lifecycle: onPause
+Status Dashboard lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.declarative-denied
+[WARN] [esp_brookesia_phone_home.cpp:119](processAppInstall): No launcher icon provided, use default icon
+Applied org.crystal.declarative-denied live at slot 16
+Denied Dashboard lifecycle: onCreate
+org.crystal.declarative-denied: timer action rejected; package lacks system_timer permission
+Denied Dashboard lifecycle: onPause
+Denied Dashboard lifecycle: onDestroy
+PASS: declarative package fills the app area, lays out tabs/buttons/scrolling without overlap, binds live data/visibility, routes permitted timer events, and cleans up across reopen
+Applying registry changes live
+Installing org.crystal.visual-clock
+[WARN] [esp_brookesia_phone_home.cpp:119](processAppInstall): No launcher icon provided, use default icon
+Applied org.crystal.visual-clock live at slot 16
+Clock Visual Reference lifecycle: onCreate
+Clock Visual Reference lifecycle: onPause
+Clock Visual Reference lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.visual-weather
+[WARN] [esp_brookesia_phone_home.cpp:119](processAppInstall): No launcher icon provided, use default icon
+Applied org.crystal.visual-weather live at slot 16
+Weather Visual Reference lifecycle: onCreate
+Weather Visual Reference lifecycle: onPause
+Weather Visual Reference lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.visual-calculator
+[WARN] [esp_brookesia_phone_home.cpp:119](processAppInstall): No launcher icon provided, use default icon
+Applied org.crystal.visual-calculator live at slot 16
+Calculator Visual Reference lifecycle: onCreate
+Calculator Visual Reference lifecycle: onPause
+Calculator Visual Reference lifecycle: onDestroy
+PASS: Clock, Weather and Calculator visual references build, launch, and clean up using production LVGL
+Applying registry changes live
+Installing org.crystal.calculator
+Applied org.crystal.calculator live at slot 16
+Resources still active; app disabled and data retained
+PASS: leak blocks uninstall, disables app and retains data; hand-deleted folder prunes metadata and all package state
+[INFO] [esp_brookesia_core.cpp:204](beginCore): Library version: 0.4.1
+installed: calculator (slot 4)
+Calculator lifecycle: onCreate
+Calculator lifecycle: onPause
+Calculator lifecycle: onDestroy
+Starting Phase 14 device test (run 1). Leave the display untouched; one automatic reboot is expected.
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 1/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 2/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 3/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 4/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 5/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 6/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 7/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 8/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 9/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 10/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: formula saved. Rebooting once to verify persistence.
+[INFO] [esp_brookesia_core.cpp:204](beginCore): Library version: 0.4.1
+installed: calculator (slot 4)
+installed: org.crystal.phase14.calculator (slot 16)
+Calculator Test lifecycle: onCreate
+Resuming Phase 14 device test after reboot
+PASS: formula and result restored after reboot
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: Phase 14 device test complete (run 1). 10 cycles, reboot persistence, fresh state and cleanup verified.
+PASS: Phase 14 device test was already completed (run 1). Increase CRYSTAL_PHASE14_DEVICE_TEST_RUN to repeat.
+PASS: production device harness, 10 cycles, UI formula/result restoration, simulated reboot, state deletionand completed-run guard
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+FAIL: Calculator Test already exists; remove it explicitly before starting a new run (cycle 0, step 0). Test stopped; inspect before retrying.
+PASS: harness refuses a pre-existing fixture ID and preserves its state
+Starting Phase 14 device test (run 3). Leave the display untouched; one automatic reboot is expected.
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 1/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 2/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 3/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 4/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 5/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 6/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 7/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 8/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 9/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: cycle 10/10 install/launch/save/reopen/uninstall; zero tracked leaks
+Applying registry changes live
+Installing org.crystal.phase14.calculator
+Applied org.crystal.phase14.calculator live at slot 16
+PASS: installed Calculator Test from embedded .capp
+Calculator Test lifecycle: onCreate
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: formula saved. Rebooting once to verify persistence.
+[INFO] [esp_brookesia_core.cpp:204](beginCore): Library version: 0.4.1
+installed: calculator (slot 4)
+installed: org.crystal.phase14.calculator (slot 16)
+Calculator Test lifecycle: onCreate
+FAIL: Package, saved formula or builtin state did not survive reboot (cycle 10, step 0). Test stopped; inspect before retrying.
+FAIL: Previous test was interrupted or failed. Inspect it, then use a new run ID. (cycle 10, step 0). Test stopped; inspect before retrying.
+Calculator Test lifecycle: onPause
+Calculator Test lifecycle: onDestroy
+PASS: corrupt reboot state fails, retains package for inspection, and cannot cause a reboot loop
+szemy@MacBook-Air-3 ESP32 Crystal OS % 

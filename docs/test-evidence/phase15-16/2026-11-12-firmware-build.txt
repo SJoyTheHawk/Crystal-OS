@@ -1,0 +1,28 @@
+szemy@MacBook-Air-3 ESP32 Crystal OS % idf.py build
+echo "Exit code: $?"
+Executing action: all (aliases: build)
+Running ninja in directory '/Users/szemy/Workspace/ESP32 Crystal OS/build'
+Executing "ninja all"...
+[1/6] cd "/Users/szemy/Workspace/ESP32 Crystal OS/bu...my/Workspace/ESP32\ Crystal\ OS/build/crystal_os.bin
+crystal_os.bin binary size 0x2f1000 bytes. Smallest app partition is 0x400000 bytes. 0x10f000 bytes (26%) free.
+[1/1] cd "/Users/szemy/Workspace/ESP32 Crystal OS/bu...e/ESP32\ Crystal\ OS/build/bootloader/bootloader.bin
+Bootloader binary size 0x58b0 bytes. 0x2750 bytes (31%) free.
+[6/6] cd "/Users/szemy/Workspace/ESP32 Crystal OS/bu...v --fs-size=0x580000 --name-max=64 --block-size=4096
+LittleFS Configuration:
+  Block Size:       4096  /  0x1000
+  Image Size:    5767168  /  0x580000
+  Block Count:      1408
+  Name Max:           64
+  Image:       /Users/szemy/Workspace/ESP32 Crystal OS/build/apps.bin
+Adding Directory: apps
+Adding File:      apps/.keep
+
+Project build complete. To flash, run:
+ idf.py flash
+or
+ idf.py -p PORT flash
+or
+ python -m esptool --chip esp32s3 -b 460800 --before default-reset --after hard-reset write-flash --flash-mode dio --flash-size keep --flash-freq 80m 0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/ota_data_initial.bin 0x30000 build/crystal_os.bin 0x830000 build/storage.bin 0xa30000 build/apps.bin
+or from the "/Users/szemy/Workspace/ESP32 Crystal OS/build" directory
+ python -m esptool --chip esp32s3 -b 460800 --before default-reset --after hard-reset write-flash "@flash_args"
+Exit code: 0

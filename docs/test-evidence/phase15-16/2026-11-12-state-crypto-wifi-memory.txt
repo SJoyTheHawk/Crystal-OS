@@ -1,0 +1,115 @@
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_state.py
+crystal_app: Failure fixture lifecycle: onCreate
+crystal_app: Failure fixture lifecycle: onCreate
+PASS: failed onCreate cleans resources exactly once per attempt
+crystal_app: Cleared 0 keys under prefix 'a1abee9.'
+crystal_app: Cleared 3 keys under prefix 'a1abee9.'
+crystal_app: Cleared 0 keys under prefix 'a1abee9.'
+crystal_app: clear 'a1abee9.': nvs_open failed: injected error
+crystal_app: clear 'a1abee9.': NVS enumeration failed: injected error
+crystal_app: clear 'a1abee9.': NVS enumeration failed: injected error
+crystal_app: clear 'a1abee9.': NVS enumeration failed: injected error
+crystal_app: clear 'a1abee9.': erase a1abee9.counter failed: injected error
+crystal_app: clear 'a1abee9.': nvs_commit failed: injected error
+crystal_app: Cleared 0 keys under prefix 'a1abee9.'
+PASS: CrystalState clear, prefix/namespace isolation, empty/repeated clear, reuse, storage failures and resource cleanup
+crystal_app: Cleared 0 keys under prefix 'a219b6d.'
+crystal_app: Calculator lifecycle: onCreate
+crystal_app: Calculator lifecycle: onPause
+crystal_app: Calculator lifecycle: onDestroy
+crystal_app: Cleared 2 keys under prefix 'a219b6d.'
+crystal_app: clear 'a219b6d.': nvs_open failed: injected error
+crystal_app: Cleared 0 keys under prefix 'a219b6d.'
+PASS: app clear lifecycle guard, stop-before-erase, reset hook, constructor namespace and retry
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_crypto.py
+PASS: ESP32 provider, boot entropy lifecycle, idempotence, pairing randomness, offline Ed25519 and tamper rejection
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_wifi.py
+Wi-Fi scan/reconnect regression checks passed
+szemy@MacBook-Air-3 ESP32 Crystal OS % python3 tools/test_crystal_memory.py
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:127:5: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+  127 |     sprintf(version, "%i.%i.%i", CJSON_VERSION_MAJOR, CJSON_VERSION_MINOR, CJSON_VERSION_PATCH);
+      |     ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:614:18: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+  614 |         length = sprintf((char*)number_buffer, "null");
+      |                  ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:618:18: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+  618 |         length = sprintf((char*)number_buffer, "%d", item->valueint);
+      |                  ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:623:18: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+  623 |         length = sprintf((char*)number_buffer, "%1.15g", d);
+      |                  ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:629:22: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+  629 |             length = sprintf((char*)number_buffer, "%1.17g", d);
+      |                      ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+/Users/szemy/Workspace/ESP32 Crystal OS/managed_components/espressif__cjson/cJSON/cJSON.c:1063:21: warning: 
+      'sprintf' is deprecated: This function is provided for compatibility reasons only. Due to security
+      concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3)
+      instead. [-Wdeprecated-declarations]
+ 1063 |                     sprintf((char*)output_pointer, "u%04x", *input_pointer);
+      |                     ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 
+      'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concern...
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: 
+      expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+6 warnings generated.
+PASS: LVGL/JSON PSRAM caps, realloc preservation, allocation failure without internal fallback, and cleanup
+szemy@MacBook-Air-3 ESP32 Crystal OS % 

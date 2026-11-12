@@ -2,6 +2,7 @@
 // Host integration: production package store, registry, Calculator, Brookesia and LVGL.
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -64,7 +65,31 @@ static bool install(const char *name, bool developer = true) {
     bool ok = crystal_package_install(f, developer, &error); fclose(f); return ok;
 }
 static void settle() { for (int i = 0; i < 45; ++i) { lv_tick_inc(10); lv_timer_handler(); } }
-static void flush(lv_disp_drv_t *driver, const lv_area_t *, lv_color_t *) { lv_disp_flush_ready(driver); }
+static lv_color_t frame[480 * 480];
+static void flush(lv_disp_drv_t *driver, const lv_area_t *area, lv_color_t *pixels) {
+    for (int y = area->y1; y <= area->y2; ++y) {
+        for (int x = area->x1; x <= area->x2; ++x) {
+            if (x >= 0 && x < 480 && y >= 0 && y < 480) frame[y * 480 + x] = *pixels;
+            ++pixels;
+        }
+    }
+    lv_disp_flush_ready(driver);
+}
+static void capture_dashboard(lv_disp_t *display, const char *name) {
+    const char *directory = std::getenv("CRYSTAL_LAYOUT_CAPTURE_DIR");
+    if (!directory) return;
+    fs::create_directories(directory);
+    lv_obj_invalidate(lv_scr_act()); lv_obj_invalidate(lv_layer_top());
+    lv_refr_now(display);
+    std::ofstream file(fs::path(directory) / name, std::ios::binary);
+    assert(file); file << "P6\n480 480\n255\n";
+    for (const lv_color_t pixel : frame) {
+        lv_color32_t color; color.full = lv_color_to32(pixel);
+        const char rgb[] = {static_cast<char>(color.ch.red), static_cast<char>(color.ch.green), static_cast<char>(color.ch.blue)};
+        file.write(rgb, sizeof(rgb));
+    }
+    assert(file.good());
+}
 static void read_touch(lv_indev_drv_t *, lv_indev_data_t *data) { data->state = LV_INDEV_STATE_RELEASED; data->point = {0, 0}; }
 static CrystalApp *factory(const CrystalPackageManifest &m) {
     if (m.id == "org.crystal.calculator" && m.runtime == "native" && m.entry == "calculator.native")
@@ -126,6 +151,12 @@ static void click_button_text(lv_disp_t *display, const char *text) {
     lv_obj_t *button = lv_obj_get_parent(label);
     assert(button != nullptr);
     lv_event_send(button, LV_EVENT_CLICKED, nullptr);
+}
+static void assert_inside(lv_obj_t *child, lv_obj_t *parent) {
+    lv_area_t box{}, bounds{};
+    lv_obj_get_coords(child, &box); lv_obj_get_content_coords(parent, &bounds);
+    assert(box.x1 >= bounds.x1 && box.x2 <= bounds.x2);
+    assert(box.y1 >= bounds.y1 && box.y2 <= bounds.y2);
 }
 int main(int argc, char **argv) {
     assert(argc == 3); fixtures = argv[1]; const fs::path root = argv[2];
@@ -303,6 +334,45 @@ int main(int argc, char **argv) {
     assert(phone.sendAppEvent(&declarative_start)); settle();
     assert(phone.getManager().getActiveApp() == declarative);
     assert(declarative->resources().report().objects == 1 && declarative->resources().report().timers == 1);
+    lv_obj_t *dashboard_tabs = find_object_type(lv_scr_act(), &lv_tabview_class);
+    assert(dashboard_tabs);
+    lv_obj_t *dashboard_root = lv_obj_get_parent(dashboard_tabs);
+    const lv_area_t dashboard_area = declarative->getVisualArea();
+    assert(lv_obj_get_width(dashboard_root) == lv_area_get_width(&dashboard_area));
+    assert(lv_obj_get_height(dashboard_root) == lv_area_get_height(&dashboard_area));
+    assert(lv_obj_get_width(dashboard_tabs) == lv_obj_get_content_width(dashboard_root));
+    assert_inside(dashboard_tabs, dashboard_root);
+    lv_obj_t *tab_pages = lv_tabview_get_content(dashboard_tabs);
+    assert(lv_obj_get_child_cnt(tab_pages) == 3);
+    assert_inside(find_display_label(display, "Network: connected"), lv_obj_get_child(tab_pages, 0));
+    capture_dashboard(display, "dashboard-status.ppm");
+    lv_tabview_set_act(dashboard_tabs, 1, LV_ANIM_OFF); settle();
+    std::vector<lv_area_t> timer_button_boxes;
+    for (const char *text : {"Start 5 min", "Pause", "Resume", "Reset"}) {
+        lv_obj_t *label = find_display_label(display, text); assert(label);
+        lv_obj_t *button = lv_obj_get_parent(label);
+        assert(lv_obj_get_height(button) >= 44 && lv_obj_get_width(button) >= 44);
+        assert_inside(label, button);
+        assert_inside(button, lv_obj_get_child(tab_pages, 1));
+        lv_area_t box{}; lv_obj_get_coords(button, &box);
+        for (const auto &other : timer_button_boxes) {
+            assert(box.x1 > other.x2 || box.x2 < other.x1 || box.y1 > other.y2 || box.y2 < other.y1);
+        }
+        timer_button_boxes.push_back(box);
+    }
+    capture_dashboard(display, "dashboard-timer.ppm");
+    lv_tabview_set_act(dashboard_tabs, 2, LV_ANIM_OFF); settle();
+    lv_obj_t *controls_page = lv_obj_get_child(tab_pages, 2);
+    lv_obj_t *controls_scroll = lv_obj_get_child(controls_page, 0);
+    assert_inside(controls_scroll, controls_page);
+    assert(lv_obj_get_scroll_bottom(controls_scroll) > 0);
+    capture_dashboard(display, "dashboard-controls.ppm");
+    lv_obj_t *sample_input = find_object_type(controls_scroll, &lv_textarea_class);
+    assert(sample_input);
+    lv_obj_scroll_to_view(sample_input, LV_ANIM_OFF); settle();
+    assert_inside(sample_input, controls_scroll);
+    capture_dashboard(display, "dashboard-controls-scrolled.ppm");
+    lv_tabview_set_act(dashboard_tabs, 0, LV_ANIM_OFF); settle();
     assert(find_display_label(display, "Network: connected") != nullptr);
     lv_obj_t *offline_hint = find_display_label(display, "Connect to Wi-Fi to bring services online.");
     assert(offline_hint != nullptr && lv_obj_has_flag(offline_hint, LV_OBJ_FLAG_HIDDEN));
@@ -326,7 +396,7 @@ int main(int argc, char **argv) {
     click_button_text(display, "Start 5 min");
     assert(crystal_timer_state().running && crystal_timer_state().remaining_seconds == 300);
     for (unsigned i = 0; i < 110; ++i) { lv_tick_inc(10); lv_timer_handler(); }
-    assert(find_display_label(display, "300 seconds · running true") != nullptr);
+    assert(find_display_label(display, "300 s remaining") != nullptr);
     click_button_text(display, "Pause");
     assert(crystal_timer_state().paused && !crystal_timer_state().running);
     click_button_text(display, "Resume");
@@ -358,7 +428,7 @@ int main(int argc, char **argv) {
     assert(crystal_app_verify_cleanup(denied->resources(), &report));
     assert(crystal_registry_uninstall_package("org.crystal.declarative-denied")); settle();
     assert(installed_app("org.crystal.declarative-denied") == nullptr && crystal_packages().empty());
-    std::puts("PASS: declarative package builds LVGL tabs/controls, binds live data/visibility, routes timer events only with permission, and cleans up across reopen");
+    std::puts("PASS: declarative package fills the app area, lays out tabs/buttons/scrolling without overlap, binds live data/visibility, routes permitted timer events, and cleans up across reopen");
     struct VisualCase { const char *file; const char *id; const char *label; const lv_obj_class_t *widget; };
     const VisualCase visual_cases[] = {
         {"declarative-clock.capp", "org.crystal.visual-clock", "Hong Kong (UTC+08:00)", &lv_tabview_class},
