@@ -3139,9 +3139,11 @@ void crystal_shell_control_action_event(const CrystalControlAction *action)
 {
     if (action == nullptr || action->id[0] == '\0' || s_phone == nullptr) return;
     CrystalApp *app = nullptr;
+    size_t app_index = SIZE_MAX;
     for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
         if (crystal_registry_installed_id(i) != nullptr && !strcmp(crystal_registry_installed_id(i), action->id)) {
             app = crystal_registry_installed_app(i);
+            app_index = i;
             break;
         }
     }
@@ -3151,13 +3153,21 @@ void crystal_shell_control_action_event(const CrystalControlAction *action)
             for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
                 if (crystal_registry_installed_id(i) != nullptr && !strcmp(crystal_registry_installed_id(i), action->id)) {
                     app = crystal_registry_installed_app(i);
+                    app_index = i;
                     break;
                 }
             }
         }
-        if (app != nullptr) {
-            ESP_Brookesia_CoreAppEventData_t event = {app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
-            if (s_phone->sendAppEvent(&event)) return;
+        if (app != nullptr && start_card(app_index, false)) {
+            // Keep Settings visible, but make its close action return to the
+            // app just launched instead of restoring the previous selection.
+            if (s_system_page_depth != 0) {
+                s_last_app_before_settings = static_cast<int>(app_index);
+            }
+            update_home_pill();
+            ESP_LOGI(TAG, "Control-panel launched %s%s", action->id,
+                     s_system_page_depth != 0 ? " behind Settings" : "");
+            return;
         }
         ESP_LOGW(TAG, "Control-panel launch failed for %s", action->id);
         return;

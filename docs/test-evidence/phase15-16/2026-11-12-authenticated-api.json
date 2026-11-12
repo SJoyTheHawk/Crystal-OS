@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-12",
+  "source": "User-supplied paired-browser API responses at 192.168.1.158",
+  "firmware_note": "At capture time, the user confirmed 0.15.0 had not yet been flashed; the recorded device version 0.12.14 is expected.",
+  "system": {
+    "schema": 1,
+    "os_version": "0.12.14",
+    "abi_version": 1,
+    "free_psram_kb": 3900,
+    "free_heap_kb": 3922,
+    "free_storage_kb": 1845,
+    "serial": "A4CB8FCF6898"
+  },
+  "apps": {
+    "schema": 1,
+    "apps": [
+      {
+        "id": "dev_tester",
+        "name": "dev_tester",
+        "origin": "builtin",
+        "enabled": true,
+        "slot": 2,
+        "version": null
+      },
+      {
+        "id": "clock",
+        "name": "clock",
+        "origin": "builtin",
+        "enabled": true,
+        "slot": 3,
+        "version": null
+      },
+      {
+        "id": "weather",
+        "name": "weather",
+        "origin": "builtin",
+        "enabled": true,
+        "slot": 4,
+        "version": null
+      },
+      {
+        "id": "calculator",
+        "name": "calculator",
+        "origin": "builtin",
+        "enabled": true,
+        "slot": 16,
+        "version": null
+      },
+      {
+        "id": "org.crystal.declarative-dashboard",
+        "name": "Status Dashboard",
+        "origin": "package",
+        "enabled": true,
+        "slot": 0,
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "panel_comparison": {
+    "source": "User-pasted browser app list on 2026-11-12",
+    "displayed_ids_in_order": [
+      "org.crystal.declarative-dashboard",
+      "dev_tester",
+      "clock",
+      "weather",
+      "calculator"
+    ],
+    "all_enabled": true,
+    "dashboard_version": "1.0.0",
+    "origins_match": true,
+    "restart_feedback": "User confirmed restart-required messages after dev_tester Disable and Enable; package-install feedback remains pending."
+  }
+}

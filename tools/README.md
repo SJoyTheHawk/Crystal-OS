@@ -187,6 +187,14 @@ ordering, uploads, errors, log framing, and responsive layouts. Actual device
 pairing, signed-package installation, Safari, and hardware logs remain board
 checks in the Phase 15/16 test guide.
 
+Run `python3 tools/test_shell_control_launch.py` for the shell remote-launch
+regression. It exercises the production launch, card-start, and Settings-close
+functions with a deterministic UI fixture under ASan/UBSan. It checks root and
+nested Settings, the return selection, repeated launches, newly installed apps,
+and failure preservation. Real LVGL rendering and device event delivery still
+require the board checks; `python3 tools/test_app_platform_v2.py` separately
+exercises the production app lifecycle through LVGL/Brookesia.
+
 To deploy a page change, close the serial monitor, then run:
 
     idf.py build

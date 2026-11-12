@@ -385,23 +385,40 @@ validate Browser Web Serial, which remains an open item.
   loaded in Safari at 192.168.1.158. Its pairing-error message does not establish
   a successful token exchange. The redesigned page requires a fresh browser
   check after updating the storage asset partition.
-- [ ] Exchange the PIN in the panel and record the returned bearer token.
+- [x] Exchange the PIN in the panel and confirm the authenticated panel opens.
+  On 2026-11-12 the user explicitly confirmed that the first pairing in the
+  normal browser succeeds; the private-window retry using the same code is
+  rejected. The bearer token value is not included in this evidence.
+- [ ] Retain the returned bearer token locally for the authenticated API checks;
+  do not commit or paste the token into the test record.
 - [x] Confirm a second exchange with the same PIN is rejected.
   On 2026-11-12, following the same-code retry instructions, the user reported:
   “That code could not be accepted. Turn Local Control Panel off and on in
   Developer Tools to get a new code.” This confirms rejection of the second
-  pairing attempt. Continued access from the original paired browser and a
-  captured successful token exchange remain to be explicitly confirmed.
+  pairing attempt. Initial normal-browser pairing is confirmed above.
+- [x] Confirm the rejected retry leaves the original browser session usable.
+  On 2026-11-12, the user clicked the panel's Refresh button in the original
+  paired browser and received “Device information updated.” This confirms a
+  successful authenticated refresh after the private-window rejection.
 - [ ] Confirm the PIN expires or is invalid after the documented enable window.
-- [ ] Without a token, confirm the API rejects the request:
+- [x] Without a token, confirm the API rejects the request:
 
   ```sh
   curl -i "http://<device-ip>/api/v1/system"
   ```
 
   Expected result: HTTP `401`.
+  On 2026-11-12 the user ran the request against 192.168.1.158 and received
+  HTTP/1.1 401 Unauthorized with Content-Type: application/json,
+  Cache-Control: no-store, and body {"error":"unauthorized"}. This confirms
+  unauthenticated access to the system endpoint is rejected.
 
-- [ ] With the bearer token, confirm both endpoints return HTTP `200` JSON:
+- [x] With the bearer token, confirm both endpoints return HTTP `200`:
+  On 2026-11-12 the user supplied the paired browser Network details for
+  `http://192.168.1.158/api/v1/system` and
+  `http://192.168.1.158/api/v1/apps`. Both report Status: 200 OK,
+  Source: Network, and Address: 192.168.1.158:80. Both JSON response bodies
+  were subsequently supplied and validated below.
 
   ```sh
   curl -i -H "Authorization: Bearer <TOKEN>" \
@@ -410,10 +427,38 @@ validate Browser Web Serial, which remains an open item.
     "http://<device-ip>/api/v1/apps"
   ```
 
+- [x] Inspect the successful system and apps response bodies and confirm they
+  contain the expected JSON objects and app list.
+  User-supplied [authenticated API evidence](test-evidence/phase15-16/2026-11-12-authenticated-api.json)
+  on 2026-11-12 contains schema 1 for both endpoints, ABI 1, system version
+  0.12.14, and five enabled apps: four built-ins and Status Dashboard 1.0.0.
+  Built-in versions are null as expected. Slots are unique: Dashboard 0,
+  dev_tester 2, clock 3, weather 4, calculator 16. The user confirmed that
+  firmware 0.15.0 had not yet been flashed when these responses were captured,
+  so 0.12.14 is expected for this evidence. Agreement with the displayed app list is confirmed below.
+- [x] Confirm a made-up bearer token is rejected by the system and apps queries.
+  On 2026-11-12 the user sent `Authorization: Bearer invalid-test-token` to
+  `GET /api/v1/system` and `GET /api/v1/apps` at 192.168.1.158. Both returned
+  HTTP/1.1 401 Unauthorized, Content-Type: application/json,
+  Cache-Control: no-store, and body {"error":"unauthorized"}.
 - [ ] Confirm an invalid, expired, or altered token returns HTTP `401` for
   every protected endpoint.
-- [ ] Confirm the panel reports the same app IDs, versions, enabled state, and
-  restart state as `/api/v1/apps`.
+  The made-up-token checks above cover the two GET endpoints only; other
+  protected endpoints and expired/altered-token cases remain unverified.
+- [x] Confirm the panel reports the same app names, IDs, versions, enabled
+  states, and slot-based order as the apps API response.
+  On 2026-11-12 the user supplied the displayed list: Status Dashboard,
+  dev_tester, clock, weather, calculator. All five show Enabled; Dashboard
+  shows Installed app and version 1.0.0 with its full package ID. The other
+  four show Built in. The displayed order matches ascending slots 0, 2, 3,
+  4, 16 from the captured API response.
+- [x] Confirm restart-required feedback after changing app settings.
+  On 2026-11-12, following the dev_tester Disable then Enable instructions,
+  the user reported the same message after each action: “App setting saved.
+  Restart your Crystal to apply it.” This confirms the settings feedback;
+  it does not establish behavior after reboot.
+- [ ] Confirm restart-required feedback after installing a package against
+  the installation response. The apps query does not include this field.
 
 ## 6. Phase 15 Wi-Fi installation, progress, run, and logs
 
@@ -468,7 +513,25 @@ required production policy for Wi-Fi.
 
 ## 7. Phase 15 app management and consistency
 
-- [ ] From the external panel launch an installed app.
+- [x] From the external panel launch an installed app.
+  On 2026-11-12, with Settings open, the user reported that Launch neither
+  dismissed Settings nor left Status Dashboard selected behind it. The user
+  clarified the requirement: launching the requested app behind Settings is
+  sufficient; automatically closing Settings is optional.
+  The shell correction routes remote Launch through the normal card-start
+  path, verifies the active app, and updates the Settings return selection
+  only after a successful start. Settings remains visible.
+  Host regression and platform integration checks pass, and firmware 0.15.0
+  builds. After receiving the flash/retest instructions, the user confirmed
+  “Yes, the change is on.” Record the baseline remote-launch correction as
+  user-confirmed on the device. The detailed root/nested Settings, serial-log,
+  and repeated-launch sequence below remains open until explicitly reported.
+- [ ] After flashing the correction, launch Status Dashboard from the panel
+  while root or nested Settings is open. Confirm serial output includes
+  `Control-panel launched org.crystal.declarative-dashboard behind Settings`.
+  Close Settings normally and confirm Dashboard is selected, not the app
+  that was active before opening Settings. Repeat Launch and confirm there
+  is no crash, duplicate lifecycle, or switch back to the old app.
 - [ ] Disable it, refresh the app list, then enable it again.
 - [ ] Clear its data and verify the action reports success.
 - [ ] Move the app up and down in the external ordering controls.

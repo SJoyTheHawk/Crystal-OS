@@ -149,6 +149,13 @@ bool ESP_Brookesia_CoreManager::startApp(int id)
     auto find_ret = _id_running_app_map.find(id);
     if (find_ret != _id_running_app_map.end()) {
         app = find_ret->second;
+        // A START for the foreground app is an idempotent launch request. The
+        // app is already running and has not been paused, so routing this event
+        // through processAppResume() would violate the app lifecycle contract.
+        if (_active_app == app) {
+            ESP_BROOKESIA_LOGD("App(%d) is already active, ignore duplicate start", app->_id);
+            return true;
+        }
         ESP_BROOKESIA_LOGD("App(%d) is already running, just resume it", app->_id);
         // If so, resume app
         ESP_BROOKESIA_CHECK_FALSE_RETURN(processAppResume(app), false, "Resume app failed");

@@ -1,0 +1,42 @@
+Remote Launch while Settings is open — 2026-11-12
+
+Device report (firmware 0.12.14, no corrected firmware flashed yet):
+Launch from the browser while Settings is open did not close Settings and did
+not leave Status Dashboard selected behind it. The user clarified that the
+required baseline is switching the selected app behind Settings; closing
+Settings automatically is optional.
+
+Cause found in source:
+Remote Launch sent a raw Brookesia START but left the Settings return target
+at the previously selected app. Closing Settings explicitly restored that
+previous selection. Sending an LVGL event alone also did not prove the app
+actually became active.
+
+Correction:
+Use start_card(index, false), which verifies the active app and maintains the
+shell selection/persistence. After success, point the Settings return target
+at the launched app. Keep Settings visible. Log successful background launch.
+Unknown targets and failed starts retain the prior Settings return selection.
+
+Host verification:
+PASS: python3 tools/test_shell_control_launch.py
+Production launch/card-start/Settings-close functions, deterministic UI fixture,
+ASan/UBSan. Root/nested Settings, repeated Launch, launcher-origin Settings,
+newly installed app, event-send failure, app-start failure, and unknown app.
+This fixture does not exercise real LVGL rendering or board event delivery.
+
+PASS: python3 tools/test_app_platform_v2.py (exit 0)
+Production package, registry, Calculator/declarative runtime, LVGL/Brookesia.
+Includes repeated START for an active app. Deliberate corrupt-state cases
+print failure messages as part of their expected rejection tests.
+
+PASS: idf.py build (ESP-IDF v6.1)
+Built signed application; 0x2f1000 bytes, app partition 26% free.
+PASS: git diff --check.
+
+No device flash or acceptance test performed by the agent.
+User device confirmation received afterward on 2026-11-12:
+After the flash/retest instructions, the user replied “Yes, the change is on.”
+The baseline remote-launch correction is recorded as user-confirmed on device.
+No serial transcript or explicit repeated/root/nested test results were supplied;
+those detailed acceptance cases remain pending in the checklist.

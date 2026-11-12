@@ -334,6 +334,12 @@ int main(int argc, char **argv) {
     assert(phone.sendAppEvent(&declarative_start)); settle();
     assert(phone.getManager().getActiveApp() == declarative);
     assert(declarative->resources().report().objects == 1 && declarative->resources().report().timers == 1);
+    assert(crystal_registry_set_slot("org.crystal.declarative-dashboard", 0));
+    // Repeated launch requests from the control panel must be idempotent while
+    // the target app is already foregrounded.
+    assert(phone.sendAppEvent(&declarative_start)); settle();
+    assert(phone.getManager().getActiveApp() == declarative);
+    assert(declarative->resources().report().objects == 1 && declarative->resources().report().timers == 1);
     lv_obj_t *dashboard_tabs = find_object_type(lv_scr_act(), &lv_tabview_class);
     assert(dashboard_tabs);
     lv_obj_t *dashboard_root = lv_obj_get_parent(dashboard_tabs);
