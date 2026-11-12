@@ -1,17 +1,39 @@
+# ESP-IDF and alternate local build directories.
 /build/
-/build-phase14/
+/build-*/
+/cmake-build-*/
+
+# Python environments and test caches.
 __pycache__/
+*.py[cod]
+/.venv/
+/venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local dependencies, editor settings and generated configuration.
 /managed_components/
 /.vscode/
 /sdkconfig
 /sdkconfig.old
 /dependencies.lock
 /.cache/
+
+# Generated firmware, application packages and diagnostic output.
 *.elf
+*.capp
 *.log
 *.trace
+
+# macOS metadata.
 .DS_Store
+._*
+
+# Local signing keys and saved device pairing sessions.
 *.pem
+/session.json
+/closure-session.json
 
 # Locally extracted video frames used during hardware validation.
 video_frames_*/

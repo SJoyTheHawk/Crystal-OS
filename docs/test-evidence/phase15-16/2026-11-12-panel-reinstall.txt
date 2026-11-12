@@ -1,0 +1,272 @@
+Status Dashboard reinstall and boot discovery — 2026-11-12
+Source: user-supplied terminal/serial attachment and confirmation,
+"Yes, everything is working properly", following the reinstall checklist.
+
+PASS: USB install of /tmp/crystal-uninstall-retest.capp on
+/dev/cu.usbmodem1101 returns installed=true and restart_required=true.
+PASS: monitor reopened after the installer exits; boot reset reports
+USB_UART_CHIP_RESET. Firmware is 0.15.0, ESP-IDF v6.1, ELF fc65ea7de...
+PASS: boot reports no coredump and LittleFS package storage ready (1 packages).
+PASS: four built-ins at saved ranks 0,2,3,4 plus Dashboard at rank 16
+are installed. This is the new install rank, not restoration of its former rank.
+PASS: Dashboard creates successfully at 15914 ms. Five working apps, no gaps,
+and matching basic app list/order in Manage Apps and the web panel are
+user-confirmed; no screenshot or apps API response accompanies this message.
+PASS: Manage Apps reports five catalog apps. The supplied log also captures
+a subsequent drag of Dashboard and saved ranks Dashboard=0, Dev Tester=1.
+The log does not establish persistence of this new reorder across another boot.
+PASS: weather fetch and HTTPS smoke request return HTTP 200; smoke passes.
+
+Open: Dashboard onCreate takes 100 ms against the 80 ms budget in this run.
+No panic, abort, watchdog-triggered reboot, or post-launch crash is shown.
+On-device Uninstall/Cancel, the full cross-interface action matrix, signed
+Wi-Fi install, and the other unchecked phase gates are not closed by this test.
+The warning that no initial signing key is configured is retained in the raw
+log; this unsigned USB test does not establish signed-package trust readiness.
+
+Original supplied terminal and serial transcript follows:
+
+szemy@MacBook-Air-3 ESP32 Crystal OS % ./tools/crystal install --usb --port /dev/cu.usbmodem1101 /tmp/crystal-uninstall-retest.capp
+{
+  "installed": true,
+  "restart_required": true
+}
+szemy@MacBook-Air-3 ESP32 Crystal OS % idf.py -p /dev/cu.usbmodem1101 monitor
+Executing action: monitor
+Running idf_monitor in directory '/Users/szemy/Workspace/ESP32 Crystal OS'
+Executing "/Users/szemy/.espressif/python_env/idf6.1_py3.10_env/bin/python /Users/szemy/.espressif/v6.1/esp-idf/tools/idf_monitor.py -p /dev/cu.usbmodem1101 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 '/Users/szemy/Workspace/ESP32 Crystal OS/build/crystal_os.elf' '/Users/szemy/Workspace/ESP32 Crystal OS/build/bootloader/bootloader.elf' -m '/Users/szemy/.espressif/python_env/idf6.1_py3.10_env/bin/python' '/Users/szemy/.espressif/v6.1/esp-idf/tools/idf.py' '-p' '/dev/cu.usbmodem1101'"...
+--- esp-idf-monitor 1.9.0 on /dev/cu.usbmodem1101 115200
+--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0xa (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40381b2e
+--- 0x40381b2e: esp_cpu_wait_for_intr at /Users/szemy/.espressif/v6.1/esp-idf/components/esp_hw_support/cpu.c:64
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x1664
+load:0x403c8700,len:0xf8c
+--- 0x403c8700: _stext at ??:?
+load:0x403cb700,len:0x326c
+entry 0x403c8930
+--- 0x403c8930: call_start_cpu0 at /Users/szemy/.espressif/v6.1/esp-idf/components/bootloader/subproject/main/bootloader_start.c:27
+I (24) boot: ESP-IDF v6.1 2nd stage bootloader
+I (24) boot: compile time Oct 11 2026 05:20:26
+I (25) boot: Multicore bootloader
+I (25) boot: chip revision: v0.2
+I (27) boot: efuse block revision: v1.4
+I (31) qio_mode: Enabling default flash chip QIO
+I (35) boot.esp32s3: Boot SPI Speed : 80MHz
+I (39) boot.esp32s3: SPI Mode       : QIO
+I (43) boot.esp32s3: SPI Flash Size : 16MB
+I (47) boot: Enabling RNG early entropy source...
+I (51) boot: Partition Table:
+I (54) boot: ## Label            Usage          Type ST Offset   Length
+I (60) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (67) boot:  1 nvs_keys         NVS keys         01 04 0000f000 00001000
+I (73) boot:  2 otadata          OTA data         01 00 00010000 00002000
+I (80) boot:  3 phy_init         RF data          01 01 00012000 00001000
+I (86) boot:  4 coredump         Unknown data     01 03 00013000 00010000
+I (93) boot:  5 ota_0            OTA app          00 10 00030000 00400000
+I (99) boot:  6 ota_1            OTA app          00 11 00430000 00400000
+I (106) boot:  7 storage          Unknown data     01 82 00830000 00200000
+I (112) boot:  8 apps             Unknown data     01 83 00a30000 00580000
+I (119) boot: End of partition table
+I (122) esp_image: segment 0: paddr=00030020 vaddr=3c190020 size=141568h (1316200) map
+I (333) esp_image: segment 1: paddr=00171590 vaddr=3fc9ff00 size=06568h ( 25960) load
+I (339) esp_image: segment 2: paddr=00177b00 vaddr=40374000 size=08518h ( 34072) load
+I (346) esp_image: segment 3: paddr=00180020 vaddr=42000020 size=1853f0h (1594352) map
+I (593) esp_image: segment 4: paddr=00305418 vaddr=4037c518 size=1393ch ( 80188) load
+I (609) esp_image: segment 5: paddr=00318d5c vaddr=50000000 size=00024h (    36) load
+I (610) esp_image: segment 6: paddr=00318d88 vaddr=00000000 size=07248h ( 29256)
+I (629) boot: Loaded app from partition at offset 0x30000
+I (629) boot: Disabling RNG early entropy source...
+I (639) octal_psram: vendor id    : 0x0d (AP)
+I (639) octal_psram: dev id       : 0x02 (generation 3)
+I (639) octal_psram: density      : 0x03 (64 Mbit)
+I (641) octal_psram: good-die     : 0x01 (Pass)
+I (646) octal_psram: Latency      : 0x01 (Fixed)
+I (650) octal_psram: VCC          : 0x01 (3V)
+I (654) octal_psram: SRF          : 0x01 (Fast Refresh)
+I (659) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (664) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (668) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (673) octal_psram: DriveStrength: 0x00 (1/1)
+I (678) MSPI Timing: Enter psram timing tuning
+I (682) esp_psram: Found 8MB PSRAM device
+I (686) esp_psram: Speed: 80MHz
+I (788) mmu_psram: Read only data copied and mapped to SPIRAM
+I (914) mmu_psram: Instructions copied and mapped to SPIRAM
+I (914) cpu_start: Multicore app
+I (1179) esp_psram: SPI SRAM memory test OK
+I (1187) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (1188) cpu_start: Pro cpu start user code
+I (1188) cpu_start: cpu freq: 240000000 Hz
+I (1190) app_init: Application information:
+I (1194) app_init: Project name:     crystal_os
+I (1198) app_init: App version:      0.15.0
+I (1202) app_init: Compile time:     Nov 12 2026 18:38:15
+I (1207) app_init: ELF file SHA256:  fc65ea7de...
+I (1211) app_init: ESP-IDF:          v6.1
+I (1215) efuse_init: Min chip rev:     v0.0
+I (1219) efuse_init: Max chip rev:     v0.99
+I (1223) efuse_init: Chip rev:         v0.2
+I (1227) heap_init: Initializing. RAM available for dynamic allocation:
+I (1233) heap_init: At 3FCB8D80 len 00030990 (194 KiB): RAM
+I (1239) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (1244) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (1249) heap_init: At 600FE000 len 00001FE8 (7 KiB): RTCRAM
+I (1255) esp_psram: Adding pool of 5248K of PSRAM memory to heap allocator
+I (1261) esp_psram: Adding pool of 58K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+I (1273) spi_flash: detected chip: generic
+I (1276) spi_flash: flash io: qio
+I (1280) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (1285) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (1292) esp_core_dump_flash: Init core dump to flash
+I (1297) esp_core_dump_flash: Found partition 'coredump' @ 13000 65536 bytes
+I (1304) nvs_sec_provider: NVS Encryption - Registering HMAC-based scheme...
+I (1322) main_task: Started on CPU0
+I (1322) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (1323) main_task: Calling app_main()
+I (1326) crystal_memory: UI and JSON allocators use PSRAM; task stacks remain internal
+I (1358) nvs: NVS partition "nvs" is encrypted.
+I (1358) crash: No coredump found
+I (1360) crystal_core: System time initialized from PCF85063
+I (1398) ESP32-S3-Touch-LCD-4B: Partition size: total: 1920401, used: 65260
+I (1399) LVGL: Starting LVGL task
+I (1999) ESP32-S3-Touch-LCD-4B: Install 3-wire SPI panel IO
+I (1999) lcd_panel.io.3wire_spi: Panel IO create success, version: 1.0.1
+I (2000) st7701: version: 2.0.3
+W (2907) st7701_rgb: The 36h command has been used and will be overwritten by external initialization sequence
+W (2914) st7701_rgb: The 3Ah command has been used and will be overwritten by external initialization sequence
+W (3049) lcd_panel.io.3wire_spi: Delete but keep CS line inactive
+I (3080) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+I (3081) GT911: TouchPad_ID:0x39,0x31,0x31
+I (3081) GT911: TouchPad_Config_Version:79
+I (3084) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 100% (original: 0%)
+W (3093) i2s_common: the rx channel on I2S1 is switched from master to slave for full-duplex mode
+I (3107) ES8311: Work in Slave mode
+I (3110) I2S_IF: Paired data: 0x3fcee9b8, current mode: playback, paired in_enable: 0, paired out_enable: 0
+I (3113) I2S_IF: STD: TX, data_bit: 16, slot_bit: 16, ws_width: 16, slot_mode: MONO, slot_mask: 0x1
+I (3122) I2S_IF: STD: TX, sample_rate_hz: 22050, mclk_multiple: 256, clk_src: 6
+I (3145) Adev_Codec: Open codec device OK
+I (3146) crystal_hal: reset button ready on GPIO0, hold 5000ms to reboot
+W (3146) crystal_signature: No initial package signing key configured; signed packages will be rejected
+I (3183) crystal_boot: LittleFS mounted at /littlefs; package storage ready (1 packages)
+I (3183) crystal_boot: Subscribed LVGL task to watchdog
+I (3185) esp-brookesia: [esp_brookesia_core.cpp:204](beginCore)Library version: 0.4.1
+I (3238) crystal_http: component initialized
+I (3239) crystal_http: TLS allocator=PSRAM
+I (3239) crystal_http: TLS hardware AES=disabled
+I (3240) crystal_http: queue depth=8
+I (3247) update: OTA worker started on Core 0
+I (3247) update: OTA worker initialized on Core 0
+I (3262) crystal_registry: installed: dev_tester (slot 0)
+I (3270) crystal_registry: installed: clock (slot 2)
+I (3385) crystal_registry: installed: weather (slot 3)
+I (3395) crystal_registry: installed: calculator (slot 4)
+W (3395) esp-brookesia: [esp_brookesia_phone_home.cpp:119](processAppInstall)No launcher icon provided, use default icon
+I (3403) crystal_registry: installed: org.crystal.declarative-dashboard (slot 16)
+I (3427) crystal_app: Calculator lifecycle: onCreate
+I (3592) crystal_shell: snapshot transition: app 480x440 at (0,40) crop=90% (432x378) -> 240x220, zoom=512/256, 180 ms
+I (3594) crystal_shell: active card 4/5: calculator
+I (3599) crystal_control: USB developer transport ready (CRYSTAL/1 INSTALL <bytes>)
+I (3603) crystal_boot: Startup baseline: automatic Phase 14 device test disabled
+I (3905) crystal_http: worker started core=0 priority=0 (idle time slicing)
+I (3907) crystal_boot: first-frame baseline: 2581 ms
+I (3907) crystal_boot: main task stack headroom: 4656 bytes
+I (3912) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 92% (original: 8%)
+I (4006) main_task: Returned from app_main()
+I (4447) crystal_core: Startup: first frame ready; starting background services
+I (4448) crystal_hal: WiFi init: internal=92703 largest_internal=31744 dma=84915 largest_dma=31744 static_rx=10 static_tx=8
+I (4454) pp: pp rom version: e7ae62f
+I (4457) net80211: net80211 rom version: e7ae62f
+I (4462) wifi:wifi driver task: 3fcbdb48, prio:23, stack:6656, core=0
+I (4477) wifi:wifi firmware version: e12a754
+I (4477) wifi:wifi certification version: v7.0
+I (4477) wifi:config NVS flash: enabled
+I (4479) wifi:config nano formatting: disabled
+I (4483) wifi:Init data frame dynamic rx buffer num: 32
+I (4488) wifi:Init static rx mgmt buffer num: 5
+I (4492) wifi:Init management short buffer num: 32
+I (4497) wifi:Init static tx buffer num: 8
+I (4501) wifi:Init static tx FG buffer num: 2
+I (4505) wifi:Init static rx buffer size: 1600
+I (4509) wifi:Init static rx buffer num: 10
+I (4513) wifi:Init dynamic rx buffer num: 32
+I (4517) wifi_init: rx ba win: 6
+I (4520) wifi_init: accept mbox: 6
+I (4522) crystal_core: toast displayed: Core services ready
+I (4523) wifi_init: tcpip mbox: 32
+I (4531) wifi_init: udp mbox: 6
+I (4606) wifi_init: tcp mbox: 6
+I (4606) wifi_init: tcp tx win: 5760
+I (4606) wifi_init: tcp rx win: 5760
+I (4607) wifi_init: tcp mss: 1440
+I (4608) wifi_init: WiFi IRAM OP enabled
+I (4612) wifi_init: WiFi RX IRAM OP enabled
+I (4616) crystal_hal: WiFi initialized: internal=41183 largest_internal=31744
+I (4625) phy_init: phy_version 712,87e8c20e,Apr 13 2026,18:51:10
+I (4707) pm: Frequency switching config: CPU_MAX: 240, APB_MAX: 240, APB_MIN: 240, Light sleep: DISABLED
+I (5820) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+I (5820) crystal_core: publishing network connected signal
+I (5822) crystal_core: network connected signal received; starting SNTP
+I (5828) crystal_core: SNTP request started
+I (5842) crystal_core: toast queued (1 pending): Connected to WiFi
+I (6713) crystal_http: request queued id=1 owner=1464156500
+I (6713) crystal_core_http: JSON request queued id=1; service task waiting
+I (6715) crystal_http: request attempt id=1 attempt=1/1
+I (6720) crystal_http: heap before id=1 internal=37683 largest_internal=28672 psram=4479872 largest_psram=4325376
+I (7442) crystal_core: toast displayed: Connected to WiFi
+I (10085) crystal_core: SNTP synchronized system clock and RTC
+I (12166) crystal_shell: Home gesture: travel=128, depth=0, quick=0, last_app=-1
+I (12166) crystal_shell: Sending HOME to go to launcher
+I (12167) crystal_app: Calculator lifecycle: onPause
+W (15906) esp-brookesia: [esp_brookesia_core_manager.cpp:178](startApp)Running app num(1) is already at the limit, will close the oldest app(5)
+I (15908) crystal_app: Calculator lifecycle: onDestroy
+I (15914) crystal_app: Status Dashboard lifecycle: onCreate
+W (16018) crystal_app: Status Dashboard onCreate took 100 ms (budget 80 ms)
+I (16969) crystal_http: TLS connected id=1
+I (17228) crystal_http: body allocation id=1 bytes=1024 memory=PSRAM
+I (17228) crystal_http: body received id=1 bytes=467
+I (17233) crystal_http: heap after id=1 internal=34727 largest_internal=9216 psram=4470916 largest_psram=4325376
+I (17238) crystal_http: heap tls-peak id=1 internal=26731 largest_internal=9216 psram=4449536
+I (17246) crystal_http: request completed id=1 attempts=1 elapsed=10532 ms status=200
+I (17253) crystal_http: request callback id=1 error=ESP_OK
+I (17259) crystal_http: stats requests=1 successes=1 retries=0 failures=0 cancelled=0 peak_body=467
+I (17268) crystal_http: stats tls-min internal=26731 largest_internal=9216 psram=4449536
+I (17275) crystal_core_http: JSON request finished id=1 status=200 bytes=467 error=ESP_OK accepted=1
+I (17284) crystal_core: weather fetched: 22.7 C, humidity 82%, code 3, wind 7.7 km/h
+I (17292) crystal_core: Startup: weather step finished; queuing HTTPS smoke test
+I (17299) crystal_http: request queued id=2 owner=1179795789
+I (17305) crystal_http: response released id=1
+I (17322) crystal_http: heap released id=1 internal=34727 largest_internal=9216 psram=4471944
+I (17325) crystal_http: request attempt id=2 attempt=1/1
+I (17327) crystal_http: heap before id=2 internal=34879 largest_internal=9216 psram=4471944 largest_psram=4325376
+I (23923) crystal_http: TLS connected id=2
+I (23969) crystal_http: body allocation id=2 bytes=1024 memory=PSRAM
+I (23973) crystal_http: body received id=2 bytes=577
+I (23980) crystal_http: heap after id=2 internal=34667 largest_internal=9216 psram=4470920 largest_psram=4325376
+I (23982) crystal_http: heap tls-peak id=2 internal=25963 largest_internal=9216 psram=4449380
+I (23990) crystal_http: request completed id=2 attempts=1 elapsed=6665 ms status=200
+I (23997) crystal_http: request callback id=2 error=ESP_OK
+I (24002) crystal_http: stats requests=2 successes=2 retries=0 failures=0 cancelled=0 peak_body=577
+I (24012) crystal_http: stats tls-min internal=25963 largest_internal=9216 psram=4449380
+I (24035) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=6665 ms error=ESP_OK
+I (24035) crystal_core: HTTPS smoke heap id=2 before_internal=34879 before_largest=9216 before_psram=4471944 tls_internal=25963 tls_largest=9216 tls_psram=4449380
+I (24048) crystal_core: HTTPS smoke test passed
+I (24061) crystal_http: response released id=2
+I (24062) crystal_http: heap released id=2 internal=34783 largest_internal=9216 psram=4471924
+I (25248) crystal_shell: Home gesture: travel=166, depth=0, quick=0, last_app=-1
+I (25248) crystal_shell: Sending HOME to go to launcher
+I (25249) crystal_app: Status Dashboard lifecycle: onPause
+I (27432) crystal_shell: Opening Settings from launcher
+I (28819) manage_apps: Showing 5 catalog apps (restart to apply)
+I (32464) manage_apps: Dragging org.crystal.declarative-dashboard
+I (36321) crystal_registry: org.crystal.declarative-dashboard slot=0 (applies next boot)
+I (36325) crystal_registry: dev_tester slot=1 (applies next boot)
+I (37663) crystal_shell: Home gesture: travel=122, depth=2, quick=0, last_app=-1
+I (37663) crystal_shell: Closing all 2 Settings pages
+I (51085) crystal_shell: Opening Settings from launcher
+I (53990) crystal_control: Starting local panel: sockets=16 clients=4 internal=34543 largest_internal=9216 psram=3987856
+I (53993) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes

@@ -89,7 +89,10 @@ bool ESP_Brookesia_AppLauncherIcon::begin(lv_obj_t *parent)
     lv_obj_add_event_cb(icon_image_obj.get(), onIconTouchEventCallback, LV_EVENT_CLICKED, this);
     // Name
     lv_obj_add_style(name_label.get(), _core.getCoreHome().getCoreContainerStyle(), 0);
-    lv_label_set_text_static(name_label.get(), _info.name);
+    // DOT mode edits its text buffer; keep the app's original name untouched.
+    lv_label_set_text(name_label.get(), _info.name);
+    lv_label_set_long_mode(name_label.get(), LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(name_label.get(), LV_TEXT_ALIGN_CENTER, 0);
 
     /* Save objects */
     _main_obj = main_obj;
@@ -156,6 +159,10 @@ bool ESP_Brookesia_AppLauncherIcon::updateByNewData(void)
     lv_obj_set_style_text_font(_name_label.get(), (lv_font_t *)_data.label.text_font.font_resource, 0);
     lv_obj_set_style_text_color(_name_label.get(), lv_color_hex(_data.label.text_color.color), 0);
     lv_obj_set_style_text_opa(_name_label.get(), _data.label.text_color.opacity, 0);
+    // Captions get one line inside the existing launcher cell, at any font size.
+    lv_obj_set_width(_name_label.get(), LV_PCT(100));
+    lv_obj_set_height(_name_label.get(),
+                      lv_font_get_line_height(lv_obj_get_style_text_font(_name_label.get(), LV_PART_MAIN)));
     // Image
     // Calculate the multiple of the size between the target and the image.
     h_factor = (float)(_data.image.default_size.width) / ((lv_img_dsc_t *)_info.image.resource)->header.h;

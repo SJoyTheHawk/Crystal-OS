@@ -1467,18 +1467,23 @@ key still needs configuration.
 
 ### Phase 15 Code Checklist
 
+See the [reconciled closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
+and recorded A–F/G–M/N–R hardware evidence before repeating older checks.
+
 - [x] HTTP API endpoints return JSON with matching schema; logs use authenticated SSE
 - [ ] Web UI loads and serves static files over WiFi and USB (WiFi install/actions/logs are implemented; Browser Web Serial remains)
-- [ ] Pairing PIN: generated at enable, displayed on device screen, accepted in external panel (hardware check remains)
-- [ ] Bearer token: exchanged once per PIN, validated on all requests (hardware check remains)
-- [x] Ed25519 package verifier uses configurable trusted public keys and rejects unknown keys; release key is not configured
-- [x] `crystal pack --sign` adds signature to `.capp`; host signature tests pass
-- [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; device browsing remains
+- [x] Pairing PIN generated/displayed/accepted on device; one-use rejection, expiry and fresh-code recovery pass
+- [x] Bearer token exchanged once per PIN; protected requests reject missing/invalid tokens on device (real expiry/session lifecycle coverage remains separate)
+- [x] Ed25519 package verifier: configured test key ID 240 accepts signed installs; untrusted/tampered signatures reject on device; production release identity remains a deployment decision
+- [x] `crystal pack --key <private.pem> --key-id <id>` signs `.capp`; host signature tests pass
+- [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; hosted end-to-end validation and scope reconciliation remain
 - [x] `crystal install --usb` streams to `/apps/.staging/` and verifies (unsigned developer package installed and reboot-reconciled on the board)
 - [x] `crystal logs -f --wifi URL --token TOKEN` tails authenticated app lifecycle/debug lines in real-time over Wi-Fi
 - [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi
 - [x] Install progress bar: shown during browser uploads, including packages > 1 MB
-- [ ] On-device Manage Apps and external panel agree after edits (hardware consistency check remains)
+- [x] On-device Manage Apps and external panel agree after the recorded edits; remaining per-action observations are itemized in the closure checklist
+- [x] Existing browser Live logs functional controls validated on device, including mobile (P); sign-out hides controls and clears the local view, while bounded device history survives panel/Wi-Fi toggles until reboot
+- [ ] Stream concurrency, in-flight authorization invalidation and shutdown resolved
 
 ### Phase 16 Code Checklist
 
@@ -1488,7 +1493,9 @@ key still needs configuration.
 - [ ] Complete remaining documented property/event APIs, including dynamic list/chart operations and input focus
 - [x] Data binding: time/network/timer values refresh on the visible app timer
 - [x] Event routing: supported controls dispatch allowlisted timer actions
-- [ ] Device lifecycle and binding behavior verified on hardware
+- [x] Implemented lifecycle, timer actions and cleanup verified in K/L/M hardware runs
+- [x] Reconnect binding UI confirmed in O; launcher caption truncation/full management names confirmed in N
+- [ ] Finish simultaneous Dashboard/panel/TLS evidence with adequate internal headroom and startup timing classification; O's panel+TLS requests precede Dashboard start
 - [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; app behavior remains in existing runtimes
 - [ ] Freeze ABI v1 after implementing and reviewing the documented facade
 

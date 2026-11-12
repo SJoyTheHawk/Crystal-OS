@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include "core/esp_brookesia_core.hpp"
@@ -202,9 +203,34 @@ bool ESP_Brookesia_AppLauncher::removeIcon(int id)
     _mix_objs[current_page_index].page_icon_count--;
     _id_mix_icon_map.erase(id);
 
-    if ((_mix_objs[current_page_index].page_icon_count == 0) && (_mix_objs.size() > _data.table.default_num)) {
-        ESP_BROOKESIA_CHECK_FALSE_RETURN(destoryMixObject(current_page_index, _mix_objs), false, "Destroy mix object failed");
+    // Keep visual order, rather than app-ID order, when filling the removed
+    // position from later pages. Reparent existing icons so callbacks and
+    // image resources stay intact.
+    vector<ESP_Brookesia_AppLauncherMixIcon_t *> icons;
+    for (auto &item : _id_mix_icon_map) icons.push_back(&item.second);
+    sort(icons.begin(), icons.end(), [](const auto *left, const auto *right) {
+        if (left->current_page_index != right->current_page_index)
+            return left->current_page_index < right->current_page_index;
+        return lv_obj_get_index(left->icon->getMainObject()) <
+               lv_obj_get_index(right->icon->getMainObject());
+    });
+    for (auto &page : _mix_objs) page.page_icon_count = 0;
+    for (size_t i = 0; i < icons.size(); ++i) {
+        const size_t page_index = i / _table_page_icon_count_max;
+        auto &page = _mix_objs[page_index];
+        auto *object = icons[i]->icon->getMainObject();
+        if (lv_obj_get_parent(object) != page.page_obj.get())
+            lv_obj_set_parent(object, page.page_obj.get());
+        lv_obj_move_to_index(object, page.page_icon_count);
+        icons[i]->current_page_index = page_index;
+        ++page.page_icon_count;
     }
+    while (_mix_objs.size() > _data.table.default_num && _mix_objs.back().page_icon_count == 0) {
+        ESP_BROOKESIA_CHECK_FALSE_RETURN(destoryMixObject(_mix_objs.size() - 1, _mix_objs), false, "Destroy mix object failed");
+    }
+    _table_current_page_index = std::min(std::max(_table_current_page_index, 0),
+                                       static_cast<int>(_mix_objs.size()) - 1);
+    ESP_BROOKESIA_CHECK_FALSE_RETURN(scrollToPage(_table_current_page_index), false, "Update launcher page failed");
 
     return true;
 }

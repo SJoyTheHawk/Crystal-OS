@@ -33,6 +33,7 @@ std::deque<CrystalAppEntry> s_catalog;
 std::deque<CrystalPackageManifest> s_package_manifests;
 crystal_package_factory_t s_package_factory = nullptr;
 ESP_Brookesia_Phone *s_phone = nullptr;
+crystal_registry_removed_hook_t s_removed_hook = nullptr;
 
 void sync_package_catalog()
 {
@@ -147,8 +148,11 @@ bool crystal_registry_set_enabled(const char *id, bool enabled)
 
 bool crystal_registry_set_slot(const char *id, uint16_t slot)
 {
-    if (id) for (const auto &r : crystal_packages()) if (r.manifest.id == id) return crystal_package_set_slot(id, slot);
-    const bool ok = write_value(id, 's', slot);
+    const bool ok = [&] {
+        if (id) for (const auto &r : crystal_packages())
+            if (r.manifest.id == id) return crystal_package_set_slot(id, slot);
+        return write_value(id, 's', slot);
+    }();
     if (ok) {
         ESP_LOGI(TAG, "%s slot=%u (applies next boot)", id, static_cast<unsigned>(slot));
     } else {
@@ -283,6 +287,7 @@ bool crystal_registry_install(ESP_Brookesia_Phone *phone,
 }
 
 void crystal_registry_set_package_factory(crystal_package_factory_t factory) { s_package_factory = factory; }
+void crystal_registry_set_removed_hook(crystal_registry_removed_hook_t hook) { s_removed_hook = hook; }
 
 CrystalApp *crystal_registry_create_app(const CrystalAppEntry *entry)
 {
@@ -338,7 +343,9 @@ bool crystal_registry_uninstall_package(const char *id)
         }
         if (!s_phone->uninstallApp(app)) return false;
         delete app;
+        const size_t removed_index = static_cast<size_t>(installed - s_installed.begin());
         s_installed.erase(installed);
+        if (s_removed_hook != nullptr) s_removed_hook(removed_index);
     }
     std::string error;
     if (!crystal_package_remove(id, true, &error)) {

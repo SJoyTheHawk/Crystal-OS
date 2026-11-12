@@ -1,0 +1,101 @@
+Status Dashboard uninstall check — 2026-11-12
+Source: user-supplied serial log, apps API response, and launcher observation.
+
+Serial excerpt:
+I (562357) crystal_app: Status Dashboard lifecycle: onPause
+I (562357) crystal_app: Status Dashboard lifecycle: onDestroy
+I (562534) crystal_shell: Control-panel uninstalled org.crystal.declarative-dashboard
+I (605943) crystal_shell: Opening Settings from launcher
+I (609997) crystal_control: Starting local panel: sockets=16 clients=4 internal=43067 largest_internal=17408 psram=4465980
+I (609999) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (629370) crystal_control: Starting local panel: sockets=16 clients=4 internal=42855 largest_internal=17408 psram=4465728
+I (629373) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (650906) crystal_control: Starting local panel: sockets=16 clients=4 internal=42643 largest_internal=17408 psram=4465744
+I (650908) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+
+The supplied schema-1 apps response contains only enabled built-ins:
+dev_tester slot=0, clock slot=2, weather slot=3, calculator slot=4.
+org.crystal.declarative-dashboard is absent.
+User report: built-ins work normally; launcher has an empty position at the
+bottom right and an incorrect count after removal. The removed package was
+at ordering slot 1. The launcher hole disappears after reboot.
+
+PASS: app lifecycle teardown and package removal; apps API contains four
+built-ins and no Dashboard; built-ins remain usable (user-reported).
+FAIL: launcher does not fully reconcile its live grid/count after removal.
+The package removal itself and the launcher UI mismatch are separate results.
+Cancel and web-panel disappearance were not separately confirmed in this
+message. Do not infer them from the API response alone.
+
+Code correction:
+- Brookesia's launcher previously removed an icon only from its current page,
+  leaving icons on later pages in place. Removal now preserves visual order,
+  fills earlier page gaps with the existing icon objects, trims trailing
+  empty pages, and clamps the selected page and its indicators.
+- The registry now notifies the shell immediately after removing an installed
+  row. The shell refreshes its card count, shifts current/Settings return
+  indices, and clears a Settings return target that was removed. Both web
+  and on-device uninstall share this registry path.
+- Ordering slots are persistent ranks; their numeric gaps do not identify
+  physical launcher cells. This correction does not rewrite saved slot ranks.
+
+The correction has not been flashed or device-tested. Reinstall Dashboard
+after flashing, then uninstall again and inspect the launcher immediately,
+without reboot. Confirm four working built-ins, no blank position or empty
+page, correct card indicators, and correct return behavior from Settings.
+
+Host validation on 2026-11-12:
+- python3 tools/test_app_platform_v2.py: exit 0 under ASan/UBSan. Production
+  LVGL/Brookesia launcher tests span three pages, remove first/middle/last
+  icons, preserve visual order with non-sorted IDs and existing object
+  identities, trim empty pages and indicators, clamp the selected page,
+  verify clickable images after scrolling, and add/remove a replacement.
+  Ten production package uninstall cycles verify removal-hook delivery
+  after the installed list changes. Expected FAIL messages in deliberate
+  corrupt reboot-state fixtures are followed by their PASS summary.
+- python3 tools/test_shell_control_launch.py: exit 0 under ASan/UBSan.
+  Removal tests cover all current/removed indices, Settings return targets,
+  refreshed card counts, persistence, removed-target fallback and an empty
+  installed list, alongside existing launch/clear-data regressions.
+- python3 tools/test_crystal_registry.py: exit 0.
+- idf.py build: exit 0. Firmware size 0x2f1000, 26% partition headroom.
+- git diff --check: exit 0.
+
+These checks do not establish that the launcher fix has been flashed.
+The on-device immediate-removal retest remains pending.
+
+Device confirmation and serial follow-up on 2026-11-12:
+User report: "Yes, working after uninstallation."
+Supplied follow-up serial excerpt:
+I (15538) crystal_core: HTTPS smoke test passed
+I (15543) crystal_http: response released id=2
+I (15546) crystal_http: heap released id=2 internal=36699 largest_internal=19456 psram=4477752
+I (16315) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4476952
+I (17227) crystal_shell: card crossover cancelled; active=1, PSRAM free=4477672
+I (19444) crystal_shell: Opening Settings from app index 0, closing app
+I (19445) crystal_app: Dev Tester lifecycle: onPause
+I (22591) crystal_control: Starting local panel: sockets=16 clients=4 internal=36447 largest_internal=19456 psram=3993684
+I (22594) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (42512) crystal_shell: Control-panel uninstalled org.crystal.declarative-dashboard
+I (54400) crystal_shell: Home gesture: travel=133, depth=2, quick=0, last_app=0
+I (54400) crystal_shell: Closing all 2 Settings pages
+I (54403) crystal_shell: Returning to app index 0
+I (54406) crystal_app: Dev Tester lifecycle: onResume
+I (54412) crystal_shell: active card 1/4: dev_tester
+I (55461) crystal_shell: Home gesture: travel=100, depth=0, quick=0, last_app=-1
+I (55461) crystal_shell: Sending HOME to go to launcher
+I (55462) crystal_app: Dev Tester lifecycle: onPause
+W (63477) crystal_shell: Control-panel uninstall failed for org.crystal.declarative-dashboard
+
+PASS: web-panel uninstall and immediate launcher recovery (user-confirmed).
+The serial excerpt independently confirms returning from two Settings pages
+to Dev Tester and the corrected four-app count, without a reboot between
+removal and return. The next Home action opens the launcher normally.
+The final warning is a later uninstall action for the already removed ID;
+the registry rejects an unavailable catalog entry. It does not reverse the
+earlier removal. The excerpt does not identify how that later request was
+initiated, so a double-click, stale browser, or other cause is not assumed.
+
+The earlier live-launcher failure is resolved for the web-panel path.
+Separate on-device Manage Apps uninstall, Uninstall cancellation, and the
+explicit reinstall/boot-discovery checklist remain open.

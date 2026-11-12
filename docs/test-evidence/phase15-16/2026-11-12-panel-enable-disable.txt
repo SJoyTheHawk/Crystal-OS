@@ -1,0 +1,20 @@
+Status Dashboard enable/disable check — 2026-11-12
+Source: user-reported device and browser test.
+
+Procedure confirmed by the user:
+1. Disable Status Dashboard in the web panel, then Refresh.
+2. Confirm Disabled is displayed and Launch is unavailable.
+3. Enable Status Dashboard again, then Refresh.
+4. Confirm Enabled is displayed and Launch is available again.
+
+User report: "No visible logs from the serial log. Both actions from point 1
+to point 4 confirmed working properly"
+
+PASS: disabled/enabled state survives an explicit app-list refresh, and Launch
+availability follows the displayed state in both directions.
+Serial observation: no visible new output was reported during these actions.
+No HTTP response bodies or serial transcript were supplied for this check.
+
+No reboot was requested for this test. Persistence across reboot, runtime
+application of the enabled setting, and agreement with on-device Manage Apps
+remain separate checks. Status Dashboard was restored to Enabled at the end.

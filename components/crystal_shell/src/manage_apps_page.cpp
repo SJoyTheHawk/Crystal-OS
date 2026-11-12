@@ -54,7 +54,7 @@ void content_deleted(lv_event_t *event)
 
 void clear_data_cancelled(lv_event_t *)
 {
-    ESP_LOGI("manage_apps", "Clear data cancelled");
+    ESP_LOGI("manage_apps", "%s cancelled", s_uninstall ? "Uninstall" : "Clear data");
     close_clear_dialog();
 }
 
@@ -62,15 +62,17 @@ void clear_data_confirmed(lv_event_t *)
 {
     const CrystalAppEntry *target = s_clear_target;
     lv_obj_t *content = s_clear_content;
+    const bool uninstall = s_uninstall;
     bool success = false;
     if (target != nullptr) {
-        ESP_LOGI("manage_apps", "Clearing data for %s", target->id);
-        success = s_uninstall ? crystal_registry_uninstall_package(target->id) :
+        ESP_LOGI("manage_apps", "%s %s", uninstall ? "Uninstalling" : "Clearing data for", target->id);
+        success = uninstall ? crystal_registry_uninstall_package(target->id) :
             s_clear_callback != nullptr && s_clear_callback(target);
-        if (success) ESP_LOGI("manage_apps", "Successfully cleared data for %s", target->id);
-        else ESP_LOGE("manage_apps", "Failed to clear data for %s", target->id);
+        if (success) ESP_LOGI("manage_apps", "%s %s", uninstall ?
+            "Successfully uninstalled" : "Successfully cleared data for", target->id);
+        else ESP_LOGE("manage_apps", "%s %s", uninstall ?
+            "Failed to uninstall" : "Failed to clear data for", target->id);
     }
-    const bool uninstall = s_uninstall;
     close_clear_dialog();
     if (content != nullptr) {
         if (uninstall && success) crystal_manage_apps_page_build(content, s_clear_callback);
@@ -322,20 +324,18 @@ void handle_drag_end(lv_event_t *event, bool dropped)
     }
     bool saved = entries.size() == drag.original.size();
     bool changed = false;
-    bool unique_slots = true;
     for (size_t i = 0; saved && i < entries.size(); ++i) {
         if (entries[i] != drag.original[i].entry) changed = true;
-        if (i > 0 && drag.original[i].slot <= drag.original[i - 1].slot) unique_slots = false;
     }
     if (saved && !changed) {
         lv_obj_update_layout(content);
         return;
     }
-    // Preserve slot spacing. Ties need unique ranks to survive the boot sort.
+    // Save consecutive ranks, removing gaps left by defaults or removed apps.
     for (size_t i = 0; saved && i < entries.size(); ++i) {
         const auto *entry = entries[i];
         if (entry == nullptr || i > UINT16_MAX) { saved = false; break; }
-        const uint16_t slot = unique_slots ? drag.original[i].slot : static_cast<uint16_t>(i);
+        const uint16_t slot = static_cast<uint16_t>(i);
         if (crystal_registry_slot(entry->id, entry->default_slot) != slot &&
             !crystal_registry_set_slot(entry->id, slot)) saved = false;
     }

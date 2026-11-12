@@ -1,0 +1,142 @@
+Status Dashboard web clear-data check — 2026-11-12
+Source: user-supplied device serial excerpt and explicit Cancel confirmation.
+
+Supplied serial excerpt:
+I (173236) crystal_shell: Control-panel cleared data for org.crystal.declarative-dashboard: 0
+W (202285) httpd_txrx: httpd_sock_err: error in recv : 104
+I (237840) crystal_shell: Control-panel cleared data for org.crystal.declarative-dashboard: 0
+I (297777) crystal_app: Status Dashboard lifecycle: onResume
+I (297785) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (297786) crystal_shell: Control-panel launched org.crystal.declarative-dashboard behind Settings
+I (299449) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 95% (original: 5%)
+I (299676) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 92% (original: 8%)
+I (300824) crystal_shell: Home gesture: travel=115, depth=2, quick=0, last_app=0
+I (300824) crystal_shell: Closing all 2 Settings pages
+I (300827) crystal_shell: Returning to app index 0
+I (300831) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+
+User confirmation: "Confirmed cancel will do nothing, and no log appears"
+PASS (user-reported): Cancel causes no clear-data operation or completion log.
+FAIL: both confirmed clear attempts returned 0 (false). Data removal is not
+confirmed and the clear-data checklist item must remain open.
+PASS (serial evidence): remote Launch while nested Settings is open resumes
+Dashboard behind Settings; closing both pages retains Dashboard as active.
+The receive warning is recorded as observed; this excerpt does not establish
+its cause or connect it to the clear-data lifecycle failure.
+
+Additional device attempt supplied by the user:
+I (410825) crystal_shell: Control-panel cleared data for org.crystal.declarative-dashboard: 1
+PASS: this individual clear attempt returned true. The trailing field is the
+boolean return of app->clearData(), not the app's launcher slot. Reordering
+does not change its meaning. This successful attempt does not establish that
+the two earlier false returns have been fixed.
+
+Code inspection: the web clear-data action only sent STOP for the foreground
+app. Settings can leave Dashboard paused in the manager's running map while
+getActiveApp() is null; clearData() correctly refuses to clear a live UI.
+The web action now uses the same verified STOP-before-clear routine as
+on-device Manage Apps, including temporary instances for non-installed apps.
+Completion logs now say "Control-panel clear data succeeded for <id>" or
+"Control-panel clear data failed for <id>" instead of an ambiguous number.
+This correction still requires a firmware flash and device retest.
+
+Host validation of the correction on 2026-11-12:
+- python3 tools/test_shell_control_launch.py: exit 0 under ASan/UBSan.
+  Production dispatcher and management helper tests cover foreground and
+  paused apps behind root/nested Settings, STOP delivery failure or an app
+  remaining running, storage failure/retry, temporary instances for disabled
+  apps, repeated clear, relaunch, and Settings return selection.
+- python3 tools/test_app_platform_v2.py: exit 0 under ASan/UBSan.
+  Production Dashboard/CrystalApp/Brookesia/LVGL checks reproduce a paused app
+  rejecting clearData(), then verify STOP releases its resources, clearData()
+  removes a saved state value, repeated clear succeeds, and reopening works.
+  Expected FAIL messages from deliberately corrupt reboot-state fixtures do
+  not indicate a suite failure.
+- idf.py build: exit 0, firmware size 0x2f1000 with 26% partition headroom.
+- git diff --check: exit 0.
+
+Pending device retest after app-flash: launch Dashboard, open Developer Tools
+so Dashboard is paused, confirm Clear data in the paired web panel, and
+require the explicit succeeded log. Repeat once while Settings remains open,
+then Launch and close Settings to confirm normal display and no reboot.
+Also clear once while Dashboard is foregrounded and confirm it relaunches.
+
+Device retest supplied on 2026-11-12 (line-continuation escapes normalized):
+I (21761) crystal_http: heap released id=2 internal=25215 largest_internal=8192 psram=3999376
+I (33052) crystal_registry: dev_tester slot=0 (applies next boot)
+I (33056) crystal_registry: org.crystal.declarative-dashboard slot=1 (applies next boot)
+I (33059) crystal_registry: clock slot=2 (applies next boot)
+I (33061) crystal_registry: weather slot=3 (applies next boot)
+I (33066) crystal_registry: calculator slot=4 (applies next boot)
+E (37077) esp-brookesia: [esp_brookesia_core_manager.cpp:473](getRunningAppById)App not found in running app list
+I (37080) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+E (45540) esp-brookesia: [esp_brookesia_core_manager.cpp:473](getRunningAppById)App not found in running app list
+I (45547) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+I (51916) crystal_control: Starting local panel: sockets=16 clients=4 internal=36227 largest_internal=21504 psram=3993888
+I (51918) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+E (59728) esp-brookesia: [esp_brookesia_core_manager.cpp:473](getRunningAppById)App not found in running app list
+I (59732) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+I (67918) crystal_control: Rebooting at the paired control panel's request
+
+User labels the following excerpt "After rebooting":
+I (33628) crystal_http: request attempt id=2 attempt=1/1
+I (33639) crystal_http: heap before id=2 internal=24779 largest_internal=8192 psram=3998568 largest_psram=3932160
+E (36077) esp-brookesia: [esp_brookesia_core_manager.cpp:473](getRunningAppById)App not found in running app list
+I (36081) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+
+PASS: four explicit successful clear-data completions, including one after
+a user-reported reboot. The basic clear-data completion checklist is closed.
+PASS: supplied slot writes cover consecutive values 0, 1, 2, 3, 4.
+Observed: authenticated panel reboot request followed by a user-reported reset
+and successful clear afterward. Browser presentation and exactly-once reset
+counting are not established by the excerpt.
+Still pending: Refresh shows the installed/enabled app, post-clear relaunch
+and display recovery, and explicit foreground/paused test coverage.
+
+The "App not found" diagnostic is produced by the manager's ID lookup when
+absence is expected (already stopped, or successfully removed by STOP).
+It is followed by success in these logs and is not a clear-data failure.
+The helper now inspects the running list without that noisy ID lookup while
+retaining the STOP completion check; unrelated errors are not suppressed.
+This log cleanup has not yet been flashed or checked on the device.
+Host checks for this cleanup: python3 tools/test_shell_control_launch.py
+passes under ASan/UBSan, including no missing-ID lookups during clear and
+preservation of other running apps. idf.py build and git diff --check both
+exit 0. No additional device flash was performed by the agent.
+
+Clear-data recovery follow-up — user report on 2026-11-12:
+W (373595) esp-brookesia: [esp_brookesia_core_manager.cpp:178](startApp)Running app num(1) is already at the limit, will close the oldest app(2)
+I (373596) crystal_app: Dev Tester lifecycle: onDestroy
+I (373608) crystal_app: Status Dashboard lifecycle: onCreate
+W (373722) crystal_app: Status Dashboard onCreate took 115 ms (budget 80 ms)
+I (373729) crystal_shell: active card 2/5: org.crystal.declarative-dashboard
+I (373729) crystal_shell: Control-panel launched org.crystal.declarative-dashboard behind Settings
+I (379361) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 95% (original: 5%)
+I (379393) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 92% (original: 8%)
+I (380411) crystal_shell: Home gesture: travel=147, depth=2, quick=0, last_app=1
+I (380411) crystal_shell: Closing all 2 Settings pages
+I (380414) crystal_shell: Returning to app index 1
+I (380418) crystal_shell: active card 2/5: org.crystal.declarative-dashboard
+I (393124) crystal_app: Status Dashboard lifecycle: onPause
+I (393124) crystal_app: Status Dashboard lifecycle: onDestroy
+E (393129) esp-brookesia: [esp_brookesia_core_manager.cpp:473](getRunningAppById)App not found in running app list
+I (393137) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+I (396237) crystal_app: Status Dashboard lifecycle: onCreate
+W (396349) crystal_app: Status Dashboard onCreate took 115 ms (budget 80 ms)
+I (396353) crystal_shell: active card 2/5: org.crystal.declarative-dashboard
+I (396353) crystal_shell: Control-panel launched org.crystal.declarative-dashboard
+W (425308) httpd_txrx: httpd_sock_err: error in recv : 104
+
+User confirmation: "Confirmed working ok"
+PASS: requested Refresh/installed-enabled check and normal display recovery
+are user-confirmed. The serial excerpt independently shows remote Launch
+behind nested Settings, closing both pages while retaining Dashboard, then
+foreground pause/destroy, successful clear, and a fresh Dashboard creation
+and active selection after Launch. No intervening restart appears in the
+supplied sequence. Clear-data recovery checklist is now passed.
+
+Performance follow-up remains open: both onCreate calls take 115 ms against
+the 80 ms budget. Successful functional recovery does not close that item.
+The missing-running-app lookup log remains expected on this firmware; the
+quiet lookup cleanup has not been device-validated. The later receive warning
+is retained as observed, without attributing it to the successful clear.

@@ -1,0 +1,137 @@
+Device batch D–F: persistence, panel recovery, PIN expiry — 2026-11-13
+Source: user-supplied serial excerpts, HTTP results, and UI observations.
+Relevant exact log lines are retained below; this is not the complete
+lengthy boot transcript. No device commands were executed by the agent.
+
+D — Clock Disable works after the built-in ID parser fix.
+User confirms Clock shows Disabled in both refreshed web panel and Manage Apps.
+I (56092) crystal_registry: clock enabled=0 (applies next boot)
+I (72917) manage_apps: Showing 4 catalog apps (restart to apply)
+
+Continuous first panel reboot and following boot:
+I (131074) crystal_control: Rebooting at the paired control panel's request
+W (131078) crystal_hal: WiFi disconnected, reason=8
+W (131079) crystal_hal: Retrying connect (1/10)
+rst:0xc (RTC_SW_CPU_RST),boot:0xa (SPI_FAST_FLASH_BOOT)
+I (1200) app_init: App version:      0.15.0
+I (1204) app_init: Compile time:     Nov 12 2026 18:38:15
+I (1209) app_init: ELF file SHA256:  7afe2888f...
+I (1213) app_init: ESP-IDF:          v6.1
+I (1361) crash: No coredump found
+I (3168) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (3239) crystal_registry: disabled: clock
+I (3252) crystal_registry: installed: calculator (slot 0)
+I (3260) crystal_registry: installed: dev_tester (slot 1)
+I (3375) crystal_registry: installed: weather (slot 3)
+I (3561) crystal_shell: active card 2/3: dev_tester
+I (4641) crystal_hal: WiFi initialized: internal=51499 largest_internal=31744
+I (5817) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+
+User confirms launcher order Calculator > Dev Tester > Weather, three apps.
+Authenticated browser Network responses after boot:
+GET http://192.168.1.193/api/v1/apps: 200 OK
+GET http://192.168.1.193/api/v1/system: 200 OK
+
+The startup Weather request times out, independently of the successful
+enable/ordering test. Exact diagnostics and recovery:
+W (14965) crystal_http: transport diagnostic id=1 error=ESP_ERR_HTTP_CONNECT tls_error=ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT tls_code=0 tls_flags=0x0 socket_errno=0
+I (14999) crystal_http: heap tls-peak id=1 internal=42359 largest_internal=29696 psram=4479288
+W (15052) crystal_core: weather fetch failed; next automatic try in 60 s
+I (20503) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=5402 ms error=ESP_OK
+I (20525) crystal_core: HTTPS smoke test passed
+I (20534) crystal_http: heap released id=2 internal=45439 largest_internal=29696 psram=4479316
+I (74582) crystal_http: request completed id=3 attempts=1 elapsed=7123 ms status=200
+I (74621) crystal_core: weather fetched: 22.7 C, humidity 84%, code 2, wind 9.6 km/h
+
+The earlier uptime also has an HTTP connect timeout before reboot:
+W (82795) crystal_http: transport diagnostic id=3 error=ESP_ERR_HTTP_CONNECT tls_error=ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT tls_code=0 tls_flags=0x0 socket_errno=0
+I (82829) crystal_http: heap tls-peak id=3 internal=24843 largest_internal=13312 psram=3997796
+W (82881) crystal_core: weather fetch failed; next automatic try in 180 s
+Do not label the initial Weather request a pass. The later retry proves
+recovery in this capture. These errors report connection timeout, not an
+allocation failure, and do not by themselves identify the remote/network
+cause. No firmware change is made on this evidence alone.
+
+Restoring enable state and original order:
+I (99162) manage_apps: Showing 4 catalog apps (restart to apply)
+I (103077) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (165995) crystal_registry: clock enabled=1 (applies next boot)
+I (172995) crystal_registry: dev_tester slot=0 (applies next boot)
+I (172996) crystal_registry: clock slot=1 (applies next boot)
+I (173000) crystal_registry: weather slot=2 (applies next boot)
+I (173004) crystal_registry: calculator slot=3 (applies next boot)
+I (194553) crystal_control: Rebooting at the paired control panel's request
+W (194557) crystal_hal: WiFi disconnected, reason=8
+W (194557) crystal_hal: Retrying connect (1/10)
+--- Error: read failed: [Errno 6] Device not configured
+--- Waiting for the device to reconnect
+I (1203) app_init: App version:      0.15.0
+I (1212) app_init: ELF file SHA256:  7afe2888f...
+I (1365) crash: No coredump found
+I (3172) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (3252) crystal_registry: installed: dev_tester (slot 0)
+I (3260) crystal_registry: installed: clock (slot 1)
+I (3375) crystal_registry: installed: weather (slot 2)
+I (3384) crystal_registry: installed: calculator (slot 3)
+I (3570) crystal_shell: active card 1/4: dev_tester
+I (5755) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+
+User confirms four gap-free launcher apps, Dev Tester > Clock > Weather >
+Calculator, with the same order and all apps enabled in both management UIs.
+PASS: Clock disable/enable fix, persisted enabled state and order, correct
+three-app launcher while Clock is disabled, four-entry management catalog,
+authenticated API recovery, and complete restoration after the second reboot.
+PASS: one requested restart in each of two deliberate reboot cycles in the
+supplied sequence. First includes an explicit software-reset reason; second
+includes USB reconnect and successful boot. No abort/watchdog is shown.
+Browser reboot guidance/dialog explanation was not separately described in
+this result; keep that presentation observation open.
+
+E — Developer Tools switch and Wi-Fi recovery:
+I (143974) crystal_control: Starting local panel: sockets=16 clients=4 internal=44103 largest_internal=31744 psram=3994676
+I (143976) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+User: switch on, PIN displays, switch remains on after reopening Developer Tools.
+After switching the panel off:
+curl: (7) Failed to connect to 192.168.1.193 port 80 after 1008 ms: Couldn't connect to server
+With Wi-Fi off, panel cannot enable; warning:
+Connect the device to WiFi before enabling the local panel.
+After Wi-Fi reconnect and panel enable:
+I (523208) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+I (523208) crystal_core: publishing network connected signal
+I (523210) crystal_core: network connected signal received; starting SNTP
+I (523217) crystal_core: SNTP request started
+I (523247) crystal_core: toast displayed: Connected to WiFi
+I (526084) crystal_control: Starting local panel: sockets=16 clients=4 internal=44287 largest_internal=31744 psram=3994088
+I (526087) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (526704) crystal_core: SNTP synchronized system clock and RTC
+Unauthenticated GET /api/v1/system after service recovery:
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Content-Length: 24
+Cache-Control: no-store
+{"error":"unauthorized"}
+PASS: enabled-switch state/PIN, persistence on page reopen, service stop,
+missing-Wi-Fi refusal, network reconnect and panel re-enable. The final 401
+is expected for curl without a token and confirms the API is reachable.
+The short Starting label and switch lock during startup were not explicitly
+reported; keep that visual observation open.
+
+F — unused PIN expiry:
+User waits 11 minutes before entering the unused code. Browser rejects it:
+That code could not be accepted. Turn Local Control Panel off and on in Developer Tools to get a new code.
+User confirms panel off/on yields a fresh code and pairing/Refresh work.
+PASS (user-confirmed): unused PIN expires and fresh-code recovery succeeds.
+No PIN or bearer-token value is retained. This is PIN expiry, not a test of
+the 24-hour bearer-token expiry.
+
+No additional build, flash, or code change is performed for this evidence
+update. Other signed-install, large-upload, runtime and phase-exit checks
+remain separate.
+
+Later clarification closes the remaining A–F observations; see
+2026-11-13-batch-af-closure.txt. The user supplies the expected browser
+reboot/re-pairing guidance. E's transient Starting/locked-toggle state is
+not practically observable in the fast path, and is explicitly closed
+using the rerun production-handler real-LVGL host test rather than being
+claimed as a physical observation. All other E functionality already
+passes on the board. This does not close the entire phase.

@@ -1,0 +1,38 @@
+Grouped panel session checks — 2026-11-13
+Source: user-supplied terminal output and browser observations.
+Device address: http://192.168.1.193
+
+The icon responses and laptop/mobile icon display pass; the full results
+are retained in 2026-11-13-panel-icons.txt.
+
+POST /api/v1/system/reboot without Authorization:
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Content-Length: 24
+Cache-Control: no-store
+
+{"error":"unauthorized"}
+
+POST /api/v1/system/reboot with Authorization: Bearer invalid-test-token:
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Content-Length: 24
+Cache-Control: no-store
+
+{"error":"unauthorized"}
+
+PASS: both unauthorized reboot requests return the expected HTTP 401 response.
+The later A–C batch repeats these alongside other protected endpoints and
+confirms no reboot-request message and a usable paired browser after Refresh;
+see 2026-11-13-batch-abc-clock-disable.txt. Real expired/altered valid tokens
+are not covered by those missing/made-up-token responses.
+
+User report: "Sign out appears on the top. Just below the header."
+PASS: reported placement of Sign out.
+
+The user initially paused selected-package cleanup to locate a .capp file.
+Verified local fixture: /tmp/crystal-uninstall-retest.capp.
+Subsequent user result on 2026-11-13: Step 4 works as instructed, including
+selected-package cleanup after Sign out and re-pairing. Reboot cancellation
+also passes. Captured boot recovery and remaining reset/browser observations
+are recorded in 2026-11-13-panel-reboot-recovery.txt.

@@ -1,0 +1,45 @@
+On-device Manage Apps uninstall — 2026-11-12
+Source: user-supplied serial excerpt and screen observations following the
+on-device Uninstall / Cancel / confirm / compare-lists instructions.
+
+Original serial excerpt:
+I (361881) crystal_app: Status Dashboard lifecycle: onDestroy
+I (361893) crystal_app: Dev Tester lifecycle: onCreate
+I (364949) crystal_shell: Opening Settings from app index 0, closing app
+I (364950) crystal_app: Dev Tester lifecycle: onPause
+I (366938) manage_apps: Showing 5 catalog apps (restart to apply)
+I (374002) manage_apps: Clear data cancelled
+I (387957) manage_apps: Clearing data for org.crystal.declarative-dashboard
+I (388112) manage_apps: Successfully cleared data for org.crystal.declarative-dashboard
+I (388147) manage_apps: Showing 4 catalog apps (restart to apply)
+
+User report: "Manage apps and control panel show 4 apps. There are 4 apps
+with no holes in the launcher."
+
+PASS: on-device Uninstall cancellation leaves removal unexecuted until the
+later confirmed operation. The supplied sequence shows Cancel, then a later
+confirmation and a four-app catalog.
+PASS: confirmed on-device package removal, agreement between Manage Apps
+and the web panel, and four launcher apps without gaps (user-confirmed).
+No reboot occurs in the supplied sequence. Individual card-indicator counts
+and Settings return logs were not included in this excerpt.
+
+Logging correction: Clear and Uninstall share a confirmation handler, which
+previously printed "cleared data" for both actions. The actual confirmed
+operation dispatches crystal_registry_uninstall_package when Uninstall is
+selected; it did not merely erase app data. The handler now prints
+"Uninstall cancelled", "Uninstalling <id>", and "Successfully uninstalled
+<id>" (or "Failed to uninstall <id>") for that action. Clear-data wording
+is retained for Clear data. This wording change is not flashed yet.
+
+Host validation after the wording correction:
+PASS: python3 tools/test_manage_apps_page.py --output-dir /tmp/crystal-manage-apps-uninstall-logs
+  Real LVGL confirmation, target isolation, cancel/back, success/failure/retry,
+  modal teardown, drag persistence/rollback, and package catalog refresh.
+  The package Uninstall regression now explicitly checks that Cancel leaves
+  the package available and the uninstall invocation count at zero.
+PASS: idf.py build (crystal_os.bin 0x2f1000 bytes; 26% app-partition space free).
+PASS: git diff --check.
+
+Web-panel Uninstall cancellation and other unchecked phase gates remain
+separate from this successful on-device test.

@@ -212,7 +212,12 @@ typedef struct {
 
 - **Hand-deleting a folder over USB is a legitimate uninstall.** Boot reconcile notices and cleans the registry.
 - **Disable vs. Uninstall:** Bundled apps show "Disable" button; package apps show "Uninstall" button.
-- **Reordering:** Drag-reorder in Manage Apps writes two `u16` slot values to NVS (fast, atomic).
+- **Reordering:** Manage Apps drag-reorder and the web panel save consecutive
+  `u16` ranks from 0 through app-count minus one, including disabled apps.
+  Built-in settings use NVS; package settings use the package registry.
+  Manage Apps restores the original per-app slots if a save fails and reports
+  any rollback failure. These multi-app writes are not an atomic transaction.
+  The launcher applies the saved order on the next boot.
 - **Error tracking:** Three consecutive launch failures → auto-disable with notice in Manage Apps.
 
 ---
@@ -779,8 +784,11 @@ permission-checked timer actions. Visual references for Clock, Weather and
 Calculator are packaged in `examples/declarative_dashboard/visual` and pass
 the production host runtime. The user clarified that bundled-app parity means
 visual UI expressibility; Calculator computation and Weather fetching remain
-in their current runtimes, and Weather stays bundled. Dynamic property/event
-operations, device lifecycle verification, and ABI freeze remain open.
+in their current runtimes, and Weather stays bundled. The 2026-11-13 K/L/M
+device results establish implemented lifecycle/cleanup and Dashboard bindings.
+Dynamic property/event/focus operations, the remaining reconnect/load
+observations and ABI review/freeze remain open; use the reconciled
+[closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
 
 ### Phase 17: Script Runtime, Async HTTP, Worker Threads
 
@@ -1029,18 +1037,31 @@ curated native resource contract, validation evidence, and deferred follow-ups.
 
 ### Phase 15 Checklist
 
-- [x] Local HTTP API implements pairing, app list/system status, package upload, app actions, and bounded logs; hardware/API validation remains
+Remaining implementations, device checks and scope conflicts are consolidated
+in the [Phase 15/16 closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+The existing Device/Live logs viewer has functional board validation in P,
+including mobile. Concurrent servicing and active-stream shutdown remain open.
+
+Hardware results: [A–F](test-evidence/phase15-16/2026-11-13-batch-af-closure.txt)
+and [G–M](test-evidence/phase15-16/2026-11-13-batch-gm-results.txt), extended by
+[N–R](test-evidence/phase15-16/2026-11-13-batch-nr-results.txt). These establish
+the implemented functional gate; missing browser USB,
+catalog workflow/scope closure and
+stream concurrency/shutdown remain open, so Phase 15 is not closed.
+
+- [x] Local HTTP API implements pairing, app list/system status, package upload, app actions, and bounded logs; functional hardware checks pass
 - [ ] Web UI static files served over WiFi and USB (WiFi asset serving and package progress are implemented; Browser Web Serial remains)
-- [ ] Pairing PIN flow working (6-digit code shown on device); hardware flow remains to validate
-- [ ] Bearer token exchange and validation; hardware flow remains to validate
-- [x] Ed25519 signature verification for packages with configurable trusted public keys (release key still needs configuration)
-- [x] `crystal pack --sign` adds signature to `.capp`; host signing and verification tests pass
-- [x] Host tooling signs, lists, and downloads packages from a signed HTTPS catalog; device catalog browsing/downloading remains
+- [x] Pairing PIN flow working on device, including one-use rejection, expiry and fresh-code recovery
+- [x] Bearer token exchange and validation on device; missing/invalid tokens rejected for protected endpoints
+- [x] Ed25519 signature verification with configured test key ID 240; signed install accepted and untrusted/tampered packages rejected (release identity remains a deployment decision)
+- [x] `crystal pack --key <private.pem> --key-id <id>` signs `.capp`; host signing and verification tests pass
+- [x] Host tooling signs, lists, and downloads packages from a signed HTTPS catalog; hosted end-to-end evidence and alignment of device-browsing wording with resolved section 15.2 remain
+- [x] Existing Device/Live logs viewer functionally validated on the board: lifecycle output, pause/restart and sign-out hiding/clearing the view, including mobile (P); output bounds are source/host-verified, stream servicing remains separate
 - [x] `crystal install --usb` pushes a framed `.capp` over USB Serial/JTAG (unsigned developer package installed and reboot-reconciled on the board)
-- [x] `crystal logs -f` streams authenticated app lifecycle/debug lines over Wi-Fi SSE
-- [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi
-- [x] Install progress bar for packages > 1 MB in the browser upload flow
-- [ ] Exit gate: Install via web UI and CLI both work; API rejects unauthenticated requests
+- [x] `crystal logs -f` streams authenticated app lifecycle/debug lines over Wi-Fi SSE; device evidence in I/M (60-second stream, no automatic reconnect; concurrency/shutdown remain)
+- [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi; device-confirmed in M
+- [x] Install progress bar for packages > 1 MB; J confirms visible progression for 1328026 bytes
+- [x] Functional exit gate: web UI and CLI installs both work; API rejects unauthenticated requests (phase closure still requires the remaining scope)
 
 ### Phase 16 Checklist
 
@@ -1050,7 +1071,11 @@ curated native resource contract, validation evidence, and deferred follow-ups.
 - [ ] Complete documented property/event operations, including dynamic list/chart APIs and input focus
 - [x] Data binding to `crystal.service` (time, network, timer)
 - [x] Event routing for the allowlisted timer system actions
-- [ ] Verify documented lifecycle and binding behavior on device
+- [x] Verify implemented lifecycle and cleanup on device: repeated create/pause/resume/destroy, clear data, disable/re-enable, reinstall and reboot (K/L/M)
+- [x] Dashboard online/offline/reconnect UI confirmed (K/O); service bindings update visibly
+- [ ] Complete simultaneous Dashboard + enabled panel + TLS memory/load evidence; O passes panel+TLS before Dashboard starts but reaches 5807 free internal bytes / 3328-byte largest block at different samples
+- [ ] Classify/resolve Dashboard onCreate timing warnings (95–120 ms versus the current 80 ms warning; section 6.6 allows 200 ms for standard apps, so determine the correct class before imposing a hard limit)
+- [x] Confirm launcher caption fix on device: N reports Action Guard... in the launcher and full management names on updated ELF 07e71ed2e; real-LVGL regression and firmware build also pass
 - [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; their behavior remains in existing runtimes
 - [ ] Freeze ABI v1 after the required facade surface is implemented and reviewed
 

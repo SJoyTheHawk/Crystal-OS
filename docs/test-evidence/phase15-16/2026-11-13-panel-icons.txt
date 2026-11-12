@@ -1,0 +1,63 @@
+Control panel browser icons — 2026-11-13
+
+User supplied assets/control-panel/favicon.png and requested resizing and use.
+Original: 586x586 RGBA PNG, 360358 bytes. A source copy was retained locally
+at /tmp/crystal-panel-icon-source/favicon-586.png during this task.
+
+Generated assets:
+- favicon.png: 48x48 RGBA PNG, 4895 bytes (98.6% smaller than the source).
+- favicon.ico: PNG-backed 48x48 ICO, 4917 bytes, for /favicon.ico requests.
+- apple-icon.png: 180x180 indexed PNG with transparency, 15453 bytes, for
+  mobile touch icons. Initially approximately 49 KiB after resizing; reduced
+  further to 256 colors in response to the user's storage concern.
+Both PNG sizes were derived directly from the original with macOS sips;
+the mobile icon was then palette-quantized with transparency preserved.
+The pre-quantization mobile source is retained locally at
+/tmp/crystal-panel-icon-source/apple-icon-180-rgba.png during this task.
+The mobile icon's regression size budget is now less than 20 KiB.
+
+Memory clarification: these assets reside in the SPIFFS flash partition.
+The ESP32 sends the encoded file through its existing 1024-byte stack buffer;
+it does not decode the image or load the full icon into RAM. HTTP/filesystem
+buffering has its own overhead; 1024 bytes describes the explicit file-copy
+buffer, not the total server RAM footprint. Image decoding runs in the browser.
+
+Page metadata uses the local PNG favicon and mobile touch icon. Firmware
+serves them with image/png (ICO: image/x-icon), streaming in 1024-byte chunks.
+The existing optional local-panel lifecycle and protected API routes remain
+in place. Two additional icon route registrations bring capacity to 12;
+the socket limit, task stack, and four-client pool are unchanged.
+Only explicitly allowlisted asset paths are opened.
+
+URLs: /favicon.png, /favicon.ico, /apple-icon.png, /apple-touch-icon.png,
+and /apple-touch-icon-precomposed.png. Both Apple fallback URLs map to the
+short stored filename /control-panel/apple-icon.png. The first build caught
+the existing SPIFFS 31-byte filename limit with apple-touch-icon.png; this
+was corrected by shortening the stored name, without changing filesystem
+configuration. The subsequent complete firmware/storage-image build passes.
+
+PASS: python3 tools/test_control_panel_assets.py
+  Production static handler under ASan/UBSan: binary payloads, MIME types,
+  query suffix, icon aliases, path rejection, missing files, send failures.
+  Asset dimensions, file-size budgets, SPIFFS filename fit, and ICO payload.
+PASS: node tools/test_control_panel.mjs
+  Actual Chrome decodes both icons at 48x48 and 180x180. Existing desktop
+  and mobile layout, pairing, sign-out, reboot, app, upload and log checks pass.
+PASS: idf.py build
+  Includes storage.bin generation; firmware size 0x2f1000, 26% partition free.
+PASS: git diff --check.
+
+At completion of the implementation, no device flash had been performed by
+the agent. The user subsequently supplied these device results on 2026-11-13
+at http://192.168.1.193:
+
+/favicon.png: HTTP 200, image/png, 4895 bytes
+/favicon.ico: HTTP 200, image/x-icon, 4917 bytes
+/apple-icon.png: HTTP 200, image/png, 15453 bytes
+/apple-touch-icon.png: HTTP 200, image/png, 15453 bytes
+/apple-touch-icon-precomposed.png: HTTP 200, image/png, 15453 bytes
+
+User report: "Panel opened on laptop and mobile, browser icon shows correctly."
+PASS: all five device-served URLs have the expected status, MIME type and
+payload size. Browser icon display passes on laptop and mobile (user-confirmed).
+No additional flash is needed merely to repeat this completed icon check.

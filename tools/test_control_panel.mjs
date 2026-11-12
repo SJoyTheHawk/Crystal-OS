@@ -109,6 +109,10 @@ try {
   }.toString() + ')();' });
   await cdp('Page.navigate', { url: pathToFileURL(join(root, 'assets/control-panel/index.html')).href });
   await waitFor("!!document.getElementById('pair-form')", 'page loaded');
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('link[rel=icon],link[rel=apple-touch-icon]')].map(link=>[link.rel,link.getAttribute('href'),link.getAttribute('sizes')])"),
+    [['icon', 'favicon.png', '48x48'], ['apple-touch-icon', 'apple-icon.png', '180x180']], 'desktop and mobile icons use optimized local assets');
+  assert.deepEqual(await evaluate("Promise.all([...document.querySelectorAll('link[rel=icon],link[rel=apple-touch-icon]')].map(link=>new Promise((resolve,reject)=>{const icon=new Image();icon.onload=()=>resolve([icon.naturalWidth,icon.naturalHeight]);icon.onerror=()=>reject(Error('Icon failed to load'));icon.src=link.href})))"),
+    [[48, 48], [180, 180]], 'both icons decode at their declared dimensions');
   await waitFor("document.querySelector('img.brand-mark').complete && document.querySelector('img.brand-mark').naturalWidth > 0", 'header logo loaded');
   assert.deepEqual(await evaluate("{const logo=document.querySelector('img.brand-mark');[logo.naturalWidth,logo.naturalHeight]}"), [144, 121], 'header uses the optimized logo');
   assert.equal(await evaluate("{const logo=document.querySelector('img.brand-mark');Math.abs(logo.width / logo.height - 144 / 121) < 0.04 && logo.width === 44}"), true, 'desktop logo fits without stretching');
@@ -134,10 +138,14 @@ try {
   assert.equal(await evaluate("document.querySelector('.app:last-child button').disabled"), true, 'disabled app cannot launch');
   await appButton('Enable'); await waitFor("fixture.apps[2].enabled===true && !document.getElementById('refresh').disabled", 'enable app');
   await click('.app:first-child button[title="Move down"]');
-  await waitFor("fixture.apps[0].slot===3 && !document.getElementById('refresh').disabled", 'reorder apps');
-  assert.deepEqual(await evaluate("fixture.calls.find(c=>c.path==='/api/v1/apps/order').body.map(a=>a.slot)"), [2, 3, 16], 'preserves existing slot values');
+  await waitFor("fixture.apps[0].slot===1 && !document.getElementById('refresh').disabled", 'reorder apps');
+  assert.deepEqual(await evaluate("fixture.calls.find(c=>c.path==='/api/v1/apps/order').body.map(a=>a.slot)"), [0, 1, 2], 'compacts sparse slots into consecutive ranks');
+  await click('#refresh'); await waitFor("!document.getElementById('refresh').disabled", 'refresh reordered apps');
+  assert.deepEqual(await evaluate("currentApps.map(app=>[app.id,app.slot])"), [['weather', 0], ['clock', 1], ['org.crystal.declarative-dashboard', 2]], 'refresh preserves dense order');
   await click('.app:nth-child(2) button[title="Move up"]');
-  await waitFor("fixture.apps[0].slot===2 && !document.getElementById('refresh').disabled", 'move app back up');
+  await waitFor("fixture.apps[0].slot===0 && !document.getElementById('refresh').disabled", 'move app back up');
+  await click('#refresh'); await waitFor("!document.getElementById('refresh').disabled", 'refresh restored order');
+  assert.deepEqual(await evaluate("currentApps.map(app=>[app.id,app.slot])"), [['clock', 0], ['weather', 1], ['org.crystal.declarative-dashboard', 2]], 'moving back keeps consecutive ranks');
   await appButton('Uninstall'); assert.equal(await evaluate("document.getElementById('confirm-dialog').open"), true);
   assert.equal(await evaluate("document.getElementById('confirm-accept').classList.contains('danger')"), true, 'uninstall keeps a destructive action color');
   await click('#confirm-cancel'); assert.equal(await evaluate("fixture.calls.some(c=>c.method==='DELETE')"), false, 'cancel cannot delete');

@@ -1,0 +1,62 @@
+Status Dashboard web ordering check — 2026-11-12
+Source: user-confirmed browser test and supplied serial excerpt.
+
+The user confirmed moving Status Dashboard down one position, refreshing and
+checking the saved position, then moving it back up and refreshing to confirm
+the original order. No reboot was requested for this test.
+
+Supplied serial excerpt:
+I (359627) crystal_control: Starting local panel: sockets=16 clients=4 internal=34499 largest_internal=9728 psram=3987992
+I (359630) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (366600) crystal_registry: dev_tester slot=0 (applies next boot)
+I (366606) crystal_registry: clock slot=3 (applies next boot)
+I (366606) crystal_registry: weather slot=4 (applies next boot)
+I (366608) crystal_registry: calculator slot=16 (applies next boot)
+I (376975) crystal_registry: dev_tester slot=2 (applies next boot)
+I (376977) crystal_registry: clock slot=3 (applies next boot)
+I (376978) crystal_registry: weather slot=4 (applies next boot)
+I (376982) crystal_registry: calculator slot=16 (applies next boot)
+
+PASS: both move directions persist through an explicit browser Refresh.
+Observation: saved slots are sparse, and package slot updates were not logged
+by crystal_registry because the package path returned before its log call.
+The existing web reorder preserves old slot values; the shipped built-ins
+and initial package allocation also use different default ranges. These
+numbers alone do not establish that uninstalled apps occupy missing slots.
+
+Follow-up requested: save consecutive ranks in both web and on-device reorder
+paths. Host checks and firmware changes require a fresh device retest; the
+excerpt above predates that change. Reboot persistence remains unverified.
+
+Implementation follow-up — host validation on 2026-11-12:
+- Web reorder now assigns slots 0..N-1 in the requested order.
+- On-device Manage Apps assigns the same consecutive ranks on a changed drag
+  and retains its no-op/cancel and failed-save rollback handling.
+- Package slot writes now reach the registry success/failure log.
+- node tools/test_control_panel.mjs: exit 0; sparse slots compact on Move down,
+  remain consecutive on Move up, and both saved orders survive Refresh.
+- python3 tools/test_manage_apps_page.py --output-dir /tmp/crystal-manage-apps-dense-slots:
+  exit 0; production real-LVGL drag, dense ranks, rebuild persistence,
+  no-op/cancel, save failure and rollback checks pass.
+- python3 tools/test_crystal_registry.py: exit 0.
+- python3 tools/test_app_platform_v2.py: exit 0; production package/registry
+  integration under ASan/UBSan, including the package slot dispatch. Its
+  deliberately corrupt reboot-state cases emit expected FAIL diagnostics.
+- idf.py build: exit 0; application and storage images rebuilt. Firmware
+  size 0x2f1000, leaving 26% of the smallest application partition free.
+- git diff --check: exit 0.
+
+These results are host checks, not evidence that the updated firmware has
+been flashed or tested on this device. After app-flash and storage-flash,
+reload/re-pair the panel and move an app, then Refresh to normalize the
+existing saved order. Verify unique slots 0..N-1 in /api/v1/apps, move it back,
+Refresh again, then separately verify order after reboot and in Manage Apps.
+The flash itself does not rewrite the saved ordering.
+
+Device follow-up — user confirmation on 2026-11-12:
+The user replied "Correct now. Contrinue the testing" after receiving the
+flash and move/Refresh retest instructions above.
+PASS (user-reported): consecutive-slot correction works on the device.
+No new API response or serial excerpt was supplied with this confirmation.
+Reboot persistence and agreement with on-device Manage Apps remain separate
+checks; this confirmation does not close those items.

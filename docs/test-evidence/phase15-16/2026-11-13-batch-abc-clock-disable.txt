@@ -1,0 +1,93 @@
+Device batch A–D, built-in Clock action failure — 2026-11-13
+Source: user-supplied terminal output, serial lines, screenshots and reports.
+Device IP: 192.168.1.193
+
+A — baseline order (user-reported):
+0. dev_tester, 1. clock, 2. weather, 3. calculator
+
+B — original endpoint results:
+missing GET /api/v1/system: {"error":"unauthorized"} HTTP 401
+invalid GET /api/v1/system: {"error":"unauthorized"} HTTP 401
+missing GET /api/v1/apps: {"error":"unauthorized"} HTTP 401
+invalid GET /api/v1/apps: {"error":"unauthorized"} HTTP 401
+missing GET /api/v1/logs: {"error":"unauthorized"} HTTP 401
+invalid GET /api/v1/logs: {"error":"unauthorized"} HTTP 401
+missing POST /api/v1/apps: {"error":"unauthorized"} HTTP 401
+invalid POST /api/v1/apps: {"error":"unauthorized"} HTTP 401
+missing PATCH /api/v1/apps/order: {"error":"unauthorized"} HTTP 401
+invalid PATCH /api/v1/apps/order: {"error":"unauthorized"} HTTP 401
+missing POST /api/v1/apps/org.crystal.auth-probe/launch: {"error":"unauthorized"} HTTP 401
+invalid POST /api/v1/apps/org.crystal.auth-probe/launch: {"error":"unauthorized"} HTTP 401
+missing POST /api/v1/apps/org.crystal.auth-probe/enabled: {"error":"unauthorized"} HTTP 401
+invalid POST /api/v1/apps/org.crystal.auth-probe/enabled: {"error":"unauthorized"} HTTP 401
+missing DELETE /api/v1/apps/org.crystal.auth-probe/data: {"error":"unauthorized"} HTTP 401
+invalid DELETE /api/v1/apps/org.crystal.auth-probe/data: {"error":"unauthorized"} HTTP 401
+missing DELETE /api/v1/apps/org.crystal.auth-probe: {"error":"unauthorized"} HTTP 401
+invalid DELETE /api/v1/apps/org.crystal.auth-probe: {"error":"unauthorized"} HTTP 401
+missing POST /api/v1/system/reboot: {"error":"unauthorized"} HTTP 401
+invalid POST /api/v1/system/reboot: {"error":"unauthorized"} HTTP 401
+
+User reports no "Rebooting at the paired control panel's request" message
+and the paired browser still shows four apps after Refresh.
+PASS: 20 missing/made-up-token requests rejected, no reboot request executed
+as observed, and the existing browser session remains usable. These requests
+target an absent probe app for per-app mutations; they do not cover actual
+expired/altered valid tokens, every possible app ID, or every request body.
+
+C — unsigned Wi-Fi upload:
+User reports "Unsigned package requires explicit Developer Mode"; both web
+panel and Manage Apps still show four apps and the launcher has no gaps.
+Screenshot 2026-11-13 at 1.40.16 AM shows the 17 KiB unsigned fixture and
+visible rejection. Screenshot 2026-11-13 at 1.42.08 AM shows POST /api/v1/apps
+returning HTTP 400, with request Content-Length 17275. Authorization header
+content is intentionally omitted from this persistent evidence.
+PASS: unsigned Wi-Fi refusal without installing Dashboard or disturbing the
+four built-ins. Does not close trusted-key, signed install, or >1 MiB
+progress checks.
+
+D — order writes and Clock disable failure:
+I (2742903) crystal_registry: calculator slot=0 (applies next boot)
+I (2742906) crystal_registry: dev_tester slot=1 (applies next boot)
+I (2742908) crystal_registry: clock slot=2 (applies next boot)
+I (2742910) crystal_registry: weather slot=3 (applies next boot)
+User reports "invalid app id" when pressing Disable on Clock.
+PARTIAL: dense order writes pass; Clock disable and the subsequent persisted
+settings/reboot checks have not passed and must resume after the fix.
+
+Root cause: request_path_id applied crystal_package_valid_id to every app.
+Packages require reverse-domain IDs, but built-ins use clock, dev_tester,
+weather and calculator. Thus authenticated built-in actions were rejected
+before the enable-state handler ran. Existing browser tests simulated HTTP
+responses and therefore did not exercise this production parser.
+
+Correction: package ID rules stay strict. If package validation fails, the
+HTTP parser accepts only exact IDs of built-in entries in the current
+registry catalog. Unknown short IDs and malformed routes still fail.
+Shared enable/clear/launch routing now accepts registered built-ins.
+
+Host validation:
+PASS: python3 tools/test_control_app_actions.py (ASan/UBSan, real cJSON,
+  production package validator, path parser, auth guard and action handler).
+  All four built-ins and a package disable/enable with 202 restart feedback;
+  malformed/unknown short IDs, invalid bodies, storage failure/retry, action
+  dispatch and unauthorized early return are checked.
+PASS: python3 tools/test_control_reboot.py
+PASS: python3 tools/test_control_panel_assets.py
+PASS: idf.py build, firmware size 0x2f1000 bytes, 26% app partition free.
+PASS: git diff --check.
+
+Not flashed. Close the USB monitor, run
+idf.py -p /dev/cu.usbmodem1101 app-flash monitor
+and resume D at Clock Disable. Saved order should still be Calculator,
+Dev Tester, Clock, Weather. Expect a successful restart-required response,
+Clock Disabled after Refresh, then three enabled launcher apps after the
+planned panel reboot. Restore the original A order and enable Clock before
+the second deliberate reboot. E and F remain unreported.
+
+Subsequent 2026-11-13 follow-up supersedes the pending retest status above:
+2026-11-13-batch-def-persistence-recovery.txt confirms the built-in parser
+fix on firmware ELF 7afe2888f..., both controlled reboots, Clock disabled
+across boot, and full original-order/enabled-state restoration. E's panel
+disable/Wi-Fi recovery and F's unused-PIN expiry/fresh-code recovery pass.
+The original failure and not-yet-flashed note are retained as history, not
+the latest device status.

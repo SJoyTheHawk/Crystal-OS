@@ -21,6 +21,10 @@ struct CrystalAppEntry {
 
 using crystal_package_factory_t = CrystalApp *(*)(const CrystalPackageManifest &manifest);
 void crystal_registry_set_package_factory(crystal_package_factory_t factory);
+// LVGL task notification after a live installed row is removed. The index is
+// from the old list; readers see the new list, even if later storage removal fails.
+using crystal_registry_removed_hook_t = void (*)(size_t removed_index);
+void crystal_registry_set_removed_hook(crystal_registry_removed_hook_t hook);
 CrystalApp *crystal_registry_create_app(const CrystalAppEntry *entry);
 // LVGL task, with the display lock held. Stops the app, verifies its ledger,
 // detaches it from the launcher, then removes package files and state.

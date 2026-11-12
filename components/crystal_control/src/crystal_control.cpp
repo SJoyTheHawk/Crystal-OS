@@ -92,7 +92,21 @@ bool request_path_id(httpd_req_t *request, std::string *id, const char **suffix 
     const size_t length = slash ? static_cast<size_t>(slash - start) : strlen(start);
     if (length == 0 || length > 63) return false;
     id->assign(start, length);
-    if (!crystal_package_valid_id(*id)) return false;
+    // Bundled apps use catalog IDs such as clock and dev_tester, whereas
+    // installable packages require reverse-domain IDs. Accept only known
+    // built-ins as exceptions; package validation remains unchanged.
+    if (!crystal_package_valid_id(*id)) {
+        bool builtin = false;
+        for (size_t i = 0; i < crystal_registry_catalog_count(); ++i) {
+            const auto *entry = crystal_registry_catalog_entry(i);
+            if (entry && entry->origin == CRYSTAL_ORIGIN_BUILTIN &&
+                    entry->id && *id == entry->id) {
+                builtin = true;
+                break;
+            }
+        }
+        if (!builtin) return false;
+    }
     if (suffix) *suffix = slash ? slash : nullptr;
     return slash == nullptr || !strcmp(slash, "/data") || !strcmp(slash, "/enabled") || !strcmp(slash, "/launch");
 }
@@ -410,13 +424,34 @@ esp_err_t panel_handler(httpd_req_t *request)
 {
     // The partition label is 'storage', but its VFS mount point is configured
     // by the board (currently /spiffs). A partition label is not a file path.
-    constexpr const char *path = CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/index.html";
-    FILE *file = std::fopen(path, "rb");
-    if (!file) {
-        ESP_LOGE(TAG, "Cannot open panel asset %s: errno=%d", path, errno);
-        return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Control panel is not installed");
+    struct Asset { const char *uri; const char *path; const char *type; };
+    constexpr Asset assets[] = {
+        {"/", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/index.html", "text/html; charset=utf-8"},
+        {"/favicon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/favicon.png", "image/png"},
+        {"/favicon.ico", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/favicon.ico", "image/x-icon"},
+        // SPIFFS limits the full stored name to 31 bytes; URLs can be longer.
+        {"/apple-icon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+        {"/apple-touch-icon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+        {"/apple-touch-icon-precomposed.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+    };
+    const size_t uri_length = std::strcspn(request->uri, "?");
+    const Asset *asset = nullptr;
+    for (const auto &candidate : assets) {
+        if (std::strlen(candidate.uri) == uri_length &&
+                std::strncmp(request->uri, candidate.uri, uri_length) == 0) {
+            asset = &candidate;
+            break;
+        }
     }
-    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    // Wildcard icon routes never expose arbitrary files or API paths.
+    if (!asset) return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Not found");
+    FILE *file = std::fopen(asset->path, "rb");
+    if (!file) {
+        ESP_LOGE(TAG, "Cannot open panel asset %s: errno=%d", asset->path, errno);
+        return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND,
+            std::strcmp(asset->uri, "/") == 0 ? "Control panel is not installed" : "Panel icon is not installed");
+    }
+    httpd_resp_set_type(request, asset->type);
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     char buffer[1024];
     while (true) {
@@ -427,7 +462,9 @@ esp_err_t panel_handler(httpd_req_t *request)
             return ESP_FAIL;
         }
     }
+    const bool read_failed = std::ferror(file) != 0;
     std::fclose(file);
+    if (read_failed) return ESP_FAIL;
     return httpd_resp_send_chunk(request, nullptr, 0);
 }
 
@@ -541,7 +578,7 @@ bool register_uri(httpd_uri_t *uri, const char *path, httpd_method_t method,
 }
 
 httpd_uri_t s_root_uri, s_pair_uri, s_apps_uri, s_system_uri, s_install_uri,
-    s_order_uri, s_action_uri, s_logs_uri, s_reboot_uri;
+    s_order_uri, s_action_uri, s_logs_uri, s_reboot_uri, s_favicon_uri, s_touch_icon_uri;
 }
 
 extern "C" void crystal_control_log_line(const char *app_id, const char *line)
@@ -562,7 +599,7 @@ bool crystal_control_enable(char pairing_pin[7])
     if (hal().wifi == nullptr || !hal().wifi->has_ip()) return false;
     if (s_server != nullptr) crystal_control_disable();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 12;
     // Keep the panel's session pool small; this local service
     // and must coexist with outbound HTTPS clients using the shared lwIP pool.
     config.max_open_sockets = 4;
@@ -586,6 +623,8 @@ bool crystal_control_enable(char pairing_pin[7])
         return false;
     }
     const bool handlers_ok = register_uri(&s_root_uri, "/", HTTP_GET, panel_handler) &&
+        register_uri(&s_favicon_uri, "/favicon*", HTTP_GET, panel_handler) &&
+        register_uri(&s_touch_icon_uri, "/apple*", HTTP_GET, panel_handler) &&
         register_uri(&s_pair_uri, "/api/v1/pair", HTTP_POST, pair_handler) &&
         register_uri(&s_apps_uri, "/api/v1/apps", HTTP_GET, apps_handler) &&
         register_uri(&s_install_uri, "/api/v1/apps", HTTP_POST, install_handler) &&

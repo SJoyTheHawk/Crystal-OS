@@ -1,0 +1,58 @@
+Control panel sign-out and post-uninstall Settings return — 2026-11-13
+Source: user-supplied serial excerpt and browser observations.
+
+Requested browser checks, on laptop and mobile:
+1. Sign out returns to pairing and hides the app list.
+2. Reload stays unpaired.
+3. Turn Local Control Panel off/on, pair with the new code, then Refresh
+   restores the four-app list.
+
+User report: "Confirmed both laptop browser and mobile browser behavior are correct"
+
+Original serial excerpt:
+I (434066) crystal_shell: Home gesture: travel=191, depth=2, quick=0, last_app=0
+I (434066) crystal_shell: Closing all 2 Settings pages
+I (434070) crystal_shell: Returning to app index 0
+I (434072) crystal_app: Dev Tester lifecycle: onResume
+I (434078) crystal_shell: active card 1/4: dev_tester
+I (449331) crystal_shell: Home gesture: travel=185, depth=0, quick=0, last_app=-1
+I (449331) crystal_shell: Sending HOME to go to launcher
+I (449332) crystal_app: Dev Tester lifecycle: onPause
+I (510787) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 97% (original: 3%)
+I (510812) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 100% (original: 0%)
+I (919230) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 95% (original: 5%)
+I (919373) ESP32-S3-Touch-LCD-4B: Setting flipped LCD backlight: 92% (original: 8%)
+I (921720) crystal_shell: Opening Settings from launcher
+W (923173) httpd_uri: httpd_uri: URI '/favicon.ico' not found
+W (923173) httpd_txrx: httpd_resp_send_err: 404 Not Found - Nothing matches the given URI
+I (924835) crystal_control: Starting local panel: sockets=16 clients=4 internal=42715 largest_internal=18432 psram=3994600
+I (924838) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (946499) crystal_control: Starting local panel: sockets=16 clients=4 internal=42623 largest_internal=18432 psram=3994608
+I (946502) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+W (968859) httpd_txrx: httpd_sock_err: error in recv : 104
+W (985489) httpd_uri: httpd_uri: URI '/apple-touch-icon-precomposed.png' not found
+W (985489) httpd_txrx: httpd_resp_send_err: 404 Not Found - Nothing matches the given URI
+W (985497) httpd_uri: httpd_uri: URI '/apple-touch-icon.png' not found
+W (985499) httpd_txrx: httpd_resp_send_err: 404 Not Found - Nothing matches the given URI
+W (985511) httpd_uri: httpd_uri: URI '/favicon.ico' not found
+W (985513) httpd_txrx: httpd_resp_send_err: 404 Not Found - Nothing matches the given URI
+W (985541) httpd_txrx: httpd_sock_err: error in recv : 104
+
+PASS (user-confirmed): Sign out, reload staying unpaired, fresh-code pairing,
+and Refresh restoring four apps, on both laptop and mobile browsers.
+These browser observations come from the user's confirmation, not serial
+logging of individual HTTP responses. A selected upload file was not part
+of the requested steps; clearing that selection remains separately open.
+
+PASS (serial): after the preceding on-device Uninstall, leaving nested
+Settings resumes Dev Tester at index 0 with the correct shell total 1/4.
+The next Home gesture returns to the launcher. This supplements the previous
+on-device uninstall evidence; visible indicator dots, the uninstall notice,
+and a fresh authenticated apps API response were not supplied here.
+
+The 404 responses identify missing favicon and Apple touch-icon resources.
+The receive warnings are retained as reported; no abort, watchdog, or reboot
+appears in this excerpt. Neither warning is evidence of a rejected pairing
+or failed sign-out. Reboot confirmation/cancellation checks remain open.
+
+Documentation-only update; no firmware changes, build, or flash for this result.

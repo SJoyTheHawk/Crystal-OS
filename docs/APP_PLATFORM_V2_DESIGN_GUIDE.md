@@ -887,14 +887,19 @@ verification remains a Phase 15 deliverable.
 
 ### For Phase 15
 
+Outstanding work is consolidated in the [closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+
 - [ ] API endpoints match spec (§9.3 of Implementation Plan)
 - [ ] Web UI works over WiFi and USB
-- [ ] Pairing PIN flow generates PIN on device, accepts PIN in external panel
-- [ ] Bearer token validated on every request
-- [x] Ed25519 package verification uses a configurable trusted public-key store; release key configuration and board package test remain
+- [x] Pairing PIN generation, display, acceptance, reuse rejection, expiry and recovery device-confirmed
+- [x] Bearer token validated for protected endpoints; missing/invalid-token device matrix passes (real-token expiry/revocation checks remain separate)
+- [x] Ed25519 package verification uses configured test key ID 240; signed installs and untrusted/tampered rejection device-confirmed; release identity remains separate
 - [x] Host CLI signs packages and signs/lists/downloads from the signed HTTPS catalog
-- [ ] Install progress bar shown for packages > 1 MB
-- [ ] On-device Manage Apps and external panel agree after edits
+- [x] Install progress bar shown on device upload for the 1328026-byte fixture
+- [x] On-device Manage Apps and external panel agree after recorded edits; remaining detailed observations are listed separately
+- [x] Browser Live logs functional device validation, including mobile, pause/restart and sign-out (P); retained device history is volatile and shared with newly authenticated clients
+- [ ] Stream responsiveness, in-flight session invalidation and shutdown
+- [ ] Hosted catalog workflow validation and alignment with the resolved computer-side workflow
 
 ### For Phase 16
 
@@ -904,7 +909,9 @@ verification remains a Phase 15 deliverable.
 - [x] Event routing for permission-checked timer actions
 - [ ] Remaining dynamic property/event APIs implemented
 - [x] Visual UI references for Clock, Weather and Calculator pass production host runtime; app behavior remains in current runtimes
-- [ ] Device lifecycle verification and ABI v1 freeze
+- [x] Implemented lifecycle/cleanup device verification (K/L/M)
+- [x] Reconnect UI observation (O) and launcher caption truncation/full management names (N)
+- [ ] Combined Dashboard/panel/TLS load/headroom, timing classification, complete facade review and ABI v1 freeze
 
 ### For Phase 17
 

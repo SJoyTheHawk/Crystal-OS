@@ -1,0 +1,255 @@
+Phase 15/16 device batch G–M — user-supplied results, 2026-11-13
+
+Source: the user's G–M terminal/serial transcript, written observations, and
+four inline photos in this conversation. Excerpts below preserve the supplied
+values; summaries are labelled. No device commands were run by the agent to
+produce this record. One-use pairing PINs and bearer tokens are omitted.
+The inline photos were reviewed in the conversation; no local image filenames
+were supplied for these four photos and no repository image copy is claimed.
+
+G — PASS: fixture preparation, app-only flash, public-key provisioning
+
+User environment: Python 3.10.9, ESP-IDF v6.1. Fixture helper output:
+  key_id: 240
+  untrusted_key_id: 241
+  public_key_hex: 1a20458475af8971b821a08ac8c6f2a42ee0718917bc0ebee8848d0f48c2dd9b
+  dashboard-signed.capp: 17275 bytes
+  dashboard-untrusted.capp: 17275 bytes
+  dashboard-tampered.capp: 17275 bytes
+  dashboard-large-signed.capp: 1328026 bytes
+  action-guards-signed.capp: 1184 bytes
+  host_verification: PASS: signed fixtures verify; untrusted and tampered fixtures reject
+  device_tests: NOT RUN
+The helper's device_tests field describes preparation only; later hardware
+results below establish the actual device tests.
+
+User app-flash output: crystal_os.bin 0x2f1000, app partition 0x400000,
+26% free; esptool v5.4.0; Hash of data verified; monitor starts successfully.
+
+Boot excerpts:
+I (1198) app_init: App version:      0.15.0
+I (1202) app_init: Compile time:     Nov 13 2026 03:04:55
+I (1207) app_init: ELF file SHA256:  30c606fd4...
+I (1211) app_init: ESP-IDF:          v6.1
+I (1326) crystal_memory: UI and JSON allocators use PSRAM; task stacks remain internal
+I (1359) crash: No coredump found
+I (3142) crystal_signature: Loaded configured package signing key ID 240
+I (3155) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (3235) crystal_registry: installed: dev_tester (slot 0)
+I (3242) crystal_registry: installed: clock (slot 1)
+I (3358) crystal_registry: installed: weather (slot 2)
+I (3367) crystal_registry: installed: calculator (slot 3)
+I (3552) crystal_shell: active card 1/4: dev_tester
+I (5741) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+
+Weather initially times out:
+W (14903) crystal_http: transport diagnostic id=1 error=ESP_ERR_HTTP_CONNECT tls_error=ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT tls_code=0 tls_flags=0x0 socket_errno=0
+I (14918) crystal_http: heap failure id=1 internal=39343 largest_internal=26624 psram=4478180 largest_psram=4325376
+W (14990) crystal_core: weather fetch failed; next automatic try in 60 s
+This is the recorded connection timeout, not an ESP_ERR_NO_MEM result.
+I (22546) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=7507 ms error=ESP_OK
+I (22555) crystal_core: HTTPS smoke heap id=2 before_internal=42907 before_largest=26624 before_psram=4478180 tls_internal=33635 tls_largest=22528 tls_psram=4455584
+I (22569) crystal_core: HTTPS smoke test passed
+
+H — PASS: device rejects untrusted and tampered signed packages
+
+User reports both dashboard-untrusted.capp and dashboard-tampered.capp
+(shown as 17 KiB) produce: Package signature not trusted.
+After refreshing, both management lists still show four apps; no Dashboard,
+no launcher gaps, and device runs continuously. Per-request HTTP statuses
+were not included; HTTP 400 is an expectation, not claimed evidence here.
+
+I — PASS: authenticated signed CLI install, queued and actual launch, live logs
+
+Install exit code: 0
+Redacted/asserted CLI output:
+{
+  "installed": true,
+  "restart_required": true
+}
+The user's command asserts a nonempty token, stores it locally in session.json,
+and successfully uses it for launch and logs. No token is reproduced here.
+Launch response:
+{"queued":true,"restart_required":false}
+HTTP 202
+
+crystal logs -f output contains:
+  control: package installed; restart or apply it from Manage Apps
+  Dev Tester: onDestroy
+  org.crystal.declarative-dashboard: onCreate
+  org.crystal.declarative-dashboard: onPause
+  org.crystal.declarative-dashboard: onDestroy
+  Calculator: onCreate
+  Calculator: onPause
+  Calculator: onDestroy
+The supplied continuation traverses Weather, Clock, Dev Tester and back to
+Dashboard repeatedly, with matching create/pause/destroy events. This supports
+live lifecycle delivery across user navigation, not only a lone replayed line.
+No panel-disable/network-close shutdown test or concurrent HTTP request
+during the synchronous SSE stream is supplied. Those checks remain open.
+
+J — PASS for reported large-upload progress, install, restart and launch
+
+User reports approximately 10% progress each second, from 0% to 100%, then:
+  Upload complete. Checking and installing…
+  App installed. Restart your Crystal to load it.
+The prepared large fixture is 1328026 bytes. A separate browser HTTP/JSON
+capture is not supplied; the successful browser UI is the device observation.
+User confirms Dashboard launched and appears in the web panel and Manage Apps.
+The supplied post-reboot startup sequence includes:
+I (5829) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+I (10191) crystal_app: Status Dashboard lifecycle: onCreate
+W (10298) crystal_app: Status Dashboard onCreate took 105 ms (budget 80 ms)
+I (15610) crystal_core: weather fetched: 22.6 C, humidity 86%, code 3, wind 8.9 km/h
+I (15563) crystal_http: heap tls-peak id=1 internal=26711 largest_internal=16384 psram=4448796
+I (15571) crystal_http: request completed id=1 attempts=1 elapsed=8871 ms status=200
+I (21162) crystal_http: heap tls-peak id=2 internal=25807 largest_internal=13312 psram=4448652
+I (21199) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=5528 ms error=ESP_OK
+I (21222) crystal_core: HTTPS smoke test passed
+I (21231) crystal_http: heap released id=2 internal=34639 largest_internal=18432 psram=4471336
+This proves Weather/HTTPS success with Dashboard running after reboot. A
+panel-start line is not included in this startup excerpt, so simultaneous
+Dashboard + enabled panel + in-flight TLS is not established by these lines.
+The intermediate LittleFS '1 packages' line was not included. Successful
+post-reboot package launch proves discovery/persistence, without inventing it.
+
+K — implemented layout, timer and lifecycle PASS; remaining details qualified
+
+Photos reviewed:
+  Status: dark full app area, three readable tabs, Network: connected.
+  Timer: 0 s remaining; separate Start 5 min/Pause and Resume/Reset rows.
+  Controls: readable One–Six matrix, switch, slider, weather image, list
+    viewport with Primary item. Lower controls are below this photo's viewport.
+User reports time advances, network connected; countdown starts at 300,
+pauses at 294, Running switches to Paused, Reset returns to 0 s remaining.
+User reports the controls check passed, with the text field not opening a
+keyboard. Input focus/keyboard is an acknowledged missing capability; the
+absence of a keyboard is NOT a complete input-interaction pass. Static list/
+chart rendering does not establish dynamic APIs, and the hidden example
+dialog is not evidence of visible dialog interaction.
+User opened Settings/returned three times and switched Dashboard/Dev Tester
+five times; reports smooth transitions. Excerpts show:
+I (456365) crystal_app: Status Dashboard lifecycle: onResume
+I (481090) crystal_app: Status Dashboard lifecycle: onPause
+I (481096) crystal_app: Status Dashboard lifecycle: onDestroy
+I (490699) crystal_app: Status Dashboard lifecycle: onCreate
+W (490803) crystal_app: Status Dashboard onCreate took 100 ms (budget 80 ms)
+I (490952) crystal_shell: card crossover committed; active=5, PSRAM free=4471092
+I (502239) crystal_shell: card crossover committed; active=5, PSRAM free=4471100
+I (513560) crystal_shell: card crossover committed; active=5, PSRAM free=4471108
+Same-app Calculator samples: 4478976 at 481271 ms; 4478952 at 489476 ms;
+4478968 at 492078 ms; 4478976 at 503714 ms; 4478908 at 512134 ms.
+These limited samples do not show a large monotonic Dashboard PSRAM leak;
+they do not prove zero leaks, all internal-heap budgets, or long-duration soak.
+
+User observes:
+  Network: disconnected
+  Connect to Wi-Fi to bring services online.
+Serial:
+I (554751) crystal_core: publishing network disconnected signal (disconnected)
+W (554753) crystal_hal: WiFi disconnected, reason=8
+Later M captures prove Wi-Fi reconnection, but the user did not explicitly
+report Dashboard returning to connected/hiding the hint after reconnecting.
+That final UI binding recovery observation remains pending.
+
+L — PASS: action guard rejections and package disable/enable persistence
+
+I (54882) crystal_app: Action Guard Check lifecycle: onResume
+W (58368) crystal_declarative: org.crystal.action-guards: timer action rejected; package lacks system_timer permission
+W (84503) crystal_declarative: org.crystal.action-guards: rejected unsupported declarative action 'system.reboot'
+User reports Action Guard Check uninstalled and Dashboard disabled: both
+absent from launcher; enabling Dashboard and rebooting restores it; counts
+correct. The continuation is consistent with rejection rather than reboot.
+User reports Action Guard Check name too long in the launcher. Fourth photo
+shows long app captions occupying most of adjacent cells. Track/fix launcher
+caption overflow separately; do not shorten an app ID or call it a guard failure.
+
+M — PASS: full crystal run, confirmed clear-data teardown/relaunch and cleanup
+
+User CLI result:
+{
+  "install": {"installed": true, "restart_required": true},
+  "launch": {"queued": true, "restart_required": false}
+}
+Followed by lifecycle output through Dashboard create/pause/destroy, Calculator
+create/pause/destroy, Dashboard create, then return to terminal prompt. User
+confirms app opened. Relevant serial:
+I (110854) crystal_registry: Applying registry changes live
+I (110855) crystal_registry: Installing org.crystal.declarative-dashboard
+I (110872) crystal_registry: Applied org.crystal.declarative-dashboard live at slot 16
+I (110893) crystal_app: Status Dashboard lifecycle: onCreate
+W (111010) crystal_app: Status Dashboard onCreate took 110 ms (budget 80 ms)
+I (111018) crystal_shell: Control-panel launched org.crystal.declarative-dashboard behind Settings
+I (151459) crystal_app: Status Dashboard lifecycle: onCreate
+W (151561) crystal_app: Status Dashboard onCreate took 100 ms (budget 80 ms)
+
+Preceding Weather request succeeded while the panel was starting, but before
+the Dashboard was launched:
+I (99759) crystal_control: Starting local panel: sockets=16 clients=4 internal=33463 largest_internal=12288 psram=3963396
+I (99762) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (105386) crystal_http: heap tls-peak id=3 internal=23643 largest_internal=10240 psram=3977872
+I (105396) crystal_http: request completed id=3 attempts=1 elapsed=11624 ms status=200
+I (105433) crystal_core: weather fetched: 22.5 C, humidity 86%, code 3, wind 9.3 km/h
+I (105445) crystal_http: heap released id=3 internal=31643 largest_internal=10240 psram=3999780
+
+Additional Wi-Fi connection lines at 242530 and 301982 ms establish reconnects,
+without an explicit Dashboard connected/hint-hidden UI observation.
+Confirmed clear data:
+I (327595) crystal_app: Status Dashboard lifecycle: onDestroy
+I (327603) crystal_shell: Control-panel clear data succeeded for org.crystal.declarative-dashboard
+I (331709) crystal_app: Status Dashboard lifecycle: onCreate
+W (331828) crystal_app: Status Dashboard onCreate took 120 ms (budget 80 ms)
+I (331832) crystal_shell: Control-panel launched org.crystal.declarative-dashboard behind Settings
+Cancellation was already established in earlier tests; a new M cancellation
+observation and persistent state erasure assertion are not supplied here.
+
+Final boot after cleanup:
+I (3145) crystal_signature: Loaded configured package signing key ID 240
+I (3156) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (3238) crystal_registry: installed: dev_tester (slot 0)
+I (3245) crystal_registry: installed: clock (slot 1)
+I (3361) crystal_registry: installed: weather (slot 2)
+I (3370) crystal_registry: installed: calculator (slot 3)
+I (3389) crystal_app: Calculator lifecycle: onCreate
+I (3555) crystal_shell: active card 4/4: calculator
+
+Remaining scope / follow-up
+
+- Dashboard reconnect UI observation and combined Dashboard+panel+TLS heap
+  evidence remain pending. They do not invalidate the passed component tests.
+- Dashboard onCreate exceeds the 80 ms budget in supplied samples (95–120 ms).
+  Preserve as an open performance finding; successful launch does not fix it.
+- Launcher caption overflow reported in L is a UI defect to address.
+- Input focus/keyboard, dynamic list/chart APIs, visible-dialog interaction,
+  browser Web Serial, on-device online catalog, ABI review/freeze, and SSE
+  concurrency/active-stream shutdown remain open as applicable.
+- No unexpected reboot, watchdog, allocation failure or LVGL assertion is
+  reported in this batch. The report is not proof that every network request
+  succeeded: G includes a Weather connection timeout and M's stats include
+  earlier failures. Phase 15 and Phase 16 remain open.
+
+Agent follow-up — launcher caption repair, 2026-11-13
+
+The launcher label had no cell-width or one-line limit and used a static name
+buffer. It now uses a centered label constrained to 100% of its existing cell
+width and one font line, with LV_LABEL_LONG_DOT. lv_label_set_text makes an
+owned copy because LVGL DOT mode edits the text buffer; the app's original
+name is preserved. Existing font, icon size, colors and launcher grid remain.
+
+Production real-LVGL/Brookesia ASan/UBSan integration exits 0. New assertions
+check caption bounds on every cell across page compaction, one-line height,
+centered DOT mode, short-title preservation, long-title ellipsis and original
+name integrity. PASS line:
+  PASS: launcher captions use centered one-line ellipsis within cell bounds and preserve original app names
+Existing launcher compaction, Calculator and declarative-runtime integration
+checks also pass. The test run used a temporary clean source copy when
+packaging folders containing .DS_Store; production packer validation was not
+weakened and original example folders were not edited.
+Host log: /tmp/crystal-gm-platform-check.log (session-local, not committed).
+
+idf.py build exits 0 after the fix, crystal_os.bin remains 0x2f1000 with 26%
+app partition free. Build log: /tmp/crystal-gm-caption-build.log (session-local).
+git diff --check passes. No hardware flash/monitor, package installation,
+network call to the device, commit or release action was performed by the agent.
+The caption correction still requires device confirmation after an app-only
+flash; it does not retroactively change the user's observed firmware results.

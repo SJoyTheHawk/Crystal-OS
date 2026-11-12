@@ -1551,6 +1551,22 @@ void settle_card_transition(bool commit)
     lv_anim_start(&animation);
 }
 
+void on_installed_app_removed(size_t removed_index)
+{
+    const size_t count = crystal_registry_installed_count();
+    if (s_current_index > removed_index) --s_current_index;
+    if (count == 0) s_current_index = 0;
+    else if (s_current_index >= count) s_current_index = count - 1;
+    if (s_last_app_before_settings == static_cast<int>(removed_index)) {
+        s_last_app_before_settings = -1; // The return target was uninstalled.
+    } else if (s_last_app_before_settings > static_cast<int>(removed_index)) {
+        --s_last_app_before_settings;
+    }
+    update_page_dots();
+    if (count != 0) (void)persist_current_card();
+    update_home_pill();
+}
+
 void on_app_event(lv_event_t *event)
 {
     auto *data = static_cast<ESP_Brookesia_CoreAppEventData_t *>(lv_event_get_param(event));
@@ -1776,6 +1792,7 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
 
     s_phone = phone;
     s_gesture = gesture;
+    crystal_registry_set_removed_hook(on_installed_app_removed);
     crystal_app_set_shell_back_hook(shell_consume_back);
     s_current_index = load_current_index();
     lv_obj_add_event_cb(gesture->getEventObj(), on_gesture_press,
@@ -2927,12 +2944,19 @@ bool manage_apps_clear_data(const CrystalAppEntry *entry)
     }
     if (app == nullptr) return false;
     auto &manager = s_phone->getManager();
-    if (!temporary && manager.getRunningAppById(app->getId()) != nullptr) {
+    // Absence is expected before clearing an idle app and after STOP. The
+    // ID lookup logs an error on absence, so inspect the running list quietly.
+    const auto is_running = [&] {
+        for (uint8_t i = 0; i < manager.getRunningAppCount(); ++i) {
+            if (manager.getRunningAppByIdenx(i) == app) return true;
+        }
+        return false;
+    };
+    if (!temporary && is_running()) {
         ESP_Brookesia_CoreAppEventData_t event = {
             .id = app->getId(), .type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP, .data = nullptr,
         };
-        if (!s_phone->sendAppEvent(&event) ||
-            manager.getRunningAppById(app->getId()) != nullptr) return false;
+        if (!s_phone->sendAppEvent(&event) || is_running()) return false;
     }
     // onPause/onDestroy can save old values. Erase only after STOP completes.
     return app->clearData();
@@ -3199,12 +3223,22 @@ void crystal_shell_control_action_event(const CrystalControlAction *action)
         }
         return;
     }
-    if (action->kind == CRYSTAL_CONTROL_ACTION_CLEAR_DATA && app != nullptr) {
-        if (app == s_phone->getManager().getActiveApp()) {
-            ESP_Brookesia_CoreAppEventData_t event = {app->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP, nullptr};
-            (void)s_phone->sendAppEvent(&event);
+    if (action->kind == CRYSTAL_CONTROL_ACTION_CLEAR_DATA) {
+        const CrystalAppEntry *entry = nullptr;
+        for (size_t i = 0; i < crystal_registry_catalog_count(); ++i) {
+            const auto *candidate = crystal_registry_catalog_entry(i);
+            if (candidate != nullptr && candidate->available && !strcmp(candidate->id, action->id)) {
+                entry = candidate;
+                break;
+            }
         }
-        ESP_LOGI(TAG, "Control-panel cleared data for %s: %d", action->id, app->clearData());
+        // Settings can leave an app paused in the running map. Use the same
+        // verified STOP-before-clear path as on-device Manage Apps.
+        if (manage_apps_clear_data(entry)) {
+            ESP_LOGI(TAG, "Control-panel clear data succeeded for %s", action->id);
+        } else {
+            ESP_LOGW(TAG, "Control-panel clear data failed for %s", action->id);
+        }
     }
 }
 

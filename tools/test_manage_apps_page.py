@@ -293,7 +293,12 @@ int main() {
         assert(lv_obj_get_child_cnt(content) == catalog.size() + 1);
     };
     drag(1, 2);
-    assert(slot_writes == 2 && slots.at("clock") == 3 && slots.at("weather") == 2);
+    assert(slot_writes == 2 && crystal_registry_slot("clock", 2) == 2 && slots.at("weather") == 1);
+    for (int i = 0; i < 4; ++i) {
+        const auto *entry = static_cast<const CrystalAppEntry *>(
+            lv_obj_get_user_data(lv_obj_get_child(content, i + 1)));
+        assert(crystal_registry_slot(entry->id, entry->default_slot) == i);
+    }
     assert(crystal_manage_apps_page_has_pending_restart());
     check_row(content, 1, "weather", true);
     check_row(content, 2, "clock", true);
@@ -431,6 +436,10 @@ int main() {
     lv_event_send(remove, LV_EVENT_CLICKED, nullptr);
     auto *uninstall_card = lv_obj_get_child(lv_obj_get_child(lv_layer_top(), 0), 0);
     assert(!strcmp(label(uninstall_card, 0), "Uninstall App"));
+    lv_event_send(lv_obj_get_child(uninstall_card, 2), LV_EVENT_CLICKED, nullptr);
+    assert(!crystal_manage_apps_page_confirmation_open() && uninstalls == 0 && catalog[0].available);
+    lv_event_send(remove, LV_EVENT_CLICKED, nullptr);
+    uninstall_card = lv_obj_get_child(lv_obj_get_child(lv_layer_top(), 0), 0);
     lv_obj_update_layout(lv_layer_top());
     snapshot(lv_layer_top(), "uninstall-confirmation.ppm");
     fail_uninstall = true;

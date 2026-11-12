@@ -1,0 +1,55 @@
+A–F device batch closure — 2026-11-13
+
+This closes the named A–F test batch, with the evidence qualification for
+E below. It does not close all Phase 15 or Phase 16 requirements.
+
+User supplies the browser's post-reboot pairing screen text:
+Pair this browser
+Enter the six-digit code shown on your Crystal to access apps and device controls.
+Reboot requested. After your Crystal restarts, enable Local Control Panel and pair with a new code.
+Find your code in Settings → Developer Tools → Local Control Panel on your Crystal.
+Codes expire after 10 minutes and can be used once.
+PASS: D's remaining browser reboot/re-pairing guidance observation. Earlier
+D evidence already covers controlled resets, persisted disable/order, HTTP
+200 recovery and restored four-app state.
+
+For E, the user explains that the pairing dialog covers the toggle and
+startup has finished by the time the dialog is dismissed, even quickly.
+This is consistent with production crystal_shell_control_start_event:
+it clears the pending flag, reenables the toggle and shows the enabled
+state before opening the pairing dialog. The brief Starting/disabled state
+cannot be reliably observed or tapped manually in this normal fast path.
+
+HOST PASS, rerun on 2026-11-13:
+python3 tools/test_developer_tools_page.py
+PASS: real LVGL panel toggle layout, initial state, startup lock, pairing, disable, no-Wi-Fi rollback, task/server failures, retry, and page exit/reopen
+
+The test uses production UI handlers with real LVGL and controlled worker/
+network fixtures. It holds startup pending, verifies the Starting label and
+disabled toggle, sends another value-change event and verifies there is
+only one startup request, then delivers completion and checks the pairing
+dialog. This verifies the guard deterministically, not physical timing.
+
+E is closed using its earlier successful device service/switch/Wi-Fi checks
+plus the host startup-guard test. Qualification: transient startup visuals
+and prevention of a physical tap during that brief interval are not marked
+as observed on hardware. No artificial startup delay or test-only firmware
+change is introduced to make them visible.
+
+Batch result:
+A — closed: baseline order recorded.
+B — closed: 20 authorization rejections and preserved paired session.
+C — closed: unsigned Wi-Fi package rejected with HTTP 400; four apps unchanged.
+D — closed: settings persistence, controlled resets, recovery/restoration,
+    and supplied browser reboot guidance.
+E — closed with host coverage for the transient startup state/guard;
+    device enable, page reopen, stop, Wi-Fi refusal/reconnect already pass.
+F — closed: unused PIN expiry and fresh-code pairing/Refresh recovery.
+
+Retain the prior Weather connection-timeout/retry evidence as reported;
+batch closure does not relabel initially failed requests as successes.
+Signed installation, trusted-key provisioning, large-upload progress and
+the other phase-exit requirements remain separate.
+
+Documentation update only; git diff --check passes. No firmware edit,
+build or flash is required for this closure.

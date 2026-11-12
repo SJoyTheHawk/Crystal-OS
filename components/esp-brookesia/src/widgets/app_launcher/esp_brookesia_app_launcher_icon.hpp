@@ -22,6 +22,7 @@ public:
     bool toggleClickable(bool clickable);
 
     bool checkInitialized(void) const { return (_main_obj != nullptr); }
+    lv_obj_t *getMainObject(void) const { return _main_obj.get(); }
 
     bool updateByNewData(void);
 

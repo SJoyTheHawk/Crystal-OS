@@ -293,6 +293,107 @@ int main(int argc, char **argv) {
     crystal_registry_set_package_factory(factory);
     const CrystalAppEntry builtins[] = {{"calculator", builtin, true, 4}};
     assert(crystal_registry_install(&phone, builtins, 1)); settle();
+    // Exercise the actual launcher across page boundaries, using reversed IDs
+    // to ensure compaction preserves visual order rather than map order.
+    {
+        const auto &launcher_data = phone.getHome().getData().app_launcher.data;
+        const size_t capacity = (launcher_data.table.size.width / launcher_data.icon.main.size.width) *
+                                (launcher_data.table.size.height / launcher_data.icon.main.size.height);
+        assert(capacity > 0 && capacity < 100);
+        auto *parent = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(parent, 480, 480);
+        {
+            std::vector<std::string> names;
+            for (size_t i = 0; i < capacity * 2 + 1; ++i) names.push_back("Launcher fixture " + std::to_string(i));
+            names.front() = "Action Guard Check";
+            names[1] = "Clock";
+            names.back() = "Very long app title that must stay within its launcher cell";
+            ESP_Brookesia_AppLauncher launcher(phone, launcher_data);
+            assert(launcher.begin(parent));
+            for (size_t i = 0; i < names.size(); ++i) {
+                ESP_Brookesia_AppLauncherIconInfo_t info{names[i].c_str(),
+                    phone.getHome().getData().app_launcher.default_image, 1000 - static_cast<int>(i)};
+                assert(launcher.addIcon(0, info));
+            }
+            auto *table = lv_obj_get_child(lv_obj_get_child(parent, 0), 0);
+            auto *indicators = lv_obj_get_child(lv_obj_get_child(parent, 0), 1);
+            std::vector<lv_obj_t *> objects;
+            std::vector<int> ids;
+            for (size_t i = 0; i < names.size(); ++i) {
+                auto *grid = lv_obj_get_child(lv_obj_get_child(table, i / capacity), 0);
+                objects.push_back(lv_obj_get_child(grid, i % capacity));
+                ids.push_back(1000 - static_cast<int>(i));
+            }
+            auto check_launcher = [&] {
+                lv_obj_update_layout(parent);
+                const size_t pages = std::max(static_cast<size_t>(launcher_data.table.default_num),
+                    (ids.size() + capacity - 1) / capacity);
+                settle(); // Finish native page scrolling before checking input.
+                assert(lv_obj_get_child_cnt(table) == pages);
+                assert(lv_obj_get_child_cnt(indicators) == pages);
+                assert(launcher.getActiveScreenIndex() < pages);
+                size_t next = 0;
+                for (size_t page = 0; page < pages; ++page) {
+                    auto *grid = lv_obj_get_child(lv_obj_get_child(table, page), 0);
+                    const size_t expected = std::min(capacity, ids.size() - next);
+                    assert(lv_obj_get_child_cnt(grid) == expected);
+                    for (size_t index = 0; index < expected; ++index, ++next) {
+                        assert(lv_obj_get_child(grid, index) == objects[next]);
+                        assert(lv_obj_is_valid(objects[next]));
+                        auto *image = lv_obj_get_child(lv_obj_get_child(objects[next], 0), 0);
+                        assert(lv_obj_has_flag(image, LV_OBJ_FLAG_CLICKABLE));
+                        auto *caption = lv_obj_get_child(objects[next], 1);
+                        assert(lv_label_get_long_mode(caption) == LV_LABEL_LONG_DOT);
+                        assert(lv_obj_get_style_text_align(caption, LV_PART_MAIN) == LV_TEXT_ALIGN_CENTER);
+                        const auto *font = lv_obj_get_style_text_font(caption, LV_PART_MAIN);
+                        assert(lv_obj_get_height(caption) == lv_font_get_line_height(font));
+                        lv_area_t cell_bounds, caption_bounds;
+                        lv_obj_get_coords(objects[next], &cell_bounds);
+                        lv_obj_get_coords(caption, &caption_bounds);
+                        assert(caption_bounds.x1 >= cell_bounds.x1 && caption_bounds.x2 <= cell_bounds.x2);
+                        assert(caption_bounds.y1 >= cell_bounds.y1 && caption_bounds.y2 <= cell_bounds.y2);
+                        if (ids[next] == 999) assert(std::strcmp(lv_label_get_text(caption), "Clock") == 0);
+                        if (ids[next] == 1000 - static_cast<int>(names.size() - 1))
+                            assert(std::strstr(lv_label_get_text(caption), "...") != nullptr);
+                    }
+                }
+                assert(next == ids.size());
+            };
+            check_launcher();
+            assert(names.front() == "Action Guard Check");
+            assert(names.back() == "Very long app title that must stay within its launcher cell");
+            assert(launcher.scrollToPage(lv_obj_get_child_cnt(table) - 1));
+            for (size_t position : {size_t(0), capacity - 1, capacity, size_t(1)}) {
+                assert(position < ids.size());
+                auto *removed = objects[position];
+                assert(launcher.removeIcon(ids[position]));
+                ids.erase(ids.begin() + position); objects.erase(objects.begin() + position);
+                assert(!lv_obj_is_valid(removed));
+                check_launcher();
+            }
+            ESP_Brookesia_AppLauncherIconInfo_t replacement{"Reinstalled fixture",
+                phone.getHome().getData().app_launcher.default_image, 2000};
+            assert(launcher.addIcon(0, replacement));
+            auto *replacement_grid = lv_obj_get_child(lv_obj_get_child(table, ids.size() / capacity), 0);
+            objects.push_back(lv_obj_get_child(replacement_grid, ids.size() % capacity));
+            ids.push_back(2000);
+            check_launcher();
+            assert(launcher.removeIcon(2000));
+            ids.pop_back(); objects.pop_back(); check_launcher();
+            while (!ids.empty()) {
+                assert(launcher.removeIcon(ids.back()));
+                ids.pop_back(); objects.pop_back(); check_launcher();
+            }
+        }
+        lv_obj_del(parent);
+        std::puts("PASS: live launcher compacts first/middle/last removals across pages, preserves icon objects/order, removes empty pages and clamps indicators");
+        std::puts("PASS: launcher captions use centered one-line ellipsis within cell bounds and preserve original app names");
+    }
+    static size_t removed_notifications = 0;
+    crystal_registry_set_removed_hook([](size_t index) {
+        assert(index == 1 && crystal_registry_installed_count() == 1);
+        ++removed_notifications;
+    });
     CrystalState builtin_state("Calculator"); assert(builtin_state.set_u32("keep", 99));
     for (unsigned i = 0; i < 10; ++i) {
         assert(install("calculator.capp"));
@@ -312,11 +413,13 @@ int main(int argc, char **argv) {
         }
         assert(crystal_registry_uninstall_package("org.crystal.calculator")); settle();
         assert(!package_app() && crystal_packages().empty());
+        assert(removed_notifications == i + 1);
         assert(!fs::exists(root / "org.crystal.calculator"));
         uint32_t value = 0; assert(builtin_state.get_u32("keep", &value) && value == 99);
         for (const auto &kv : storage.values) assert(kv.first[0] != 'p' || kv.first == "pkg.registry");
     }
     std::puts("PASS: real Calculator package 10 install/uninstall cycles, 100 launches with production LVGL/Brookesia, zero tracked leaks, builtin state preserved");
+    crystal_registry_set_removed_hook(nullptr);
     assert(install("calculator.capp")); assert(crystal_registry_apply_changes());
     auto *active_package = package_app(); assert(active_package);
     ESP_Brookesia_CoreAppEventData_t start{active_package->getId(), ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START, nullptr};
@@ -412,9 +515,21 @@ int main(int argc, char **argv) {
     lv_btnmatrix_set_selected_btn(matrix, 0);
     lv_event_send(matrix, LV_EVENT_VALUE_CHANGED, nullptr);
     assert(!crystal_timer_state().running && !crystal_timer_state().paused);
+    assert(declarative->state().set_u32("clear", 73));
+    assert(phone.sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME)); settle();
+    assert(phone.getManager().getActiveApp() == nullptr);
+    assert(phone.getManager().getRunningAppById(declarative->getId()) == declarative);
+    assert(declarative->lifecycle_state() == CrystalApp::LifecycleState::Paused);
+    assert(!declarative->clearData()); // A paused app still owns its UI.
     declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;
     assert(phone.sendAppEvent(&declarative_start)); settle();
+    assert(phone.getManager().getRunningAppById(declarative->getId()) == nullptr);
     assert(crystal_app_verify_cleanup(declarative->resources(), &report));
+    uint32_t cleared_value = 0;
+    assert(declarative->clearData());
+    assert(!declarative->state().get_u32("clear", &cleared_value));
+    assert(declarative->clearData()); // Repeating the operation is harmless.
+    std::puts("PASS: paused Dashboard rejects clear until STOP, then erases saved state and supports repeated clear");
     declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START;
     assert(phone.sendAppEvent(&declarative_start)); settle();
     declarative_start.type = ESP_BROOKESIA_CORE_APP_EVENT_TYPE_STOP;

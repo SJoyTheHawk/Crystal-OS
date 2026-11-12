@@ -1,0 +1,93 @@
+Control panel file cleanup, reboot cancellation, and recovery — 2026-11-13
+Source: user-supplied observations and serial transcript.
+This record retains the relevant exact serial lines, not the entire lengthy
+boot transcript. No new hardware test was executed by the agent.
+
+User reports:
+- Step 4, sign-out with a selected package: results work as described.
+- Reboot dialog: Cancel on the left and Reboot on the right. Refresh after
+  Cancel keeps the session working, with no reset or log.
+- After boot: launcher has four working built-in apps without gaps, and
+  Local Control Panel starts off.
+
+Before the newly opened monitor:
+I (651512) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (665073) crystal_control: Rebooting at the paired control panel's request
+
+User then runs idf.py -p /dev/cu.usbmodem1101 monitor.
+Selected lines from that monitor capture:
+rst:0x15 (USB_UART_CHIP_RESET),boot:0xa (SPI_FAST_FLASH_BOOT)
+I (1198) app_init: App version:      0.15.0
+I (1202) app_init: Compile time:     Nov 12 2026 18:38:15
+I (1207) app_init: ELF file SHA256:  eb414a728...
+I (1211) app_init: ESP-IDF:          v6.1
+I (1326) crystal_memory: UI and JSON allocators use PSRAM; task stacks remain internal
+I (1358) crash: No coredump found
+I (1398) ESP32-S3-Touch-LCD-4B: Partition size: total: 1920401, used: 91615
+W (3147) crystal_signature: No initial package signing key configured; signed packages will be rejected
+I (3163) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (3245) crystal_registry: installed: dev_tester (slot 1)
+I (3252) crystal_registry: installed: clock (slot 2)
+I (3367) crystal_registry: installed: weather (slot 3)
+I (3377) crystal_registry: installed: calculator (slot 4)
+I (3395) crystal_app: Dev Tester lifecycle: onCreate
+I (3562) crystal_shell: active card 1/4: dev_tester
+I (3859) crystal_boot: first-frame baseline: 2532 ms
+I (3859) crystal_boot: main task stack headroom: 4656 bytes
+I (4559) crystal_hal: WiFi initialized: internal=48475 largest_internal=31744
+I (5718) esp_netif_handlers: sta ip: 192.168.1.193, mask: 255.255.255.0, gw: 192.168.1.1
+I (9980) crystal_core: SNTP synchronized system clock and RTC
+I (10485) crystal_control: Starting local panel: sockets=16 clients=4 internal=35715 largest_internal=26624 psram=3971704
+I (10488) crystal_control: Local control API enabled for this boot; pairing PIN expires in 10 minutes
+I (10968) crystal_http: request completed id=1 attempts=1 elapsed=4202 ms status=200
+I (11005) crystal_core: weather fetched: 22.7 C, humidity 83%, code 2, wind 8.4 km/h
+I (16485) crystal_http: request completed id=2 attempts=1 elapsed=5448 ms status=200
+I (16515) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=5448 ms error=ESP_OK
+I (16538) crystal_core: HTTPS smoke test passed
+I (16546) crystal_http: heap released id=2 internal=31979 largest_internal=10752 psram=3999944
+W (55238) httpd_txrx: httpd_sock_err: error in recv : 104
+I (72018) crystal_control: Rebooting at the paired control panel's request
+
+PASS (user-confirmed): selected upload file cleared on Sign out and
+re-pairing; Install disabled and Refresh returns four apps, as instructed.
+PASS (user-confirmed): dialog button placement, cancellation with no reset
+or reboot log, and continued authenticated Refresh.
+PASS (serial and user-confirmed): boot firmware 0.15.0, zero installed
+packages after prior removal, four built-ins with correct shell total,
+working gap-free launcher, Wi-Fi reconnect, weather HTTP 200 and HTTPS smoke
+HTTP 200. Local panel initially off, then enabled successfully.
+PASS (serial): panel-requested reboot path reaches its reboot log in each
+of two distinct uptime sessions.
+
+LIMIT: the boot capture begins after opening a new monitor and identifies
+USB_UART_CHIP_RESET. It is not a continuous trace of the preceding panel
+request causing one reset. Two request messages in different uptime
+sessions do not establish duplicate requests from one click. The final
+request at 72018 ms is not followed by its boot in the supplied transcript.
+Keep exactly-one-reset observation and browser reboot/re-pairing guidance
+open until recorded with the monitor left running. Local ESP-IDF v6.1
+tools expose monitor --no-reset when a monitor must be opened without an
+initial reset.
+
+OPEN: explicitly confirm re-pairing and authenticated Refresh/system/apps
+responses after boot. The absence of resets for the earlier unauthorized
+POSTs remains separately unreported; Cancel's no-reset observation does
+not close that test.
+
+TRUST-KEY NOTE: the no-initial-key boot warning is retained. It reports an
+empty initial key configuration; previously provisioned NVS keys may still
+exist. Signed Wi-Fi installation needs matching key-ID/trust evidence,
+not an assumption that this warning proves the entire trust store empty.
+
+This update changes documentation only. No build or flash was needed.
+
+Later D–F capture on the same date resolves the earlier exactly-one-reset
+and authenticated browser-recovery gaps described above. See
+2026-11-13-batch-def-persistence-recovery.txt: request at 131074 ms is
+followed continuously by RTC_SW_CPU_RST and the three-app boot; the later
+restoration request is followed by USB reconnect and the four-app boot.
+System/apps authenticated responses are HTTP 200, and the user confirms
+restored order/all-enabled state in both UIs. Exact browser reboot guidance
+is still not explicitly described. The earlier unauthorized-request
+observation is also resolved by the batch A–C report: no reboot-request
+message and the existing paired browser Refresh still works.

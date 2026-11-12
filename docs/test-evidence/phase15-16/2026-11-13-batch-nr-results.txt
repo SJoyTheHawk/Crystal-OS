@@ -1,0 +1,108 @@
+Phase 15/16 device results N–R — received 2026-11-13
+Source: user-supplied serial excerpts, HTTP responses and UI observations.
+These are user-run device tests, not commands executed by the recording agent.
+The user's second heading P (management cleanup) is recorded as Q below.
+No pairing codes, bearer tokens or private keys are retained here.
+
+N — Updated firmware and launcher captions: functional PASS
+Firmware 0.15.0, ESP-IDF v6.1; compile string Nov 13 2026 03:04:55;
+ELF prefix 07e71ed2e. No coredump found.
+3142 crystal_signature: Loaded configured package signing key ID 240
+3153 crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+3236/3245/3361/3372: built-ins dev_tester/clock/weather/calculator, slots 0/1/2/3.
+3557 active card 4/4: calculator
+3868 first-frame baseline: 2542 ms; main task stack headroom: 4656 bytes
+4620 WiFi initialized: internal=48343 largest_internal=31744
+5786 IP 192.168.1.193; 6428 SNTP synchronized.
+13919 Weather request completed status=200, 467 bytes, elapsed=7235 ms.
+13911 Weather TLS peak internal=35951 largest_internal=26624.
+19227 HTTPS smoke body received: 577 bytes.
+19234 heap after: internal=43879 largest_internal=31744 psram=4479216.
+The N capture ends before the smoke completion/PASS line; do not infer it.
+User: After uploading and rebooting, management pages show Status Dashboard
+and Action Guard Check; launcher shows Status Dashboard and Action Guard...
+This establishes the caption truncation/full-name distinction on the board.
+No new caption photograph was supplied. Repeated identical zero-package boot
+excerpts are not separate evidence of package discovery after upload. Q later
+reports six catalog apps before cleanup.
+
+O — Dashboard reconnect binding: functional PASS by user observation
+User: All confirmed; Network: connected online, Network disconnected offline.
+This confirms the instructed reconnect UI sequence, including the final
+connected state/offline-hint behavior; no additional screenshot is claimed.
+164975 disconnected; 182363 connected; 185332 SNTP synchronized.
+223137 disconnected; 234744 connected; 238247 SNTP synchronized.
+
+O — Panel + TLS memory evidence: success with limited internal headroom
+20814 request 1 before: internal=29759 largest_internal=20480 psram=4000944
+24079 panel starting: internal=20167 largest_internal=8704 psram=3962944
+24082 Local control API enabled for this boot
+30873 request 1 TLS peak: internal=5807 largest_internal=4096 psram=3977768
+30880 request 1 completed: status=200 elapsed=10072 ms, body=467 bytes
+30942 released: internal=16915 largest_internal=7680 psram=3999688
+30956 request 2 before: internal=17067 largest_internal=7680 psram=3999688
+36355 request 2 TLS peak: internal=8111 largest_internal=3328 psram=3977636
+36363 request 2 completed: status=200 elapsed=5412 ms, body=577 bytes
+36414 HTTPS smoke test passed
+36422 released: internal=16983 largest_internal=7680 psram=3999688
+158666 Status Dashboard lifecycle: onCreate
+158774 Dashboard onCreate took 105 ms (budget 80 ms)
+Both HTTPS requests finish before Dashboard starts. This is panel+TLS, not
+simultaneous Dashboard+panel+TLS evidence. No allocation failure or reset is
+reported. The 5807-byte free-internal minimum and 3328-byte largest-block
+minimum occur at different samples; retain both for headroom investigation.
+Do not substitute free_heap_kb (which includes PSRAM) for internal RAM.
+
+P — Browser Live logs and sign-out: functional PASS
+Fresh lifecycle rows observed for Calculator, Dashboard and Action Guard.
+Pause shows Paused / Start logs; user reports no new displayed rows.
+Restarting logs displays subsequent Dashboard/Action Guard lifecycle rows.
+User explicitly confirms mobile-browser behavior.
+After sign-out, log output and device controls are inaccessible in the UI.
+Old log history is available to a newly paired browser/device after Wi-Fi
+and Local Control Panel are switched off/on.
+Source verification: crystal_control.cpp retains a process-lifetime deque
+of at most 64 lines, each truncated to 240 bytes. Panel enable/disable does
+not clear it. logs_handler defaults since=0 and replays retained history.
+Browser endSession clears its displayed logs and stops the local stream.
+Device reboot reconstructs the volatile queue. Browser sign-out is not a
+device-wide log-erasure action. Stream concurrency, in-flight authorization
+invalidation and clean server shutdown are still separate open checks.
+
+Q — Management cleanup (user's second P): functional PASS with qualifications
+User confirms browser Uninstall cancellation.
+Action Guard disappears from browser list after Refresh, not automatically.
+926673 manage_apps: Showing 6 catalog apps
+931413 crystal_shell: Control-panel uninstalled org.crystal.action-guards
+937979 manage_apps: Showing 5 catalog apps
+940784 manage_apps: Uninstalling org.crystal.declarative-dashboard
+940931 manage_apps: Successfully uninstalled org.crystal.declarative-dashboard
+940966 manage_apps: Showing 4 catalog apps
+Authenticated GET /api/v1/apps: HTTP 200, schema=1, four enabled built-ins:
+dev_tester slot 0; clock slot 1; weather slot 2; calculator slot 3.
+Each origin=builtin and version=null; neither package remains.
+User confirms launcher and app/card positions are correct.
+The exact on-device success-notice wording was not supplied.
+Source verification: app actions are queued; browser runAction performs one
+immediate refreshData and tells users to Refresh to check queued progress.
+That read can precede queued uninstall completion; there is no completion
+push/poll here. Manual Refresh establishes correct state in this test.
+Do not classify this as a failed uninstall or invent automatic-refresh proof.
+
+R — Real-token alteration and invalidation: PASS for GET /api/v1/system
+Fresh valid token: HTTP 200; schema=1, os_version=0.15.0, abi_version=1,
+free_psram_kb=4366, free_heap_kb=4393, free_storage_kb=1785,
+serial=A4CB8FCF6898.
+Same token with first character changed: HTTP 401, error=unauthorized.
+Old token after the instructed panel stop/restart: HTTP 401, error=unauthorized.
+User stores the token locally without printing it and unsets shell variables.
+This extends the earlier missing/made-up-token matrix. It does not establish
+24-hour expiry, all-route real-token lifecycle behavior, or termination of
+an already-open SSE response after invalidation.
+
+Closure impact
+Close browser log-viewer functional observation, Dashboard reconnect UI,
+launcher-caption device confirmation and browser cancellation/cleanup checks.
+Keep both phases open for the remaining implementation/contract and final
+integrated checks listed in APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md.
+Do not repeat passed N–R observations just because implementation work remains.
