@@ -41,6 +41,7 @@ static lv_obj_t *s_update_failure_dialog = nullptr;
 static lv_obj_t *s_control_pair_dialog = nullptr;
 static lv_obj_t *s_developer_tools_page = nullptr;
 static lv_obj_t *s_control_api_row = nullptr;
+static lv_obj_t *s_control_api_switch = nullptr;
 static lv_obj_t *s_control_status_label = nullptr;
 static bool s_control_start_pending = false;
 
@@ -2100,6 +2101,7 @@ void clear_page_cache(lv_obj_t *page)
     if (page == s_developer_tools_page) {
         s_developer_tools_page = nullptr;
         s_control_api_row = nullptr;
+        s_control_api_switch = nullptr;
         s_control_status_label = nullptr;
     }
     if (page == s_location_form.page) s_location_form = {};
@@ -3043,6 +3045,48 @@ void settings_push_system()
     lv_obj_add_event_cb(restart, [](lv_event_t *) { open_restart_confirm(); }, LV_EVENT_CLICKED, nullptr);
 }
 
+void control_panel_toggle_changed(lv_event_t *event)
+{
+    auto *control = static_cast<lv_obj_t *>(lv_event_get_target(event));
+    if (control != s_control_api_switch || s_control_api_row == nullptr ||
+            s_control_status_label == nullptr) return;
+    if (s_control_start_pending) {
+        lv_obj_add_state(control, LV_STATE_CHECKED | LV_STATE_DISABLED);
+        return;
+    }
+    if (!lv_obj_has_state(control, LV_STATE_CHECKED)) {
+        control_pair_dialog_close();
+        crystal_control_disable();
+        settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
+        lv_label_set_text(s_control_status_label, "Local control panel disabled.");
+        lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0x91a0b3), 0);
+        return;
+    }
+    IWifi *wifi = hal().wifi;
+    if (wifi == nullptr || !wifi->has_ip()) {
+        lv_obj_clear_state(control, LV_STATE_CHECKED);
+        settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
+        lv_label_set_text(s_control_status_label, "Connect the device to WiFi before enabling the local panel.");
+        lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0xf59e0b), 0);
+        return;
+    }
+    s_control_start_pending = true;
+    lv_obj_add_state(control, LV_STATE_DISABLED);
+    settings_row_set_summary(s_control_api_row, "Starting...");
+    lv_label_set_text(s_control_status_label, "Starting the local control panel...");
+    lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0x91a0b3), 0);
+    // This temporary worker otherwise competes with the HTTP server's
+    // 8 KiB internal stack while TLS is active. Keep its stack in PSRAM.
+    if (xTaskCreateWithCaps(control_panel_start_worker, "control_start", 6144,
+                    nullptr, 2, nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        s_control_start_pending = false;
+        lv_obj_clear_state(control, LV_STATE_CHECKED | LV_STATE_DISABLED);
+        settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
+        lv_label_set_text(s_control_status_label, "Could not start the local panel. Try again.");
+        lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0xf87171), 0);
+    }
+}
+
 void settings_push_developer_tools()
 {
     lv_obj_t *content = system_page_push("Developer Tools");
@@ -3051,50 +3095,21 @@ void settings_push_developer_tools()
 
     lv_obj_t *status = settings_status_label(content);
     s_control_status_label = status;
+    const bool enabled = crystal_control_enabled();
     lv_label_set_text(status, s_control_start_pending ?
-        "Starting the local control panel..." : "The local API is off until you enable it.");
+        "Starting the local control panel..." :
+        enabled ? "Local control panel is enabled for this boot." :
+                  "The local API is off until you enable it.");
     lv_obj_set_style_text_color(status, lv_color_hex(0x91a0b3), 0);
 
-    const bool enabled = crystal_control_enabled();
     lv_obj_t *api = settings_row(content, "Local Control Panel",
         s_control_start_pending ? "Starting..." :
         enabled ? "Enabled for this boot" : "Off - enable to pair a browser");
     s_control_api_row = api;
-    lv_obj_add_event_cb(api, [](lv_event_t *event) {
-        auto *row = static_cast<lv_obj_t *>(lv_event_get_target(event));
-        auto *status_label = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
-        if (s_control_start_pending) {
-            lv_label_set_text(status_label, "Starting the local control panel...");
-            return;
-        }
-        if (crystal_control_enabled()) {
-            crystal_control_disable();
-            settings_row_set_summary(row, "Off - enable to pair a browser");
-            lv_label_set_text(status_label, "Local control panel disabled.");
-            lv_obj_set_style_text_color(status_label, lv_color_hex(0x91a0b3), 0);
-            return;
-        }
-        IWifi *wifi = hal().wifi;
-        if (wifi == nullptr || !wifi->has_ip()) {
-            lv_label_set_text(status_label, "Connect the device to WiFi before enabling the local panel.");
-            lv_obj_set_style_text_color(status_label, lv_color_hex(0xf59e0b), 0);
-            return;
-        }
-        s_control_start_pending = true;
-        settings_row_set_summary(row, "Starting...");
-        lv_label_set_text(status_label, "Starting the local control panel...");
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0x91a0b3), 0);
-        // This temporary worker otherwise competes with the HTTP server's
-        // 8 KiB internal stack while TLS is active. Keep its stack in PSRAM.
-        if (xTaskCreateWithCaps(control_panel_start_worker, "control_start", 6144,
-                        nullptr, 2, nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
-            s_control_start_pending = false;
-            settings_row_set_summary(row, "Off - enable to pair a browser");
-            lv_label_set_text(status_label, "Could not start the local panel. Try again.");
-            lv_obj_set_style_text_color(status_label, lv_color_hex(0xf87171), 0);
-            return;
-        }
-    }, LV_EVENT_CLICKED, status);
+    s_control_api_switch = settings_switch(api, enabled || s_control_start_pending);
+    if (s_control_start_pending) lv_obj_add_state(s_control_api_switch, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(s_control_api_switch, control_panel_toggle_changed,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
 
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);
@@ -3108,19 +3123,23 @@ void crystal_shell_control_start_event(const char pairing_pin[7])
     // If the user left Developer Tools while the worker was starting, do not
     // leave an enabled server running without showing its one-time pairing PIN.
     if (s_developer_tools_page == nullptr || s_control_api_row == nullptr ||
+            s_control_api_switch == nullptr ||
             s_control_status_label == nullptr || s_system_page_depth == 0 ||
             s_system_page_stack[s_system_page_depth - 1] != s_developer_tools_page) {
         if (pairing_pin != nullptr) crystal_control_disable();
         return;
     }
     if (pairing_pin == nullptr) {
+        lv_obj_clear_state(s_control_api_switch, LV_STATE_CHECKED | LV_STATE_DISABLED);
         settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
         lv_label_set_text(s_control_status_label, "Could not start the local panel. Try again.");
         lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0xf87171), 0);
         return;
     }
 
-    settings_row_set_summary(s_control_api_row, "Enabled for this boot - tap to disable");
+    lv_obj_clear_state(s_control_api_switch, LV_STATE_DISABLED);
+    lv_obj_add_state(s_control_api_switch, LV_STATE_CHECKED);
+    settings_row_set_summary(s_control_api_row, "Enabled for this boot");
     lv_label_set_text(s_control_status_label, "Panel enabled. Pair within 10 minutes using the code on screen.");
     lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0x4ade80), 0);
 

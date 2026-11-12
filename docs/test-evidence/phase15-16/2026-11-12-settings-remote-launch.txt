@@ -40,3 +40,9 @@ After the flash/retest instructions, the user replied â€œYes, the change is on.â
 The baseline remote-launch correction is recorded as user-confirmed on device.
 No serial transcript or explicit repeated/root/nested test results were supplied;
 those detailed acceptance cases remain pending in the checklist.
+
+Subsequent serial evidence: 2026-11-12-repeated-panel-launch.txt confirms
+return from two Settings pages to Dashboard and four normal remote launches
+without duplicate lifecycle creation. Requests in that excerpt occur after
+Settings closes; the explicit behind-Settings request cases remain open.
+Startup onCreate warning (110 ms / 80 ms budget) is retained as a follow-up.

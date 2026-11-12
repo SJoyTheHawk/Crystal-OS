@@ -368,6 +368,24 @@ validate Browser Web Serial, which remains an open item.
 
 ## 5. Phase 15 pairing and authenticated Wi-Fi API
 
+The Local Control Panel row now has a right-aligned Settings switch. The
+2026-11-12 host regression `python3 tools/test_developer_tools_page.py`
+passes with real LVGL for row layout, initial state, pending-start lock,
+pairing callback, disable, missing/disconnected Wi-Fi rollback, worker/server
+failure and retry, and leaving/reopening Developer Tools. Network and task
+creation use fixtures; the new switch still needs these physical checks:
+The user accepted the toggle change on 2026-11-12 ("OK now"). Individual
+startup, failure, and service-disable checks below remain open.
+
+- [ ] Turn the switch on while connected to Wi-Fi. Confirm Starting is shown,
+  the switch cannot be pressed again during startup, and successful startup
+  leaves it on and displays the one-time pairing code.
+- [ ] Dismiss the pairing dialog, leave and reopen Developer Tools, and confirm
+  the switch remains on for the enabled service. Turn it off and confirm the
+  browser panel can no longer reach the API.
+- [ ] With Wi-Fi disconnected, try enabling the switch. Confirm it returns off
+  and requests a Wi-Fi connection. Reconnect and confirm startup can be retried.
+
 - [x] On the device open `Settings -> Developer Tools -> Local Control Panel`
   and enable the panel for the current boot.
   User-supplied [panel startup evidence](test-evidence/phase15-16/2026-11-12-panel-enable.txt)
@@ -460,6 +478,35 @@ validate Browser Web Serial, which remains an open item.
 - [ ] Confirm restart-required feedback after installing a package against
   the installation response. The apps query does not include this field.
 
+### Sign out and confirmed reboot
+
+The 2026-11-12 page update places Sign out beside Refresh above all mobile
+tabs, and Reboot in the former Disconnect location in the Device section.
+Deploy both application and system assets (`app-flash storage-flash`); the
+page-only update cannot provide the new firmware endpoint.
+
+Host checks pass: `node tools/test_control_panel.mjs` verifies top placement,
+session/data clearing, confirmation with Cancel focused, cancellation without
+a request, one authenticated POST on confirmation, error recovery, and no
+refresh during reboot. `python3 tools/test_control_reboot.py` exercises the
+production token guard and reboot functions with HTTP/restart stubs under
+ASan/UBSan, including invalid/expired tokens, install exclusion, duplicate
+rejection, scheduling failure recovery, and response-before-restart ordering.
+These host results do not establish a successful physical reset.
+
+- [ ] On desktop and mobile, confirm Sign out is visible above the sections
+  or tabs and returns to pairing with the app list and package selection cleared.
+- [ ] Pair again, open Device on mobile, and select Reboot. Confirm the dialog
+  explains the restart and re-pairing requirement; Cancel must leave the device running.
+- [ ] Select Reboot now and confirm exactly one reset in the serial monitor,
+  preceded by `Rebooting at the paired control panel's request`. The browser
+  should request re-pairing rather than reporting a failed refresh.
+- [ ] After boot, enable Local Control Panel again and pair with the new code.
+- [ ] Without a token or with an invalid token, POST `/api/v1/system/reboot`
+  must return one HTTP 401 response and must not reset the device. Recheck
+  protected app mutations after the shared token guard correction; a 401
+  must stop execution even when sending the error response succeeds.
+
 ## 6. Phase 15 Wi-Fi installation, progress, run, and logs
 
 Use a signed package made with the private key whose public key is provisioned
@@ -524,14 +571,28 @@ required production policy for Wi-Fi.
   Host regression and platform integration checks pass, and firmware 0.15.0
   builds. After receiving the flash/retest instructions, the user confirmed
   “Yes, the change is on.” Record the baseline remote-launch correction as
-  user-confirmed on the device. The detailed root/nested Settings, serial-log,
-  and repeated-launch sequence below remains open until explicitly reported.
+  user-confirmed on the device. Repeated-launch and Settings-return serial
+  evidence is now recorded below; requests issued while Settings is open
+  remain a separate check.
 - [ ] After flashing the correction, launch Status Dashboard from the panel
   while root or nested Settings is open. Confirm serial output includes
   `Control-panel launched org.crystal.declarative-dashboard behind Settings`.
-  Close Settings normally and confirm Dashboard is selected, not the app
-  that was active before opening Settings. Repeat Launch and confirm there
-  is no crash, duplicate lifecycle, or switch back to the old app.
+  Confirm the selected app survives closing Settings. The later serial
+  excerpt begins with Settings closing, so it does not itself capture a
+  Launch request issued while Settings is open.
+- [x] Close nested Settings and confirm it returns to Status Dashboard.
+  The [device serial evidence](test-evidence/phase15-16/2026-11-12-repeated-panel-launch.txt)
+  shows two Settings pages closing at 26280 ms, Dashboard onResume, and
+  Dashboard selected as active card 1/5 at 26295 ms.
+- [x] Repeat Launch while Dashboard is already active; confirm no crash,
+  reboot, or duplicate lifecycle creation.
+  The user pressed Launch four times and reported normal operation without
+  crashing or restarting. The first request switches from Dev Tester and
+  creates Dashboard; the next three select the same app without additional
+  onCreate/onResume/onDestroy calls in the supplied excerpt.
+- [ ] Follow up Dashboard startup timing: onCreate took 110 ms against an
+  80 ms budget on the first remote launch. Track this performance warning
+  separately from the successful repeated-launch functional check.
 - [ ] Disable it, refresh the app list, then enable it again.
 - [ ] Clear its data and verify the action reports success.
 - [ ] Move the app up and down in the external ordering controls.

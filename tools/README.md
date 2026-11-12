@@ -167,9 +167,41 @@ See the implementation notes for expected logs, reruns, and failure handling.
 
 ## Browser control panel
 
+In device Settings → Developer Tools, Local Control Panel uses the same
+right-aligned switch as the other Settings toggles. It is disabled while
+startup is pending, returns off if Wi-Fi or startup fails, and opens the
+pairing dialog when startup succeeds. Turning it off ends the local panel
+service. Reopening Developer Tools reflects the current service state.
+Run `python3 tools/test_developer_tools_page.py` for real-LVGL checks of the
+production row, switch, startup callback, failure recovery, and page exit.
+Add `--output-dir /tmp/crystal-developer-tools-preview` to save renders.
+Networking, worker creation, and the page header use fixtures in this test.
+
 The device serves the self-contained page in assets/control-panel/index.html.
 Its fonts, icons, styles, and scripts require no external downloads. The pairing
 screen and app dashboard adapt to desktop and mobile browsers.
+Above 800 px, apps, installation, and device information are visible together
+in a two-column workspace. At 800 px and below, Apps, Install, and Device tabs
+show one section at a time. Resizing preserves pairing, the selected package,
+and the active mobile tab; keyboard focus stays in a visible section.
+App rows keep ↑ and ↓ ordering buttons on the right. Launch, enable/disable,
+clear data, and uninstall are visible directly without an expandable options
+section. Clear data and uninstall still require confirmation.
+Sign out sits beside Refresh above the tabs and clears this browser's session.
+Reboot appears below Live logs in a matching Device card with the same padding,
+heading, description, and secondary action button.
+Its confirmation defaults to Cancel; Reboot now sends an authenticated
+`POST /api/v1/system/reboot`, then returns the browser to pairing. The device
+acknowledges before restarting and rejects reboot while an install is active.
+After restart, enable Local Control Panel again and pair with a new code.
+Confirmations match the panel's bordered cards, with a gray Cancel button on
+the left and a red confirmation button on the right.
+
+The header logo is an embedded JPEG in the HTML, so it requires no extra asset
+route. Its optimized 144×121 source is assets/control-panel/logo.jpg; the
+original is retained in docs/images/control-panel-logo-source.jpg. It displays
+at 44 px wide on desktop and 32–36 px on narrow screens, with its proportions
+preserved. Update the embedded image when replacing the source logo.
 
 Run the browser regression suite with Node 22+ and Chrome installed:
 
@@ -186,6 +218,10 @@ Coverage includes pairing, invalid codes, expiry, app actions and confirmation,
 ordering, uploads, errors, log framing, and responsive layouts. Actual device
 pairing, signed-package installation, Safari, and hardware logs remain board
 checks in the Phase 15/16 test guide.
+Run `python3 tools/test_control_reboot.py` for the production reboot and token
+guard regression under ASan/UBSan. It checks unauthorized and expired tokens,
+install exclusion, queue failures, duplicate requests, and response ordering
+with HTTP/restart stubs; it does not reset a physical device.
 
 Run `python3 tools/test_shell_control_launch.py` for the shell remote-launch
 regression. It exercises the production launch, card-start, and Settings-close
@@ -205,3 +241,6 @@ leaves the separate LittleFS app partition and NVS intact. The app-flash target
 alone does not update the page. After flashing, enable Local Control Panel again
 on the device, reload the browser page, and pair with the new code. Use the
 current port if it changes.
+The new Reboot endpoint also requires the application update. To deploy both
+the page and this firmware change, use `idf.py -p /dev/cu.usbmodem1101 app-flash storage-flash`
+after building, with the serial monitor closed.

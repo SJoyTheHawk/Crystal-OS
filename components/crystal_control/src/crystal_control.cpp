@@ -24,6 +24,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_spiffs.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
 #include "sodium.h"
@@ -125,7 +126,35 @@ bool token_matches(httpd_req_t *request)
 esp_err_t require_token(httpd_req_t *request)
 {
     if (token_matches(request)) return ESP_OK;
-    return json_response(request, 401, "{\"error\":\"unauthorized\"}");
+    // A successfully sent 401 is still an authorization failure. Callers
+    // must stop instead of executing the requested operation afterward.
+    (void)json_response(request, 401, "{\"error\":\"unauthorized\"}");
+    return ESP_FAIL;
+}
+
+void reboot_worker(void *)
+{
+    // HTTP server work runs after the current handler returns, so the 202
+    // response is sent first. Reuse its task rather than allocate a new stack.
+    vTaskDelay(pdMS_TO_TICKS(250));
+    ESP_LOGI(TAG, "Rebooting at the paired control panel's request");
+    esp_restart();
+}
+
+esp_err_t reboot_handler(httpd_req_t *request)
+{
+    if (require_token(request) != ESP_OK) return ESP_OK;
+    // Reserve the same gate as Wi-Fi and USB installs until the reset, so a
+    // reboot cannot interrupt a package write or allow a new upload to start.
+    bool expected = false;
+    if (!s_installing.compare_exchange_strong(expected, true)) {
+        return json_response(request, 409, "{\"error\":\"an install or reboot is already in progress\"}");
+    }
+    if (httpd_queue_work(s_server, reboot_worker, nullptr) != ESP_OK) {
+        s_installing = false;
+        return json_response(request, 500, "{\"error\":\"could not schedule reboot; please try again\"}");
+    }
+    return json_response(request, 202, "{\"rebooting\":true}");
 }
 
 esp_err_t pair_handler(httpd_req_t *request)
@@ -512,7 +541,7 @@ bool register_uri(httpd_uri_t *uri, const char *path, httpd_method_t method,
 }
 
 httpd_uri_t s_root_uri, s_pair_uri, s_apps_uri, s_system_uri, s_install_uri,
-    s_order_uri, s_action_uri, s_logs_uri;
+    s_order_uri, s_action_uri, s_logs_uri, s_reboot_uri;
 }
 
 extern "C" void crystal_control_log_line(const char *app_id, const char *line)
@@ -534,7 +563,7 @@ bool crystal_control_enable(char pairing_pin[7])
     if (s_server != nullptr) crystal_control_disable();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 10;
-    // Keep the panel's session pool small; this is a read-only local service
+    // Keep the panel's session pool small; this local service
     // and must coexist with outbound HTTPS clients using the shared lwIP pool.
     config.max_open_sockets = 4;
     config.stack_size = 8192;
@@ -561,6 +590,7 @@ bool crystal_control_enable(char pairing_pin[7])
         register_uri(&s_apps_uri, "/api/v1/apps", HTTP_GET, apps_handler) &&
         register_uri(&s_install_uri, "/api/v1/apps", HTTP_POST, install_handler) &&
         register_uri(&s_system_uri, "/api/v1/system", HTTP_GET, system_handler) &&
+        register_uri(&s_reboot_uri, "/api/v1/system/reboot", HTTP_POST, reboot_handler) &&
         register_uri(&s_order_uri, "/api/v1/apps/order", HTTP_PATCH, order_handler) &&
         register_uri(&s_action_uri, "/api/v1/apps/*", HTTP_DELETE, app_action_handler) &&
         register_uri(&s_action_uri, "/api/v1/apps/*", HTTP_POST, app_action_handler) &&

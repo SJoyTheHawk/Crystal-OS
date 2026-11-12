@@ -1,0 +1,46 @@
+Device repeated control-panel Launch test — 2026-11-12
+Source: user-supplied serial excerpt and observation.
+User: “No crashing, restarting. Ran normally with 4 launches pressed.”
+
+Serial excerpt:
+I (17672) crystal_http: response released id=2
+I (17677) crystal_http: heap released id=2 internal=22923 largest_internal=7680 psram=3994108
+I (26280) crystal_shell: Home gesture: travel=105, depth=2, quick=0, last_app=0
+I (26280) crystal_shell: Closing all 2 Settings pages
+I (26283) crystal_shell: Returning to app index 0
+I (26286) crystal_app: Status Dashboard lifecycle: onResume
+I (26295) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (27377) crystal_shell: card crossover started: 1 -> 2, PSRAM free=4004252
+W (28348) esp-brookesia: [esp_brookesia_core_manager.cpp:178](startApp)Running app num(1) is already at the limit, will close the oldest app(2)
+I (28349) crystal_app: Status Dashboard lifecycle: onPause
+I (28355) crystal_app: Status Dashboard lifecycle: onDestroy
+I (28368) crystal_app: Dev Tester lifecycle: onCreate
+I (28403) crystal_shell: active card 2/5: dev_tester
+I (28530) crystal_shell: card crossover committed; active=2, PSRAM free=4477704
+W (30024) esp-brookesia: [esp_brookesia_core_manager.cpp:178](startApp)Running app num(1) is already at the limit, will close the oldest app(3)
+I (30029) crystal_app: Dev Tester lifecycle: onPause
+I (30031) crystal_app: Dev Tester lifecycle: onDestroy
+I (30038) crystal_app: Status Dashboard lifecycle: onCreate
+W (30153) crystal_app: Status Dashboard onCreate took 110 ms (budget 80 ms)
+I (30160) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (30160) crystal_shell: Control-panel launched org.crystal.declarative-dashboard
+I (32261) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (32261) crystal_shell: Control-panel launched org.crystal.declarative-dashboard
+I (34213) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (34213) crystal_shell: Control-panel launched org.crystal.declarative-dashboard
+I (36124) crystal_shell: active card 1/5: org.crystal.declarative-dashboard
+I (36125) crystal_shell: Control-panel launched org.crystal.declarative-dashboard
+
+PASS: closing two Settings pages returns to Status Dashboard.
+PASS: switching away tears down Dashboard and starts Dev Tester.
+PASS: four control-panel launches select Dashboard. Only the first creates it;
+subsequent launches show no additional onCreate/onResume/onDestroy lifecycle.
+PASS: user reports normal operation without crash or reboot.
+
+Performance follow-up: the first Dashboard onCreate takes 110 ms, exceeding
+its 80 ms budget by 30 ms. Functional Launch passes; startup timing is not
+recorded as passing. No watchdog reset appears in the supplied excerpt.
+
+Still unverified by this excerpt: a remote Launch issued while Settings is
+open (the four recorded requests occur after Settings has closed), including
+the “behind Settings” success log and separate root/nested Settings cases.
