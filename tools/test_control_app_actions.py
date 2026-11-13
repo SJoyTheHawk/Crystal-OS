@@ -23,7 +23,9 @@ FIXTURE = r'''
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <cmath>
 #include <string>
+#include <vector>
 #include "cJSON.h"
 #include "crystal_registry.hpp"
 using esp_err_t = int;
@@ -46,6 +48,7 @@ static int saves = 0, posts = 0;
 static uint8_t posted_kind = 0;
 static std::string saved_id, posted_id;
 static std::map<std::string, bool> states;
+static std::map<std::string, uint16_t> slots;
 static CrystalAppEntry catalog[] = {
     {"dev_tester", nullptr, true, 0}, {"clock", nullptr, true, 1},
     {"weather", nullptr, true, 2}, {"calculator", nullptr, true, 3},
@@ -62,6 +65,12 @@ bool crystal_registry_set_enabled(const char *id, bool enabled) {
     for (const auto &entry : catalog) if (entry.available && !strcmp(entry.id, id)) found = true;
     if (!storage_ok || !found) return false;
     states[id] = enabled; return true;
+}
+bool crystal_registry_enabled(const char *id, bool fallback) {
+    auto found = states.find(id); return found == states.end() ? fallback : found->second;
+}
+bool crystal_registry_set_slot(const char *id, uint16_t slot) {
+    ++saves; if (!storage_ok) return false; slots[id] = slot; return true;
 }
 int64_t esp_timer_get_time() { return now_us; }
 size_t httpd_req_get_hdr_value_len(httpd_req_t *r, const char *) { return r->authorization.size(); }
@@ -167,7 +176,24 @@ int main() {
     assert(posted_id == "dev_tester" && posted_kind == CRYSTAL_CONTROL_ACTION_LAUNCH);
     auto remove = request("/api/v1/apps/org.crystal.declarative-dashboard", HTTP_DELETE); run(remove, 202);
     assert(posted_id == "org.crystal.declarative-dashboard" && posted_kind == CRYSTAL_CONTROL_ACTION_UNINSTALL);
+    auto builtin_remove = request("/api/v1/apps/weather", HTTP_DELETE); run(builtin_remove, 202);
+    assert(!states.at("weather") && saved_id == "weather");
+    auto disabled_launch = request("/api/v1/apps/weather/launch"); run(disabled_launch, 409);
+    const auto actions_before = posts;
+    auto wrong_delete = request("/api/v1/apps/org.crystal.declarative-dashboard/launch", HTTP_DELETE);
+    run(wrong_delete, 400); assert(posts == actions_before);
+    auto unknown = request("/api/v1/apps/org.crystal.unknown", HTTP_DELETE); run(unknown, 404);
+    assert(posts == actions_before);
     queue_ok = false; auto blocked = request("/api/v1/apps/clock/data", HTTP_DELETE); run(blocked, 500);
+    const int before_order = saves;
+    for (const char *body : {R"([{"id":"clock","slot":1},{"id":"weather","slot":1}])",
+            R"([{"id":"clock","slot":1},{"id":"org.crystal.unknown","slot":2}])",
+            R"([{"id":"clock","slot":1.5}])", R"([{"id":"clock","slot":1},{"id":"clock","slot":2}])"}) {
+        auto order = request("/api/v1/apps/order", HTTP_POST, body);
+        assert(order_handler(&order) == ESP_OK && order.status == 400 && saves == before_order);
+    }
+    auto order = request("/api/v1/apps/order", HTTP_POST, R"([{"id":"clock","slot":1},{"id":"weather","slot":0}])");
+    assert(order_handler(&order) == ESP_OK && order.status == 202 && slots["clock"] == 1 && slots["weather"] == 0);
     const int before_saves = saves, before_posts = posts;
     for (const char *path : {"/api/v1/apps/clock/enabled", "/api/v1/apps/dev_tester/data",
             "/api/v1/apps/org.crystal.declarative-dashboard"}) {
@@ -194,6 +220,7 @@ def main():
         'bool token_matches(httpd_req_t *request)',
         'esp_err_t require_token(httpd_req_t *request)',
         'esp_err_t app_action_handler(httpd_req_t *request)',
+        'esp_err_t order_handler(httpd_req_t *request)',
     ))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     with tempfile.TemporaryDirectory(prefix='crystal-control-app-actions-') as directory:

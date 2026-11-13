@@ -62,6 +62,10 @@ def main():
         path = expression.split('==', 1)[0].split('!=', 1)[0].split('| format', 1)[0].strip()
         assert path in EXPRESSIONS, f'unsupported sample binding: {path}'
     for action in actions:
+        if isinstance(action, dict):
+            assert action['call'] in {'ui.set_focus', 'ui.list_add', 'ui.chart_set_data', 'ui.set_hidden'}
+            assert action['target'] in ids
+            continue
         if action.startswith('timer.arm(') or action.startswith('crystal.service.timer.arm('):
             argument = action[action.find('(') + 1:-1]
             assert argument.isdigit() and 0 < int(argument) <= 86400

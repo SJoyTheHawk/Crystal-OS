@@ -14,6 +14,11 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_SPEED_80M=y
 
+# The optional LAN discovery task does not perform flash writes. Preserve the
+# internal heap for Wi-Fi DMA, socket mailboxes and the flash-writing workers.
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
+
 # Keep the board's established allocator policy. Wi-Fi's static DMA buffers
 # still need an explicit internal-memory budget alongside USB and the panel.
 # CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set

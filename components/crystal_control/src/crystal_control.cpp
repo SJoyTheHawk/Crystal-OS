@@ -8,6 +8,8 @@
 #include <atomic>
 #include <deque>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 #include <string>
 #include <utility>
 #include <mutex>
@@ -26,6 +28,7 @@
 #include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "mdns.h"
 #include "driver/usb_serial_jtag.h"
 #include "sodium.h"
 #include "freertos/FreeRTOS.h"
@@ -46,6 +49,8 @@ static const char *TAG = "crystal_control";
 httpd_handle_t s_server = nullptr;
 TaskHandle_t s_usb_task = nullptr;
 bool s_usb_driver_owned = false;
+bool s_mdns_owned = false;
+char s_hostname[24] = {};
 char s_pairing_pin[7] = {};
 char s_token[65] = {};
 int64_t s_pin_expires_us = 0;
@@ -169,6 +174,14 @@ esp_err_t reboot_handler(httpd_req_t *request)
         return json_response(request, 500, "{\"error\":\"could not schedule reboot; please try again\"}");
     }
     return json_response(request, 202, "{\"rebooting\":true}");
+}
+
+esp_err_t sign_out_handler(httpd_req_t *request)
+{
+    if (require_token(request) != ESP_OK) return ESP_OK;
+    sodium_memzero(s_token, sizeof(s_token));
+    s_token_expires_us = 0;
+    return json_response(request, 200, "{\"signed_out\":true}");
 }
 
 esp_err_t pair_handler(httpd_req_t *request)
@@ -298,6 +311,7 @@ esp_err_t system_handler(httpd_req_t *request)
         cJSON_Delete(root);
         return json_response(request, 500, "{\"error\":\"out of memory\"}");
     }
+    cJSON_AddStringToObject(root, "hostname", s_hostname);
     char *encoded = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!encoded) return json_response(request, 500, "{\"error\":\"out of memory\"}");
@@ -346,14 +360,26 @@ esp_err_t order_handler(httpd_req_t *request)
     cJSON *root = cJSON_ParseWithLength(body.c_str(), body.size());
     if (!cJSON_IsArray(root) || cJSON_GetArraySize(root) > 32) { cJSON_Delete(root); return json_response(request, 400, "{\"error\":\"order must be an array\"}"); }
     bool ok = true;
+    std::vector<std::pair<std::string, uint16_t>> updates;
     for (int i = 0; i < cJSON_GetArraySize(root); ++i) {
         const cJSON *item = cJSON_GetArrayItem(root, i);
         const cJSON *id = cJSON_IsObject(item) ? cJSON_GetObjectItemCaseSensitive(item, "id") : nullptr;
         const cJSON *slot = cJSON_IsObject(item) ? cJSON_GetObjectItemCaseSensitive(item, "slot") : nullptr;
-        if (!cJSON_IsString(id) || !id->valuestring || !cJSON_IsNumber(slot) || slot->valuedouble < 0 || slot->valuedouble >= UINT16_MAX ||
-                !crystal_registry_set_slot(id->valuestring, static_cast<uint16_t>(slot->valuedouble))) { ok = false; break; }
+        if (!cJSON_IsString(id) || !id->valuestring || !cJSON_IsNumber(slot) || !std::isfinite(slot->valuedouble) ||
+                slot->valuedouble < 0 || slot->valuedouble >= UINT16_MAX || std::floor(slot->valuedouble) != slot->valuedouble) { ok = false; break; }
+        bool known = false;
+        for (size_t j = 0; j < crystal_registry_catalog_count(); ++j) {
+            const auto *entry = crystal_registry_catalog_entry(j);
+            if (entry && !strcmp(entry->id, id->valuestring)) { known = true; break; }
+        }
+        const auto rank = static_cast<uint16_t>(slot->valuedouble);
+        for (const auto &update : updates) if (update.first == id->valuestring || update.second == rank) known = false;
+        if (!known) { ok = false; break; }
+        updates.emplace_back(id->valuestring, rank);
     }
     cJSON_Delete(root);
+    if (ok) for (const auto &update : updates)
+        if (!crystal_registry_set_slot(update.first.c_str(), update.second)) { ok = false; break; }
     return ok ? json_response(request, 202, "{\"saved\":true,\"restart_required\":true}") : json_response(request, 400, "{\"error\":\"order could not be saved\"}");
 }
 
@@ -362,10 +388,23 @@ esp_err_t app_action_handler(httpd_req_t *request)
     if (require_token(request) != ESP_OK) return ESP_OK;
     std::string id; const char *suffix = nullptr;
     if (!request_path_id(request, &id, &suffix)) return json_response(request, 400, "{\"error\":\"invalid app id\"}");
+    const CrystalAppEntry *entry = nullptr;
+    for (size_t i = 0; i < crystal_registry_catalog_count(); ++i) {
+        const auto *candidate = crystal_registry_catalog_entry(i);
+        if (candidate && id == candidate->id) { entry = candidate; break; }
+    }
+    if (!entry) return json_response(request, 404, "{\"error\":\"unknown app\"}");
     if (request->method == HTTP_DELETE && suffix && !strcmp(suffix, "/data")) {
         return action_response(request, post_control_action(CRYSTAL_CONTROL_ACTION_CLEAR_DATA, id));
     }
-    if (request->method == HTTP_DELETE) return action_response(request, post_control_action(CRYSTAL_CONTROL_ACTION_UNINSTALL, id));
+    if (request->method == HTTP_DELETE && suffix == nullptr) {
+        if (entry->origin == CRYSTAL_ORIGIN_BUILTIN) {
+            return crystal_registry_set_enabled(id.c_str(), false)
+                ? json_response(request, 202, "{\"enabled\":false,\"restart_required\":true}")
+                : json_response(request, 500, "{\"error\":\"state could not be saved\"}");
+        }
+        return action_response(request, post_control_action(CRYSTAL_CONTROL_ACTION_UNINSTALL, id));
+    }
     if (request->method == HTTP_POST && suffix && !strcmp(suffix, "/enabled")) {
         if (request->content_len == 0 || request->content_len > 128) return json_response(request, 400, "{\"error\":\"invalid request\"}");
         char body[129] = {}; size_t received = 0;
@@ -383,7 +422,9 @@ esp_err_t app_action_handler(httpd_req_t *request)
         if (!changed) return json_response(request, 400, "{\"error\":\"unknown app or state could not be saved\"}");
         return json_response(request, 202, enabled ? "{\"enabled\":true,\"restart_required\":true}" : "{\"enabled\":false,\"restart_required\":true}");
     }
-    if (request->method == HTTP_POST && (suffix == nullptr || !strcmp(suffix, "/launch"))) {
+    if (request->method == HTTP_POST && suffix && !strcmp(suffix, "/launch")) {
+        if (!crystal_registry_enabled(entry->id, entry->default_enabled))
+            return json_response(request, 409, "{\"error\":\"app is disabled\"}");
         return action_response(request, post_control_action(CRYSTAL_CONTROL_ACTION_LAUNCH, id));
     }
     return json_response(request, 400, "{\"error\":\"unsupported app action\"}");
@@ -394,29 +435,25 @@ esp_err_t logs_handler(httpd_req_t *request)
     if (require_token(request) != ESP_OK) return ESP_OK;
     httpd_resp_set_type(request, "text/event-stream");
     httpd_resp_set_hdr(request, "Cache-Control", "no-cache");
-    httpd_resp_set_hdr(request, "Connection", "keep-alive");
     char query[48] = {};
     uint32_t since = 0;
     if (httpd_req_get_url_query_str(request, query, sizeof(query)) == ESP_OK) {
         char value[16] = {};
         if (httpd_query_key_value(query, "since", value, sizeof(value)) == ESP_OK) since = static_cast<uint32_t>(strtoul(value, nullptr, 10));
     }
-    for (unsigned tick = 0; tick < 60; ++tick) {
-        std::deque<std::pair<uint32_t, std::string>> pending;
-        {
-            std::lock_guard<std::mutex> lock(s_log_mutex);
-            pending = s_logs;
-        }
-        for (const auto &row : pending) {
+    // esp_http_server services handlers serially. Return a bounded snapshot;
+    // clients reconnect with their cursor after one second instead of holding
+    // the server task (and Settings' httpd_stop) for a minute.
+    std::string batch;
+    {
+        std::lock_guard<std::mutex> lock(s_log_mutex);
+        if (since >= s_next_log_id) since = 0; // Device rebooted.
+        for (const auto &row : s_logs) {
             if (static_cast<int32_t>(row.first - since) <= 0) continue;
-            std::string event = "id: " + std::to_string(row.first) + "\ndata: " + row.second + "\n\n";
-            if (httpd_resp_send_chunk(request, event.c_str(), event.size()) != ESP_OK) return ESP_FAIL;
-            since = row.first;
+            batch += "id: " + std::to_string(row.first) + "\ndata: " + row.second + "\n\n";
         }
-        const char heartbeat[] = ": keep-alive\n\n";
-        if (httpd_resp_send_chunk(request, heartbeat, sizeof(heartbeat) - 1) != ESP_OK) return ESP_FAIL;
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    if (!batch.empty() && httpd_resp_send_chunk(request, batch.c_str(), batch.size()) != ESP_OK) return ESP_FAIL;
     return httpd_resp_send_chunk(request, nullptr, 0);
 }
 
@@ -506,6 +543,7 @@ bool parse_usb_install(const std::string &line, size_t *length)
     constexpr char prefix[] = "CRYSTAL/1 INSTALL ";
     if (length == nullptr || line.compare(0, sizeof(prefix) - 1, prefix) != 0) return false;
     const char *start = line.c_str() + sizeof(prefix) - 1;
+    if (!*start || !std::all_of(start, start + strlen(start), [](char c) { return c >= '0' && c <= '9'; })) return false;
     char *end = nullptr;
     errno = 0;
     const unsigned long long value = strtoull(start, &end, 10);
@@ -577,7 +615,7 @@ bool register_uri(httpd_uri_t *uri, const char *path, httpd_method_t method,
     return httpd_register_uri_handler(s_server, uri) == ESP_OK;
 }
 
-httpd_uri_t s_root_uri, s_pair_uri, s_apps_uri, s_system_uri, s_install_uri,
+httpd_uri_t s_root_uri, s_pair_uri, s_session_uri, s_apps_uri, s_system_uri, s_install_uri,
     s_order_uri, s_action_uri, s_logs_uri, s_reboot_uri, s_favicon_uri, s_touch_icon_uri;
 }
 
@@ -585,6 +623,9 @@ extern "C" void crystal_control_log_line(const char *app_id, const char *line)
 {
     if (line == nullptr || line[0] == '\0') return;
     std::string value = app_id && app_id[0] ? std::string(app_id) + ": " + line : line;
+    // Logs cannot inject additional SSE fields or events.
+    std::replace(value.begin(), value.end(), '\n', ' ');
+    std::replace(value.begin(), value.end(), '\r', ' ');
     if (value.size() > 240) value.resize(240);
     std::lock_guard<std::mutex> lock(s_log_mutex);
     s_logs.emplace_back(s_next_log_id++, std::move(value));
@@ -599,12 +640,13 @@ bool crystal_control_enable(char pairing_pin[7])
     if (hal().wifi == nullptr || !hal().wifi->has_ip()) return false;
     if (s_server != nullptr) crystal_control_disable();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 13;
     // Keep the panel's session pool small; this local service
     // and must coexist with outbound HTTPS clients using the shared lwIP pool.
     config.max_open_sockets = 4;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
+    config.send_wait_timeout = 2;
     config.uri_match_fn = httpd_uri_match_wildcard;
     const size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const size_t largest_before = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -626,6 +668,7 @@ bool crystal_control_enable(char pairing_pin[7])
         register_uri(&s_favicon_uri, "/favicon*", HTTP_GET, panel_handler) &&
         register_uri(&s_touch_icon_uri, "/apple*", HTTP_GET, panel_handler) &&
         register_uri(&s_pair_uri, "/api/v1/pair", HTTP_POST, pair_handler) &&
+        register_uri(&s_session_uri, "/api/v1/session", HTTP_DELETE, sign_out_handler) &&
         register_uri(&s_apps_uri, "/api/v1/apps", HTTP_GET, apps_handler) &&
         register_uri(&s_install_uri, "/api/v1/apps", HTTP_POST, install_handler) &&
         register_uri(&s_system_uri, "/api/v1/system", HTTP_GET, system_handler) &&
@@ -637,6 +680,19 @@ bool crystal_control_enable(char pairing_pin[7])
     if (!handlers_ok) {
         crystal_control_disable();
         return false;
+    }
+    uint8_t chip_id[6] = {};
+    if (hal().system_info && hal().system_info->chip_id(chip_id)) {
+        std::snprintf(s_hostname, sizeof(s_hostname), "crystal-%02x%02x%02x%02x%02x%02x",
+            chip_id[0], chip_id[1], chip_id[2], chip_id[3], chip_id[4], chip_id[5]);
+        s_mdns_owned = mdns_init() == ESP_OK;
+        if (!s_mdns_owned || mdns_hostname_set(s_hostname) != ESP_OK ||
+            mdns_service_add("Crystal OS", "_http", "_tcp", 80, nullptr, 0) != ESP_OK) {
+            if (s_mdns_owned) mdns_free();
+            s_mdns_owned = false;
+            s_hostname[0] = '\0';
+            ESP_LOGW(TAG, "mDNS unavailable; use the IP address displayed on device");
+        } else ESP_LOGI(TAG, "Local panel discovered at http://%s.local", s_hostname);
     }
     std::snprintf(s_pairing_pin, sizeof(s_pairing_pin), "%06lu",
         static_cast<unsigned long>(randombytes_uniform(1000000)));
@@ -651,6 +707,8 @@ bool crystal_control_enable(char pairing_pin[7])
 
 void crystal_control_disable(void)
 {
+    if (s_mdns_owned) { mdns_free(); s_mdns_owned = false; }
+    s_hostname[0] = '\0';
     if (s_server != nullptr) {
         httpd_stop(s_server);
         s_server = nullptr;

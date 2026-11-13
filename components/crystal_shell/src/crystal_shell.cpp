@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 #include "crystal_app.hpp"
+#include "crystal_ui.hpp"
 #include "crystal_control.hpp"
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
@@ -1794,6 +1795,7 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
     s_gesture = gesture;
     crystal_registry_set_removed_hook(on_installed_app_removed);
     crystal_app_set_shell_back_hook(shell_consume_back);
+    CrystalUI::set_focus_hooks(crystal_keyboard_show, crystal_keyboard_hide_for);
     s_current_index = load_current_index();
     lv_obj_add_event_cb(gesture->getEventObj(), on_gesture_press,
                         gesture->getPressEventCode(), nullptr);
@@ -3137,7 +3139,7 @@ void settings_push_developer_tools()
 
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);
-    lv_label_set_text(note, "Wi-Fi panel supports install, app actions, and live logs. USB transport and hardware validation remain.");
+    lv_label_set_text(note, "Use the Wi-Fi panel to install and manage apps. Developers can also install using the USB command-line tool.");
     lv_obj_set_style_text_color(note, lv_color_hex(0x91a0b3), 0);
 }
 

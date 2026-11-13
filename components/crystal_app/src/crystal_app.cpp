@@ -249,9 +249,9 @@ bool CrystalApp::run()
     const uint32_t start = lv_tick_get();
     const bool ok = onCreate();
     const uint32_t elapsed = lv_tick_elaps(start);
-    if (elapsed > 80) {
-        ESP_LOGW(TAG, "%s onCreate took %lu ms (budget 80 ms)",
-                 app_name_.c_str(), static_cast<unsigned long>(elapsed));
+    if (elapsed > startup_budget_ms_) {
+        ESP_LOGW(TAG, "%s onCreate took %lu ms (budget %lu ms)",
+                 app_name_.c_str(), static_cast<unsigned long>(elapsed), static_cast<unsigned long>(startup_budget_ms_));
     }
     if (ok) {
         lifecycle_state_ = LifecycleState::Created;

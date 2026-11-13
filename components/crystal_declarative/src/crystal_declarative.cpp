@@ -72,7 +72,7 @@ bool json_depth_safe(const std::string &text)
 bool coord(const cJSON *object, const char *name, lv_coord_t *out)
 {
     double value = 0;
-    if (!finite_number(field(object, name), &value) || value < -32768 || value > 32767) return false;
+    if (!finite_number(field(object, name), &value) || value < -32768 || value > 32767 || value != std::floor(value)) return false;
     *out = static_cast<lv_coord_t>(value);
     return true;
 }
@@ -128,6 +128,30 @@ DeclarativeApp::DeclarativeApp(const char *name, const char *package_id, const c
     : CrystalApp(name), package_id_(package_id ? package_id : ""), entry_(entry ? entry : "ui.json"),
       system_timer_allowed_(system_timer_allowed)
 {
+    setStartupBudget(200); // Package parsing and a multi-control UI: Standard.
+    ui_.configure([](const cJSON *spec, lv_obj_t *parent, void *context) {
+        auto *app = static_cast<DeclarativeApp *>(context);
+        const auto count = lv_obj_get_child_cnt(parent);
+        const auto root_count = lv_obj_get_child_cnt(app->root_);
+        const auto previous_count = app->node_count_;
+        app->node_count_ = 0;
+        auto *result = app->build_node(spec, parent, 1);
+        app->node_count_ = previous_count;
+        if (!result) while (lv_obj_get_child_cnt(parent) > count)
+            lv_obj_del(lv_obj_get_child(parent, -1));
+        if (!result && parent != app->root_) while (lv_obj_get_child_cnt(app->root_) > root_count)
+            lv_obj_del(lv_obj_get_child(app->root_, -1));
+        return result;
+    }, [](lv_obj_t *object, const cJSON *style) { return apply_style(object, style); },
+    [](lv_obj_t *object, const char *path, void *context) {
+        return static_cast<DeclarativeApp *>(context)->load_image(object, path);
+    }, this);
+}
+
+CrystalUI::Handle DeclarativeApp::widget(const char *id) const
+{
+    if (id) for (const auto &named : named_objects_) if (named.id == id) return ui_.handle(named.object);
+    return 0;
 }
 
 bool DeclarativeApp::onCreate()
@@ -168,12 +192,14 @@ void DeclarativeApp::stop_binding_timer()
 
 bool DeclarativeApp::onPause()
 {
+    ui_.pause();
     stop_binding_timer();
     return true;
 }
 
 bool DeclarativeApp::onResume()
 {
+    ui_.resume();
     refresh_bindings();
     return start_binding_timer();
 }
@@ -181,18 +207,17 @@ bool DeclarativeApp::onResume()
 bool DeclarativeApp::onDestroy()
 {
     stop_binding_timer();
+    ui_.clear_callbacks();
     // Deleting the root also releases the single tracked object through the
     // CrystalApp LVGL delete callback. Children are owned by that root.
     if (root_ != nullptr) {
         lv_obj_del(root_);
         root_ = nullptr;
     }
+    ui_.reset();
     bindings_.clear();
     actions_.clear();
-    button_map_storage_.clear();
-    button_map_pointers_.clear();
-    dialog_button_storage_.clear();
-    dialog_button_pointers_.clear();
+    button_maps_.clear();
     images_.clear();
     image_bytes_ = 0;
     named_objects_.clear();
@@ -203,16 +228,15 @@ bool DeclarativeApp::onDestroy()
 void DeclarativeApp::reset_runtime()
 {
     stop_binding_timer();
+    ui_.clear_callbacks();
     if (root_ != nullptr) {
         lv_obj_del(root_);
         root_ = nullptr;
     }
+    ui_.reset();
     bindings_.clear();
     actions_.clear();
-    button_map_storage_.clear();
-    button_map_pointers_.clear();
-    dialog_button_storage_.clear();
-    dialog_button_pointers_.clear();
+    button_maps_.clear();
     images_.clear();
     image_bytes_ = 0;
     named_objects_.clear();
@@ -259,6 +283,8 @@ bool DeclarativeApp::load_document()
     lv_obj_set_style_text_font(root_, &lv_font_montserrat_20, 0);
     lv_obj_set_style_pad_all(root_, 16, 0);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    ui_.set_root(root_);
+    if (!ui_.adopt(root_)) return false;
     if (!apply_node_options(root_, screen, false)) return false;
     if (const char *id = string_field(screen, "id")) {
         if (!*id || strlen(id) > 31) return false;
@@ -322,6 +348,10 @@ bool DeclarativeApp::load_bindings(const std::string &text)
 bool DeclarativeApp::load_image(lv_obj_t *object, const char *path)
 {
     if (object == nullptr || path == nullptr || !*path || strlen(path) > 127) return false;
+    if (strncmp(path, "assets/", 7) && strncmp(path, "data/", 5)) return false;
+    for (const auto &image : images_) if (image.path == path) {
+        lv_img_set_src(object, &image.descriptor); return true;
+    }
     std::string bytes;
     if (!crystal_package_read_file(package_id_, path, &bytes, kMaxImageSourceBytes)) return false;
     std::istringstream input(bytes);
@@ -332,8 +362,8 @@ bool DeclarativeApp::load_image(lv_obj_t *object, const char *path)
     const size_t pixels = static_cast<size_t>(width) * height;
     if (pixels > kMaxTotalImageBytes / sizeof(lv_color_t) ||
         image_bytes_ > kMaxTotalImageBytes - pixels * sizeof(lv_color_t)) return false;
-    images_.emplace_back();
-    EmbeddedImage &image = images_.back();
+    EmbeddedImage decoded;
+    EmbeddedImage &image = decoded;
     image.pixels.resize(pixels * sizeof(lv_color_t));
     for (size_t index = 0; index < pixels; ++index) {
         std::string token;
@@ -347,6 +377,7 @@ bool DeclarativeApp::load_image(lv_obj_t *object, const char *path)
     std::string trailing;
     if (input >> trailing) return false;
     image_bytes_ += image.pixels.size();
+    image.path = path;
     image.descriptor.header.cf = LV_IMG_CF_TRUE_COLOR;
     image.descriptor.header.always_zero = 0;
     image.descriptor.header.reserved = 0;
@@ -354,7 +385,8 @@ bool DeclarativeApp::load_image(lv_obj_t *object, const char *path)
     image.descriptor.header.h = static_cast<uint16_t>(height);
     image.descriptor.data_size = static_cast<uint32_t>(image.pixels.size());
     image.descriptor.data = image.pixels.data();
-    lv_img_set_src(object, &image.descriptor);
+    images_.push_back(std::move(decoded));
+    lv_img_set_src(object, &images_.back().descriptor);
     return true;
 }
 
@@ -389,18 +421,34 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
         const cJSON *buttons = field(node, "buttons");
         if (title == nullptr || message == nullptr || !cJSON_IsArray(buttons) ||
             cJSON_GetArraySize(buttons) == 0 || cJSON_GetArraySize(buttons) > 2) return nullptr;
-        std::vector<std::string> &stored = dialog_button_storage_.emplace_back();
+        ButtonMap map;
         cJSON *button = nullptr;
         cJSON_ArrayForEach(button, buttons) {
-            if (!cJSON_IsString(button) || button->valuestring == nullptr || strlen(button->valuestring) > 32)
-                return nullptr;
-            stored.emplace_back(button->valuestring);
+            const char *text = cJSON_IsString(button) ? button->valuestring : string_field(button, "text");
+            if (!text || !*text || strlen(text) > 32) return nullptr;
+            map.labels.emplace_back(text);
+            const auto *action = field(button, "on_click");
+            char *encoded = cJSON_IsObject(action) ? cJSON_PrintUnformatted(action) : nullptr;
+            const char *command = encoded ? encoded : string_field(button, "on_click");
+            if (action && !command) { cJSON_free(encoded); return nullptr; }
+            map.commands.emplace_back(command ? command : "");
+            cJSON_free(encoded);
         }
-        std::vector<const char *> &labels = dialog_button_pointers_.emplace_back();
-        labels.reserve(stored.size() + 1);
-        for (const auto &label : stored) labels.push_back(label.c_str());
-        labels.push_back("");
-        object = lv_msgbox_create(parent, title, message, labels.data(), false);
+        button_maps_.push_back(std::move(map));
+        auto &stored = button_maps_.back();
+        for (const auto &label : stored.labels) stored.pointers.push_back(label.c_str());
+        stored.pointers.push_back("");
+        object = lv_msgbox_create(nullptr, title, message, stored.pointers.data(), false);
+        if (!object) { button_maps_.pop_back(); return nullptr; }
+        // Keep LVGL's modal backdrop inside this app's owned tree. It blocks
+        // app content, follows app visibility, and disappears at teardown.
+        auto *backdrop = lv_obj_get_parent(object);
+        lv_obj_set_parent(backdrop, root_);
+        lv_obj_add_flag(backdrop, LV_OBJ_FLAG_FLOATING);
+        lv_obj_set_size(backdrop, LV_PCT(100), LV_PCT(100));
+        lv_obj_center(object);
+        stored.object = lv_msgbox_get_btns(object);
+        lv_obj_add_event_cb(stored.object, node_deleted, LV_EVENT_DELETE, this);
     }
     else if (!strcmp(type, "tabview")) {
         double bar_height = 44;
@@ -411,6 +459,8 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
     else if (!strcmp(type, "button_matrix")) object = lv_btnmatrix_create(parent);
     else return nullptr;
     if (object == nullptr) return nullptr;
+    if (!ui_.adopt(object)) { lv_obj_del(object); return nullptr; }
+    lv_obj_add_event_cb(object, node_deleted, LV_EVENT_DELETE, this);
     if (container) {
         // Layout groups fill their parent's content width and fit their own
         // children; scroll views retain scrolling within an explicit height.
@@ -468,6 +518,14 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
     } else if (!strcmp(type, "dialog")) {
         lv_obj_set_style_bg_color(object, lv_color_hex(0x1C2733), LV_PART_MAIN);
         lv_obj_set_style_text_color(object, lv_color_hex(0xE6EDF5), LV_PART_MAIN);
+        auto *buttons = lv_msgbox_get_btns(object);
+        lv_obj_set_height(buttons, 44);
+        lv_obj_set_style_bg_opa(buttons, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(buttons, lv_color_hex(0x273541), LV_PART_ITEMS);
+        lv_obj_set_style_bg_color(buttons, lv_color_hex(0x344553),
+            static_cast<lv_style_selector_t>(static_cast<uint32_t>(LV_PART_ITEMS) | static_cast<uint32_t>(LV_STATE_PRESSED)));
+        lv_obj_set_style_text_color(buttons, lv_color_hex(0xF4F7FA), LV_PART_ITEMS);
+        lv_obj_set_style_radius(buttons, 8, LV_PART_ITEMS);
     } else if (!strcmp(type, "button_matrix")) {
         lv_obj_set_style_pad_all(object, 0, LV_PART_MAIN);
         lv_obj_set_style_pad_row(object, 8, LV_PART_MAIN);
@@ -511,24 +569,12 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
         const cJSON *items = field(node, "items");
         if (items != nullptr && (!cJSON_IsArray(items) || cJSON_GetArraySize(items) > 64)) return nullptr;
         cJSON *item = nullptr;
-        if (items != nullptr) cJSON_ArrayForEach(item, items) {
-            std::string text;
-            if (cJSON_IsString(item) && item->valuestring != nullptr) {
-                text = item->valuestring;
-            } else if (cJSON_IsObject(item)) {
-                const char *primary = string_field(item, "primary");
-                const char *secondary = string_field(item, "secondary");
-                if (primary == nullptr || strlen(primary) > 96 || (secondary != nullptr && strlen(secondary) > 96))
-                    return nullptr;
-                text = primary;
-                if (secondary != nullptr) { text += "\n"; text += secondary; }
-            } else return nullptr;
-            if (text.size() > 193) return nullptr;
-            lv_obj_t *row = lv_list_add_btn(object, nullptr, text.c_str());
-            if (row == nullptr) return nullptr;
-            lv_obj_set_style_bg_color(row, lv_color_hex(0x1C2733), 0);
-            lv_obj_set_style_bg_color(row, lv_color_hex(0x344553), LV_STATE_PRESSED);
-            lv_obj_set_style_text_color(row, lv_color_hex(0xE6EDF5), 0);
+        if (items != nullptr) cJSON_ArrayForEach(item, items)
+            if (!insert_list_item(object, lv_obj_get_child_cnt(object), item)) return nullptr;
+        if (field(node, "item_height")) {
+            double height = 0;
+            if (!finite_number(field(node, "item_height"), &height) || height < 44 || height > 480) return nullptr;
+            if (height != std::floor(height) || !ui_.list_set_item_height(ui_.handle(object), static_cast<unsigned>(height))) return nullptr;
         }
     } else if (!strcmp(type, "chart")) {
         double point_count = 16;
@@ -539,8 +585,8 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
         if (field(node, "min") && !finite_number(field(node, "min"), &minimum)) return nullptr;
         if (field(node, "max") && !finite_number(field(node, "max"), &maximum)) return nullptr;
         if (minimum >= maximum || minimum < -32768 || maximum > 32767) return nullptr;
-        lv_chart_set_range(object, LV_CHART_AXIS_PRIMARY_Y, static_cast<lv_coord_t>(minimum),
-                           static_cast<lv_coord_t>(maximum));
+        if ((field(node, "min") || field(node, "max")) &&
+            !ui_.chart_set_range(ui_.handle(object), static_cast<int>(minimum), static_cast<int>(maximum))) return nullptr;
         const char *chart_type = string_field(node, "chart_type");
         if (chart_type == nullptr || !strcmp(chart_type, "line")) lv_chart_set_type(object, LV_CHART_TYPE_LINE);
         else if (!strcmp(chart_type, "bar")) lv_chart_set_type(object, LV_CHART_TYPE_BAR);
@@ -557,15 +603,17 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
             const cJSON *values = field(item, "values");
             if (!cJSON_IsArray(values) || cJSON_GetArraySize(values) > static_cast<int>(point_count)) return nullptr;
             if (color < 0 || color > 0xFFFFFF) return nullptr;
-            lv_chart_series_t *line = lv_chart_add_series(object, lv_color_hex(static_cast<uint32_t>(color)),
-                                                           LV_CHART_AXIS_PRIMARY_Y);
-            if (line == nullptr) return nullptr;
+            const auto line = ui_.chart_add_series(ui_.handle(object), static_cast<uint32_t>(color));
+            if (!line) return nullptr;
+            std::vector<int> data;
             for (int index = 0; index < cJSON_GetArraySize(values); ++index) {
                 double value = 0;
                 if (!finite_number(cJSON_GetArrayItem(values, index), &value) || value < -32768 || value > 32767)
                     return nullptr;
-                lv_chart_set_value_by_id(object, line, static_cast<uint16_t>(index), static_cast<lv_coord_t>(value));
+                if (value != std::floor(value)) return nullptr;
+                data.push_back(static_cast<int>(value));
             }
+            if (!ui_.chart_set_data(ui_.handle(object), line, data)) return nullptr;
         }
         lv_chart_refresh(object);
     }
@@ -573,17 +621,18 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
     if (!strcmp(type, "button_matrix")) {
         const cJSON *buttons = field(node, "buttons");
         if (!cJSON_IsArray(buttons) || cJSON_GetArraySize(buttons) == 0 || cJSON_GetArraySize(buttons) > 64) return nullptr;
-        std::vector<std::string> &strings = button_map_storage_.emplace_back();
+        ButtonMap map;
+        map.object = object;
         cJSON *button = nullptr;
         cJSON_ArrayForEach(button, buttons) {
             if (!cJSON_IsString(button) || button->valuestring == nullptr || strlen(button->valuestring) > 32) return nullptr;
-            strings.emplace_back(button->valuestring);
+            map.labels.emplace_back(button->valuestring);
         }
-        std::vector<const char *> &map = button_map_pointers_.emplace_back();
-        map.reserve(strings.size() + 1);
-        for (const auto &label : strings) map.push_back(label.c_str());
-        map.push_back("");
-        lv_btnmatrix_set_map(object, map.data());
+        button_maps_.push_back(std::move(map));
+        auto &stored = button_maps_.back();
+        for (const auto &label : stored.labels) stored.pointers.push_back(label.c_str());
+        stored.pointers.push_back("");
+        lv_btnmatrix_set_map(object, stored.pointers.data());
     }
 
     const char *node_id = string_field(node, "id");
@@ -608,29 +657,37 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
             if (bindings_.size() >= kMaxBindings) return nullptr;
             bindings_.push_back({text_object, text, Binding::Property::Text});
         }
+        if (text_object != object) lv_obj_add_event_cb(text_object, node_deleted, LV_EVENT_DELETE, this);
     }
+    if (!ui_.adopt(object, text_object)) return nullptr;
     if (node_id != nullptr) named_objects_.push_back({object, text_object, node_id});
     if (const cJSON *visible = field(node, "visible")) {
         if (cJSON_IsBool(visible)) {
-            if (cJSON_IsTrue(visible)) lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            if (!ui_.set_hidden(ui_.handle(object), !cJSON_IsTrue(visible))) return nullptr;
         } else if (cJSON_IsString(visible) && visible->valuestring != nullptr &&
                    strstr(visible->valuestring, "{{") != nullptr) {
             if (bindings_.size() >= kMaxBindings) return nullptr;
             bindings_.push_back({object, visible->valuestring, Binding::Property::Visible});
         } else return nullptr;
     }
-    if (!strcmp(type, "button") || !strcmp(type, "button_matrix") || !strcmp(type, "switch") ||
-        !strcmp(type, "slider") || !strcmp(type, "arc") || !strcmp(type, "textarea") || !strcmp(type, "dialog")) {
-        const bool click = !strcmp(type, "button") || !strcmp(type, "button_matrix") || !strcmp(type, "dialog");
-        const char *action = string_field(node, click ? "on_click" : "on_change");
-        const lv_event_code_t action_event_code = (!strcmp(type, "button_matrix") || !strcmp(type, "textarea") || !strcmp(type, "dialog"))
-            ? LV_EVENT_VALUE_CHANGED : (click ? LV_EVENT_CLICKED : LV_EVENT_VALUE_CHANGED);
-        lv_obj_t *action_target = !strcmp(type, "dialog") ? lv_msgbox_get_btns(object) : object;
-        if (action != nullptr && !apply_action(action_target, action, action_event_code)) return nullptr;
-        if (!strcmp(type, "dialog"))
-            lv_obj_add_event_cb(action_target, dialog_event, LV_EVENT_VALUE_CHANGED, object);
+    constexpr struct { const char *name; lv_event_code_t event; } node_events[] = {
+        {"on_click", LV_EVENT_CLICKED}, {"on_long_press", LV_EVENT_LONG_PRESSED},
+        {"on_change", LV_EVENT_VALUE_CHANGED}, {"on_focus", LV_EVENT_FOCUSED},
+        {"on_blur", LV_EVENT_DEFOCUSED}, {"on_scroll", LV_EVENT_SCROLL}, {"on_delete", LV_EVENT_DELETE},
+    };
+    for (const auto &spec : node_events) {
+        const auto *action = field(node, spec.name);
+        if (!action) continue;
+        char *encoded = cJSON_IsObject(action) ? cJSON_PrintUnformatted(action) : nullptr;
+        const char *command = encoded ? encoded : string_field(node, spec.name);
+        auto *target = !strcmp(type, "dialog") && spec.event == LV_EVENT_CLICKED ? lv_msgbox_get_btns(object) : object;
+        const auto code = spec.event == LV_EVENT_CLICKED && (!strcmp(type, "dialog") || !strcmp(type, "button_matrix"))
+            ? LV_EVENT_VALUE_CHANGED : spec.event;
+        const bool ok = command && apply_action(target, command, code);
+        cJSON_free(encoded);
+        if (!ok) return nullptr;
     }
+    if (!strcmp(type, "dialog")) lv_obj_add_event_cb(lv_msgbox_get_btns(object), dialog_event, LV_EVENT_VALUE_CHANGED, this);
     const cJSON *children = field(node, "children");
     if (children != nullptr) {
         if (!cJSON_IsArray(children) || cJSON_GetArraySize(children) > int(kMaxNodes)) return nullptr;
@@ -644,6 +701,8 @@ lv_obj_t *DeclarativeApp::build_node(const void *raw_node, lv_obj_t *parent, uns
                 if (tab_type == nullptr || strcmp(tab_type, "tab") || title == nullptr || strlen(title) > 24) return nullptr;
                 lv_obj_t *tab = lv_tabview_add_tab(object, title);
                 if (tab == nullptr) return nullptr;
+                if (!ui_.adopt(tab)) return nullptr;
+                lv_obj_add_event_cb(tab, node_deleted, LV_EVENT_DELETE, this);
                 lv_obj_set_style_bg_color(tab, lv_color_hex(0x11181F), 0);
                 lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
                 lv_obj_set_style_border_width(tab, 0, 0);
@@ -727,6 +786,18 @@ bool DeclarativeApp::apply_node_options(lv_obj_t *object, const void *raw_node, 
     }
     if (type != nullptr && !strcmp(type, "button") && !field(node, "height"))
         lv_obj_set_height(object, 44);
+    if (type != nullptr && !strcmp(type, "button")) lv_obj_set_style_min_height(object, 44, 0);
+    if (const cJSON *color = field(node, "color")) {
+        double value = 0;
+        if (!finite_number(color, &value) || value < 0 || value > 0xFFFFFF || value != std::floor(value)) return false;
+        lv_obj_set_style_text_color(object, lv_color_hex(static_cast<uint32_t>(value)), 0);
+        if (type && !strcmp(type, "spinner")) lv_obj_set_style_arc_color(object, lv_color_hex(static_cast<uint32_t>(value)), LV_PART_INDICATOR);
+    }
+    if (type && !strcmp(type, "spinner") && field(node, "size")) {
+        double size = 0;
+        if (!finite_number(field(node, "size"), &size) || size < 8 || size > 480 || size != std::floor(size)) return false;
+        lv_obj_set_size(object, static_cast<lv_coord_t>(size), static_cast<lv_coord_t>(size));
+    }
     if (type != nullptr && (!strcmp(type, "slider") || !strcmp(type, "arc"))) {
         double minimum = 0, maximum = 100;
         if (field(node, "min") && !finite_number(field(node, "min"), &minimum)) return false;
@@ -775,6 +846,18 @@ bool DeclarativeApp::apply_style(lv_obj_t *object, const void *raw_style)
         bool known = false;
         for (const char *key : allowed) if (item->string != nullptr && !strcmp(item->string, key)) known = true;
         if (!known) return false;
+        const std::string key(item->string);
+        if (key == "align") {
+            if (!cJSON_IsString(item) || !item->valuestring ||
+                (strcmp(item->valuestring, "left") && strcmp(item->valuestring, "center") && strcmp(item->valuestring, "right"))) return false;
+        } else {
+            double value = 0;
+            if (!finite_number(item, &value) || value != std::floor(value) || value < 0) return false;
+            if (key == "font_size") {
+                if (value != 14 && value != 16 && value != 20 && value != 28 && value != 48) return false;
+            } else if (value > (key == "bg_color" || key == "text_color" || key == "border_color" ? 0xFFFFFF
+                               : key == "border_width" ? 32 : 255)) return false;
+        }
     }
     if (const cJSON *value = field(style, "bg_color")) {
         double number = 0; if (!finite_number(value, &number) || number < 0 || number > 0xFFFFFF) return false;
@@ -825,26 +908,154 @@ bool DeclarativeApp::apply_style(lv_obj_t *object, const void *raw_style)
 bool DeclarativeApp::apply_action(lv_obj_t *object, const char *command, lv_event_code_t event)
 {
     if (object == nullptr || command == nullptr || !*command || actions_.size() >= kMaxActions) return false;
-    actions_.push_back({this, command});
+    actions_.push_back({this, command, object});
+    if (event == LV_EVENT_DELETE) {
+        return ui_.on(ui_.handle(object), "delete", [](CrystalUI::Handle, void *context) {
+            auto *action = static_cast<Action *>(context);
+            auto *app = action->app; const auto copy = action->command;
+            (void)app->dispatch_action(copy);
+        }, &actions_.back());
+    }
     lv_obj_add_event_cb(object, action_event, event, &actions_.back());
     return true;
+}
+
+bool DeclarativeApp::insert_list_item(lv_obj_t *list, unsigned index, const void *raw_item)
+{
+    const auto *item = static_cast<const cJSON *>(raw_item);
+    CrystalUI::ListItem value{};
+    if (cJSON_IsString(item)) value.primary = item->valuestring;
+    else if (cJSON_IsObject(item)) {
+        value.primary = string_field(item, "primary");
+        value.secondary = string_field(item, "secondary");
+        value.icon = string_field(item, "icon");
+    } else return false;
+    const auto *action = field(item, "on_click");
+    char *encoded = cJSON_IsObject(action) ? cJSON_PrintUnformatted(action) : nullptr;
+    const char *command = encoded ? encoded : string_field(item, "on_click");
+    if (action && (!command || !*command || actions_.size() >= kMaxActions)) { cJSON_free(encoded); return false; }
+    if (!ui_.list_insert(ui_.handle(list), index, value)) { cJSON_free(encoded); return false; }
+    auto *row = lv_obj_get_child(list, static_cast<int32_t>(index));
+    lv_obj_add_event_cb(row, node_deleted, LV_EVENT_DELETE, this);
+    const bool ok = !action || apply_action(row, command, LV_EVENT_CLICKED);
+    cJSON_free(encoded);
+    if (!ok) lv_obj_del(row);
+    return ok;
 }
 
 void DeclarativeApp::action_event(lv_event_t *event)
 {
     auto *action = static_cast<Action *>(lv_event_get_user_data(event));
-    if (action != nullptr && action->app != nullptr) (void)action->app->dispatch_action(action->command);
+    // Dispatch may delete the event's object and its Action record.
+    if (action != nullptr && action->app != nullptr) {
+        auto *app = action->app; const auto command = action->command;
+        (void)app->dispatch_action(command);
+    }
+}
+
+void DeclarativeApp::node_deleted(lv_event_t *event)
+{
+    auto *app = static_cast<DeclarativeApp *>(lv_event_get_user_data(event));
+    auto *object = lv_event_get_target(event);
+    app->bindings_.erase(std::remove_if(app->bindings_.begin(), app->bindings_.end(),
+        [object](const Binding &binding) { return binding.object == object; }), app->bindings_.end());
+    app->named_objects_.erase(std::remove_if(app->named_objects_.begin(), app->named_objects_.end(),
+        [object](const NamedObject &named) { return named.object == object || named.text_object == object; }), app->named_objects_.end());
+    app->actions_.remove_if([object](const Action &action) { return action.object == object; });
+    app->button_maps_.remove_if([object](const ButtonMap &map) { return map.object == object; });
 }
 
 void DeclarativeApp::dialog_event(lv_event_t *event)
 {
-    auto *dialog = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
-    if (dialog != nullptr && lv_obj_is_valid(dialog)) lv_msgbox_close_async(dialog);
+    auto *app = static_cast<DeclarativeApp *>(lv_event_get_user_data(event));
+    auto *buttons = lv_event_get_target(event);
+    auto *dialog = lv_obj_get_parent(buttons);
+    const auto selected = lv_btnmatrix_get_selected_btn(buttons);
+    const auto id = app->ui_.handle(dialog);
+    std::string command;
+    for (const auto &map : app->button_maps_) if (map.object == buttons && selected < map.commands.size()) {
+        command = map.commands[selected];
+        break;
+    }
+    if (!command.empty()) (void)app->dispatch_action(command);
+    // The callback may already have removed the dialog or one of its parents.
+    (void)app->ui_.remove(id);
+}
+
+bool DeclarativeApp::dispatch_ui_action(const void *raw_action)
+{
+    const auto *action = static_cast<const cJSON *>(raw_action);
+    const char *call = string_field(action, "call");
+    const char *target = string_field(action, "target");
+    if (!call || !target) return false;
+    const auto id = widget(target);
+    if (!id) return false;
+    const auto *value = field(action, "value");
+    if (!strcmp(call, "ui.set_text")) return cJSON_IsString(value) && ui_.set_text(id, value->valuestring);
+    if (!strcmp(call, "ui.set_hidden")) return cJSON_IsBool(value) && ui_.set_hidden(id, cJSON_IsTrue(value));
+    if (!strcmp(call, "ui.set_enabled")) return cJSON_IsBool(value) && ui_.set_enabled(id, cJSON_IsTrue(value));
+    if (!strcmp(call, "ui.set_style")) return ui_.set_style(id, value);
+    if (!strcmp(call, "ui.set_focus")) return ui_.set_focus(id);
+    if (!strcmp(call, "ui.delete")) return ui_.remove(id);
+    if (!strcmp(call, "ui.list_clear")) return ui_.list_clear(id);
+    if (!strcmp(call, "ui.chart_clear")) return ui_.chart_clear(id);
+    if (!strcmp(call, "ui.chart_add_series")) {
+        double color = 0;
+        return finite_number(value, &color) && color >= 0 && color <= 0xffffff && color == std::floor(color) &&
+            ui_.chart_add_series(id, static_cast<uint32_t>(color));
+    }
+    if (!strcmp(call, "ui.chart_set_range")) {
+        double lo = 0, hi = 0;
+        return finite_number(field(action, "min"), &lo) && finite_number(field(action, "max"), &hi) &&
+            lo >= -32768 && hi <= 32767 && lo < hi && lo == std::floor(lo) && hi == std::floor(hi) &&
+            ui_.chart_set_range(id, static_cast<int>(lo), static_cast<int>(hi));
+    }
+    if (!strcmp(call, "ui.chart_set_data")) {
+        if (!cJSON_IsArray(value) || cJSON_GetArraySize(value) > 128) return false;
+        double index = 0;
+        if (field(action, "series") && (!finite_number(field(action, "series"), &index) || index < 0 || index >= 4 || index != std::floor(index))) return false;
+        std::vector<int> values;
+        const cJSON *item = nullptr;
+        cJSON_ArrayForEach(item, value) {
+            double number = 0;
+            if (!finite_number(item, &number) || number < -32768 || number >= 32767 || number != std::floor(number)) return false;
+            values.push_back(static_cast<int>(number));
+        }
+        return ui_.chart_set_data(id, ui_.chart_series(id, static_cast<unsigned>(index)), values);
+    }
+    if (!strcmp(call, "ui.set_value")) {
+        double number = 0;
+        return finite_number(value, &number) && number >= -32768 && number <= 32767 &&
+            number == std::floor(number) && ui_.set_value(id, static_cast<int>(number));
+    }
+    if (!strcmp(call, "ui.list_add") || !strcmp(call, "ui.list_insert")) {
+        lv_obj_t *list = nullptr;
+        for (const auto &named : named_objects_) if (ui_.handle(named.object) == id) { list = named.object; break; }
+        unsigned count = 0;
+        if (!list || !ui_.list_count(id, &count)) return false;
+        if (!strcmp(call, "ui.list_add")) return insert_list_item(list, count, value);
+        double index = 0;
+        return finite_number(field(action, "index"), &index) && index >= 0 && index <= 64 && index == std::floor(index) &&
+            insert_list_item(list, static_cast<unsigned>(index), value);
+    }
+    if (!strcmp(call, "ui.list_remove")) {
+        double index = 0;
+        return finite_number(field(action, "index"), &index) && index >= 0 && index < 64 && index == std::floor(index) &&
+            ui_.list_remove(id, static_cast<unsigned>(index));
+    }
+    if (!strcmp(call, "ui.scroll_to"))
+        return ui_.scroll_to(id, boolean_field(action, "animate", false), string_field(action, "align") ? string_field(action, "align") : "center");
+    if (!strcmp(call, "ui.set_parent")) return ui_.set_parent(id, widget(string_field(action, "parent")));
+    return false;
 }
 
 bool DeclarativeApp::dispatch_action(const std::string &raw_command)
 {
     const std::string command = trim(raw_command);
+    if (!command.empty() && command.front() == '{') {
+        Json action(cJSON_Parse(command.c_str()), cJSON_Delete);
+        return action && dispatch_ui_action(action.get());
+    }
     const bool timer_action = command.rfind("timer.", 0) == 0 || command.rfind("crystal.service.timer.", 0) == 0;
     if (timer_action && !system_timer_allowed_) {
         ESP_LOGW(TAG, "%s: timer action rejected; package lacks system_timer permission", package_id_.c_str());
@@ -934,8 +1145,7 @@ void DeclarativeApp::refresh_bindings()
         if (binding.object == nullptr || !lv_obj_is_valid(binding.object)) continue;
         const std::string value = resolve_expression(binding.expression);
         if (binding.property == Binding::Property::Visible) {
-            if (value == "true") lv_obj_clear_flag(binding.object, LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(binding.object, LV_OBJ_FLAG_HIDDEN);
+            (void)ui_.set_hidden(ui_.handle(binding.object), value != "true");
         } else {
             lv_label_set_text(binding.object, value.c_str());
         }

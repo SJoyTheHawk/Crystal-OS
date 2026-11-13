@@ -137,7 +137,8 @@ target_include_directories(platform PUBLIC {quoted_includes})
 target_compile_definitions(platform PUBLIC ESP_BROOKESIA_KCONFIG_IGNORE ESP_BROOKESIA_CONF_SKIP
     ESP_BROOKESIA_SQUARELINE_USE_INTERNAL_UI_HELPERS=1 ESP_BROOKESIA_SQ1_4_1_LV8_3_11)
 target_link_libraries(platform PUBLIC lvgl)
-add_executable(check "{ROOT}/tools/phase14_check.cpp")
+add_executable(check "{ROOT}/tools/phase14_check.cpp" "{ROOT}/components/crystal_shell/src/crystal_keyboard.cpp")
+target_include_directories(check PRIVATE "{ROOT}/components/crystal_shell/include")
 target_link_libraries(check PRIVATE platform)
 add_executable(device_check "{ROOT}/tools/phase14_device_check.cpp"
     "{ROOT}/main/crystal_phase14_device_test.cpp")

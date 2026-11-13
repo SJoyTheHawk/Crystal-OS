@@ -1,8 +1,8 @@
 # Crystal OS App Platform — v2 Code Guide
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
-**Date:** 2026-11-11  
+**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Date:** 2026-11-14
 **Audience:** Developers writing Phase 14-17 code, agents implementing the architecture
 
 ---
@@ -926,7 +926,8 @@ Implemented widgets are `container`, `row`, `col`, `scroll_view`, `label`,
 `button`, `button_matrix`, `switch`, `slider`, `arc`, `image`, `list`, `chart`,
 `textarea`, `spinner`, `dialog`, and `tabview` with `tab` children. Images use
 the bounded, package-relative RGB format documented in the dashboard README.
-Lists and charts are statically populated from the document. Layout supports
+Lists/charts can be initially populated from JSON and updated through
+`CrystalUI` or structured declarative actions. Layout supports
 width/height/position, flex direction/wrap and gap.
 Styles accept only the documented colors, radius, padding, opacity, font,
 border and text alignment fields. Dynamic bindings update label text or
@@ -940,9 +941,12 @@ See [`examples/declarative_dashboard`](../examples/declarative_dashboard) for a
 packable UI and the host package check. The bundled Clock and Calculator UI
 behavior remains in their existing runtimes. Phase 16's bundled-app gate is
 visual UI expressibility, as clarified by the user; Weather data fetching and
-Calculator computation stay with their existing apps. The complete documented
-remaining dynamic property/event APIs, device lifecycle testing and ABI freeze
-remain Phase 16 exit-gate work. Visual layout documents for the bundled apps
+Calculator computation stay with their existing apps. The shared `CrystalUI` class now implements the callable v1 UI contract; its
+[reviewed mapping and bounds](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
+cover ownership, stale handles, events, dynamic lists/charts, timers, animations
+and the system keyboard. Lua adaptation remains Phase 17. The focused core
+device check passed on 2026-11-14; combined-load profiling and detailed
+hardening come later. Visual layout documents for the bundled apps
 are in [`examples/declarative_dashboard/visual`](../examples/declarative_dashboard/visual),
 and the host integration test launches each document through the production runtime.
 
@@ -1471,33 +1475,34 @@ See the [reconciled closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECK
 and recorded A–F/G–M/N–R hardware evidence before repeating older checks.
 
 - [x] HTTP API endpoints return JSON with matching schema; logs use authenticated SSE
-- [ ] Web UI loads and serves static files over WiFi and USB (WiFi install/actions/logs are implemented; Browser Web Serial remains)
+- [x] WiFi web UI serves installs/actions/logs; existing USB CLI is the fallback, with browser USB explicitly outside scope
 - [x] Pairing PIN generated/displayed/accepted on device; one-use rejection, expiry and fresh-code recovery pass
 - [x] Bearer token exchanged once per PIN; protected requests reject missing/invalid tokens on device (real expiry/session lifecycle coverage remains separate)
 - [x] Ed25519 package verifier: configured test key ID 240 accepts signed installs; untrusted/tampered signatures reject on device; production release identity remains a deployment decision
 - [x] `crystal pack --key <private.pem> --key-id <id>` signs `.capp`; host signature tests pass
-- [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; hosted end-to-end validation and scope reconciliation remain
+- [x] Host `catalog-sign`, `catalog`, and `catalog-download` support the signed HTTPS catalog workflow; real local HTTPS validation is automated; production URL/key publication remains deployment work
 - [x] `crystal install --usb` streams to `/apps/.staging/` and verifies (unsigned developer package installed and reboot-reconciled on the board)
 - [x] `crystal logs -f --wifi URL --token TOKEN` tails authenticated app lifecycle/debug lines in real-time over Wi-Fi
 - [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi
 - [x] Install progress bar: shown during browser uploads, including packages > 1 MB
-- [x] On-device Manage Apps and external panel agree after the recorded edits; remaining per-action observations are itemized in the closure checklist
+- [x] On-device Manage Apps and external panel agree after the recorded edits; reuse existing results
 - [x] Existing browser Live logs functional controls validated on device, including mobile (P); sign-out hides controls and clears the local view, while bounded device history survives panel/Wi-Fi toggles until reboot
-- [ ] Stream concurrency, in-flight authorization invalidation and shutdown resolved
+- [x] Short SSE batches, reconnect cursors, expiry/revocation and socket failures covered by production-handler and browser/CLI host regressions
 
 ### Phase 16 Code Checklist
 
 - [x] `DeclarativeApp` class inherits from `CrystalApp` and implements lifecycle
 - [x] Bounded `ui.json` parser builds the implemented containers, labels, buttons, basic controls, tab views and button matrices
 - [x] Visual widgets: bundled image, list, chart, textarea, spinner and dialog controls
-- [ ] Complete remaining documented property/event APIs, including dynamic list/chart operations and input focus
+- [x] Complete shared property/event APIs, dynamic rich list/chart operations, keyboard focus, timers and animations; real LVGL with ASan/UBSan
 - [x] Data binding: time/network/timer values refresh on the visible app timer
 - [x] Event routing: supported controls dispatch allowlisted timer actions
 - [x] Implemented lifecycle, timer actions and cleanup verified in K/L/M hardware runs
 - [x] Reconnect binding UI confirmed in O; launcher caption truncation/full management names confirmed in N
-- [ ] Finish simultaneous Dashboard/panel/TLS evidence with adequate internal headroom and startup timing classification; O's panel+TLS requests precede Dashboard start
+- [x] Declarative Dashboard uses the Standard 200 ms startup warning class
+- [x] Brief core device check of new UI controls, keyboard dismissal and logs alongside Refresh passed; detailed profiling is deferred hardening
 - [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; app behavior remains in existing runtimes
-- [ ] Freeze ABI v1 after implementing and reviewing the documented facade
+- [x] Review/freeze v1 UI signatures, limits, errors and lifecycle; record runtime mapping and Phase 17 boundary
 
 ### Phase 17 Code Checklist
 

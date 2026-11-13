@@ -179,7 +179,20 @@
                       }
                     ],
                     "width": 300,
-                    "height": 72
+                    "height": 144
+                  },
+                  {
+                    "type": "button",
+                    "text": "Add list item",
+                    "width": 300,
+                    "on_click": {
+                      "call": "ui.list_add",
+                      "target": "sample_list",
+                      "value": {
+                        "primary": "New item",
+                        "secondary": "Added while running"
+                      }
+                    }
                   },
                   {
                     "type": "chart",
@@ -189,7 +202,7 @@
                     "min": 0,
                     "max": 100,
                     "width": 300,
-                    "height": 72,
+                    "height": 96,
                     "series": [
                       {
                         "color": 5484726,
@@ -203,6 +216,17 @@
                     ]
                   },
                   {
+                    "type": "button",
+                    "text": "Update chart",
+                    "width": 300,
+                    "on_click": {
+                      "call": "ui.chart_set_data",
+                      "target": "sample_chart",
+                      "series": 0,
+                      "value": [95, 5, 90, 10]
+                    }
+                  },
+                  {
                     "type": "textarea",
                     "id": "sample_input",
                     "placeholder": "Enter a note",
@@ -210,6 +234,15 @@
                     "one_line": true,
                     "width": 300,
                     "height": 44
+                  },
+                  {
+                    "type": "button",
+                    "text": "Focus input",
+                    "width": 300,
+                    "on_click": {
+                      "call": "ui.set_focus",
+                      "target": "sample_input"
+                    }
                   },
                   {
                     "type": "spinner",
@@ -229,6 +262,16 @@
                       "Cancel"
                     ],
                     "visible": false
+                  },
+                  {
+                    "type": "button",
+                    "text": "Show dialog",
+                    "width": 300,
+                    "on_click": {
+                      "call": "ui.set_hidden",
+                      "target": "sample_dialog",
+                      "value": false
+                    }
                   }
                 ]
               }

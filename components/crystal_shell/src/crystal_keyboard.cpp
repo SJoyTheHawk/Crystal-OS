@@ -66,6 +66,7 @@ static const lv_btnmatrix_ctrl_t kControls[] = {
 lv_obj_t *s_keyboard = nullptr;
 lv_obj_t *s_field = nullptr;
 lv_obj_t *s_viewport = nullptr;
+lv_obj_t *s_tap_root = nullptr;
 lv_coord_t s_viewport_height = 0;
 // Phase 11 edit begin: preserve viewport state while the keyboard owns the layout.
 lv_coord_t s_viewport_scroll_y = 0;
@@ -74,7 +75,9 @@ bool s_viewport_resized = false;
 lv_dir_t s_viewport_scroll_dir = LV_DIR_NONE;
 bool s_viewport_was_elastic = false;
 bool s_viewport_was_momentum = false;
+bool s_tap_root_was_clickable = false;
 bool s_hiding = false;
+bool s_dismiss_pending = false;
 // Phase 11 edit end.
 
 // Lets a caller re-lay out around the keyboard band. The keyboard closes through
@@ -169,6 +172,7 @@ void watched_object_deleted(lv_event_t *event)
     lv_obj_t *deleted = static_cast<lv_obj_t *>(lv_event_get_target(event));
     if (deleted == s_field) s_field = nullptr;
     if (deleted == s_viewport) s_viewport = nullptr;
+    if (deleted == s_tap_root) { s_tap_root = nullptr; s_tap_root_was_clickable = false; }
     if (!s_hiding) crystal_keyboard_hide();
 }
 
@@ -178,17 +182,47 @@ void watched_object_deleted(lv_event_t *event)
 // dispatch unwinds.
 void keyboard_close_async(void *)
 {
+    s_dismiss_pending = false;
     crystal_keyboard_hide();
 }
 
 void keyboard_close_event(lv_event_t *)
 {
-    lv_async_call(keyboard_close_async, nullptr);
+    if (!s_dismiss_pending && lv_async_call(keyboard_close_async, nullptr) == LV_RES_OK)
+        s_dismiss_pending = true;
 }
 
-void viewport_click_event(lv_event_t *event)
+bool is_descendant_of(lv_obj_t *object, lv_obj_t *ancestor)
 {
-    if (lv_event_get_target(event) == s_viewport) crystal_keyboard_hide();
+    for (auto *current = object; current != nullptr; current = lv_obj_get_parent(current)) {
+        if (current == ancestor) return true;
+    }
+    return false;
+}
+
+void outside_tap_event(lv_event_t *event)
+{
+    if (s_keyboard == nullptr || s_hiding || s_dismiss_pending) return;
+    lv_obj_t *target = lv_event_get_target(event);
+    if (is_descendant_of(target, s_field) || lv_obj_check_type(target, &lv_textarea_class)) return;
+
+    // Observe the click before its action. A focus action cancels this pending
+    // dismissal; other controls finish their action before the viewport restores.
+    keyboard_close_event(event);
+}
+
+void set_outside_tap_events(lv_obj_t *object, bool enabled)
+{
+    if (object == nullptr) return;
+    if (enabled) {
+        if (object == s_tap_root || lv_obj_has_flag(object, LV_OBJ_FLAG_CLICKABLE))
+            lv_obj_add_event_cb(object, outside_tap_event,
+                static_cast<lv_event_code_t>(LV_EVENT_CLICKED | LV_EVENT_PREPROCESS), nullptr);
+    } else {
+        lv_obj_remove_event_cb(object, outside_tap_event);
+    }
+    const uint32_t count = lv_obj_get_child_cnt(object);
+    for (uint32_t i = 0; i < count; ++i) set_outside_tap_events(lv_obj_get_child(object, i), enabled);
 }
 
 void center_covered_field()
@@ -230,6 +264,10 @@ void center_covered_field()
 bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
 {
     if (field == nullptr || viewport == nullptr) return false;
+    // The click requesting focus must not also dismiss the keyboard, including
+    // when it is already open or switches to another field.
+    if (s_dismiss_pending) lv_async_call_cancel(keyboard_close_async, nullptr);
+    s_dismiss_pending = false;
     if (s_keyboard != nullptr && s_field == field) return true;
 
     // Moving between fields in one form must not restore and shrink the viewport
@@ -322,7 +360,10 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
     lv_obj_add_event_cb(s_keyboard, keyboard_close_event, LV_EVENT_CANCEL, nullptr);
     lv_obj_add_event_cb(field, watched_object_deleted, LV_EVENT_DELETE, nullptr);
     if (viewport != field) lv_obj_add_event_cb(viewport, watched_object_deleted, LV_EVENT_DELETE, nullptr);
-    lv_obj_add_event_cb(viewport, viewport_click_event, LV_EVENT_CLICKED, nullptr);
+    s_tap_root = viewport;
+    s_tap_root_was_clickable = lv_obj_has_flag(s_tap_root, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_tap_root, LV_OBJ_FLAG_CLICKABLE);
+    set_outside_tap_events(s_tap_root, true);
     crystal_shell_set_keyboard_open(true);
     center_covered_field();
     return true;
@@ -332,14 +373,21 @@ void crystal_keyboard_hide()
 {
     if (s_hiding) return;
     s_hiding = true;
+    if (s_dismiss_pending) lv_async_call_cancel(keyboard_close_async, nullptr);
+    s_dismiss_pending = false;
     crystal_shell_set_keyboard_open(false);
+    if (s_tap_root != nullptr) {
+        set_outside_tap_events(s_tap_root, false);
+        if (!s_tap_root_was_clickable) lv_obj_clear_flag(s_tap_root, LV_OBJ_FLAG_CLICKABLE);
+    }
+    s_tap_root = nullptr;
+    s_tap_root_was_clickable = false;
     // The indev reset below aborts LVGL's normal focus handoff. Defocus the old
     // field explicitly so its cursor cannot remain visible after rebinding.
     if (s_field != nullptr) {
         lv_event_send(s_field, LV_EVENT_DEFOCUSED, nullptr);
     }
     if (s_viewport != nullptr) {
-        lv_obj_remove_event_cb(s_viewport, viewport_click_event);
         lv_obj_remove_event_cb(s_viewport, watched_object_deleted);
         if (s_viewport_resized) {
             lv_obj_set_height(s_viewport, s_viewport_height);
@@ -372,6 +420,13 @@ void crystal_keyboard_hide()
     s_viewport = nullptr;
     s_hiding = false;
     if (s_state_cb != nullptr) s_state_cb(false, s_state_user_data);
+}
+
+void crystal_keyboard_hide_for(lv_obj_t *root)
+{
+    for (auto *object = s_field; object != nullptr; object = lv_obj_get_parent(object)) {
+        if (object == root) { crystal_keyboard_hide(); return; }
+    }
 }
 
 void crystal_keyboard_set_state_cb(crystal_keyboard_state_cb_t callback, void *user_data)

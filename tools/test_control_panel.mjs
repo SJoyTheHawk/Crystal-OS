@@ -86,8 +86,8 @@ try {
       if (path === '/api/v1/apps' && !options.method) return json({ apps: f.apps });
       if (path.endsWith('/enabled')) { f.apps.find(app => path.includes(encodeURIComponent(app.id))).enabled = body.enabled; return json({ saved: true, restart_required: true }, 202); }
       if (path === '/api/v1/apps/order') { for (const item of body) f.apps.find(app => app.id === item.id).slot = item.slot; return json({ saved: true, restart_required: true }, 202); }
-      if (path === '/api/v1/logs') {
-        const chunks = ['id: 1\nda', 'ta: First message\n\ndata: Weather ready\n\n'];
+      if (String(path).startsWith('/api/v1/logs')) {
+        const chunks = String(path).includes('since=2') ? [] : ['id: 1\nda', 'ta: First message\n\nid: 2\ndata: Weather ready\n\n'];
         return new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } });
       }
       return json({ queued: true, restart_required: false }, 202);
@@ -148,7 +148,8 @@ try {
   assert.deepEqual(await evaluate("currentApps.map(app=>[app.id,app.slot])"), [['clock', 0], ['weather', 1], ['org.crystal.declarative-dashboard', 2]], 'moving back keeps consecutive ranks');
   await appButton('Uninstall'); assert.equal(await evaluate("document.getElementById('confirm-dialog').open"), true);
   assert.equal(await evaluate("document.getElementById('confirm-accept').classList.contains('danger')"), true, 'uninstall keeps a destructive action color');
-  await click('#confirm-cancel'); assert.equal(await evaluate("fixture.calls.some(c=>c.method==='DELETE')"), false, 'cancel cannot delete');
+  await click('#confirm-cancel'); await waitFor('!confirmationPending', 'cancel completes');
+  assert.equal(await evaluate("fixture.calls.some(c=>c.method==='DELETE')"), false, 'cancel cannot delete');
   await appButton('Clear data'); await click('#confirm-accept');
   await waitFor("fixture.calls.some(c=>c.method==='DELETE' && c.path.endsWith('/data')) && !document.getElementById('refresh').disabled", 'clear data confirmation');
   assert.match(await evaluate("document.getElementById('device-status').textContent"), /queued/, 'queued action never claims completion');
@@ -163,6 +164,11 @@ try {
   assert.match(await evaluate("document.getElementById('install-status').textContent"), /not trusted/);
   await click('#logs'); await waitFor("document.getElementById('log-output').textContent.includes('Weather ready')", 'log stream');
   assert.equal(await evaluate("document.getElementById('log-output').textContent"), 'First message\nWeather ready\n', 'split SSE frames decode correctly');
+  await waitFor("fixture.calls.some(c=>c.path==='/api/v1/logs?since=2')", 'cursor reconnect');
+  assert.equal(await evaluate("document.getElementById('log-output').textContent"), 'First message\nWeather ready\n', 'cursor reconnect does not replay displayed logs');
+  await click('#refresh'); await waitFor("!document.getElementById('refresh').disabled", 'refresh while following logs');
+  assert.equal(await evaluate("document.getElementById('logs').getAttribute('aria-pressed')"), 'true', 'refresh keeps log following active');
+  await click('#logs');
   const callsBeforeResize = await evaluate('fixture.calls.length');
   for (const width of [390, 320, 768, 800, 801, 1440]) {
     await viewport(width);
@@ -203,7 +209,7 @@ try {
   const callsBeforeSignOut = await evaluate('fixture.calls.length');
   await click('#sign-out');
   assert.equal(await evaluate("!document.getElementById('pairing').classList.contains('hidden') && document.getElementById('device').classList.contains('hidden') && document.querySelectorAll('.app').length===0 && document.querySelectorAll('#system .metric').length===0 && document.getElementById('package').files.length===0"), true, 'Sign out clears the session and displayed device data');
-  assert.equal(await evaluate('fixture.calls.length'), callsBeforeSignOut, 'Sign out makes no device action request');
+  assert.deepEqual(await evaluate('fixture.calls.slice(' + callsBeforeSignOut + ').map(c=>[c.path,c.method])'), [['/api/v1/session', 'DELETE']], 'Sign out revokes the device session');
   assert.match(await evaluate("document.getElementById('pair-status').textContent"), /signed out/);
   await pair();
   await click('#tab-device');
@@ -220,7 +226,7 @@ try {
   }
   await viewport(390);
   await click('#confirm-cancel');
-  await waitFor("!document.getElementById('confirm-dialog').open", 'reboot confirmation cancelled');
+  await waitFor("!document.getElementById('confirm-dialog').open && !confirmationPending", 'reboot confirmation cancelled');
   assert.equal(await evaluate("fixture.calls.filter(c=>c.path==='/api/v1/system/reboot').length"), 0, 'Cancel sends no reboot request');
   await evaluate('fixture.failReboot=500');
   await click('#reboot'); await click('#confirm-accept');

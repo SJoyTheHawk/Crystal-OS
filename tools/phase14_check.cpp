@@ -158,6 +158,7 @@ static void assert_inside(lv_obj_t *child, lv_obj_t *parent) {
     assert(box.x1 >= bounds.x1 && box.x2 <= bounds.x2);
     assert(box.y1 >= bounds.y1 && box.y2 <= bounds.y2);
 }
+#include "phase16_ui_check.hpp"
 int main(int argc, char **argv) {
     assert(argc == 3); fixtures = argv[1]; const fs::path root = argv[2];
     setbuf(stdout, nullptr); test_hal.storage = &storage;
@@ -491,13 +492,33 @@ int main(int argc, char **argv) {
     assert(matrix != nullptr);
     assert(find_object_type(lv_disp_get_scr_act(display), &lv_img_class) != nullptr);
     assert(find_object_type(lv_disp_get_scr_act(display), &lv_list_class) != nullptr);
-    assert(find_object_type(lv_disp_get_scr_act(display), &lv_chart_class) != nullptr);
+    auto *sample_chart = find_object_type(lv_disp_get_scr_act(display), &lv_chart_class);
+    assert(sample_chart != nullptr);
+    auto *sample_series = lv_chart_get_series_next(sample_chart, nullptr);
+    assert(sample_series && lv_chart_get_y_array(sample_chart, sample_series)[0] == 10);
+    lv_tabview_set_act(dashboard_tabs, 2, LV_ANIM_OFF);
+    lv_obj_scroll_to_view(sample_chart, LV_ANIM_OFF); settle();
+    lv_area_t chart_area{}; lv_obj_get_coords(sample_chart, &chart_area);
+    assert(chart_area.x1 >= 0 && chart_area.y1 >= 0 && chart_area.x2 < 480 && chart_area.y2 < 480);
+    lv_obj_invalidate(sample_chart); lv_refr_now(display);
+    std::vector<lv_color_t> chart_before;
+    for (int y = chart_area.y1; y <= chart_area.y2; ++y)
+        for (int x = chart_area.x1; x <= chart_area.x2; ++x) chart_before.push_back(frame[y * 480 + x]);
+    click_button_text(display, "Update chart");
+    settle(); lv_obj_invalidate(sample_chart); lv_refr_now(display);
+    const auto *updated_values = lv_chart_get_y_array(sample_chart, sample_series);
+    assert(updated_values[0] == 95 && updated_values[1] == 5 && updated_values[2] == 90 && updated_values[3] == 10);
+    size_t changed_chart_pixels = 0, pixel_index = 0;
+    for (int y = chart_area.y1; y <= chart_area.y2; ++y) for (int x = chart_area.x1; x <= chart_area.x2; ++x)
+        if (frame[y * 480 + x].full != chart_before[pixel_index++].full) ++changed_chart_pixels;
+    assert(changed_chart_pixels > 20);
     assert(find_object_type(lv_disp_get_scr_act(display), &lv_textarea_class) != nullptr);
     assert(find_object_type(lv_disp_get_scr_act(display), &lv_spinner_class) != nullptr);
     lv_obj_t *dialog = find_object_type(lv_disp_get_scr_act(display), &lv_msgbox_class);
     assert(dialog != nullptr && lv_obj_has_flag(dialog, LV_OBJ_FLAG_HIDDEN));
     assert(strcmp(lv_btnmatrix_get_btn_text(lv_msgbox_get_btns(dialog), 0), "OK") == 0);
-    lv_obj_clear_flag(dialog, LV_OBJ_FLAG_HIDDEN);
+    click_button_text(display, "Show dialog");
+    assert(!lv_obj_has_flag(dialog, LV_OBJ_FLAG_HIDDEN));
     lv_btnmatrix_set_selected_btn(lv_msgbox_get_btns(dialog), 0);
     lv_event_send(lv_msgbox_get_btns(dialog), LV_EVENT_VALUE_CHANGED, nullptr);
     settle();
@@ -515,6 +536,7 @@ int main(int argc, char **argv) {
     lv_btnmatrix_set_selected_btn(matrix, 0);
     lv_event_send(matrix, LV_EVENT_VALUE_CHANGED, nullptr);
     assert(!crystal_timer_state().running && !crystal_timer_state().paused);
+    check_ui_facade(*static_cast<DeclarativeApp *>(declarative));
     assert(declarative->state().set_u32("clear", 73));
     assert(phone.sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME)); settle();
     assert(phone.getManager().getActiveApp() == nullptr);

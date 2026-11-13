@@ -1,0 +1,99 @@
+Phase 15/16 implementation validation — 2026-11-13; device follow-up 2026-11-14
+
+Scope: WiFi browser panel plus existing USB CLI fallback. Browser Web Serial
+was removed from Phase 15 scope by the user. No board was flashed or tested
+in this run; /dev/cu.usbmodem* has no entries. Existing A–R evidence retained.
+
+Firmware: ESP-IDF v6.1, ESP32-S3; idf.py build exited 0.
+Application binary: build/crystal_os.bin, 3149824 bytes (0x301000).
+4 MiB app slot: 0xff000 bytes / 25% free.
+Updated panel assets: build/storage.bin, 2097152 bytes.
+ELF SHA256: d3627ffe29b094b43011bff41b9296a3df37ec6971b35ea9e30647e767dc7edb
+
+Host commands (all exited 0):
+  python3 tools/test_app_platform_v2.py
+  node tools/test_control_panel.mjs
+  python3 tools/test_control_app_actions.py
+  python3 tools/test_control_logs.py
+  /Users/szemy/.espressif/python_env/idf6.1_py3.10_env/bin/python tools/test_crystal_signatures.py
+  python3 tools/test_control_reboot.py
+  python3 tools/test_control_panel_assets.py
+  python3 tools/test_crystal_declarative.py
+  python3 tools/test_crystal_memory.py
+  python3 tools/test_shell_control_launch.py
+  python3 tools/test_developer_tools_page.py
+
+Selected production runtime output (ASan/UBSan, real LVGL/Brookesia/keyboard):
+  PASS: package bounds, CRC, traversal, duplicates, reserved paths, ABI, permissions, quotas, signature rejection, rollback, staging and persistence
+  PASS: real Calculator package 10 install/uninstall cycles, 100 launches with production LVGL/Brookesia, zero tracked leaks, builtin state preserved
+  PASS: shared UI operations, stale/cross-app handles, dynamic rich lists/charts, bounded arguments, events, timers/after, animations and teardown
+  PASS: declarative package fills the app area, lays out tabs/buttons/scrolling without overlap, binds live data/visibility, routes permitted timer events, and cleans up across reopen
+  PASS: corrupt reboot state fails, retains package for inspection, and cannot cause a reboot loop
+
+Browser output:
+  PASS: pairing, rejected PIN, session expiry, sign out, confirmed reboot, apps, enable/disable, ordering, confirmation, upload, errors, logs, desktop sections, mobile tabs, keyboard navigation, resize state, and responsive layouts.
+
+Catalog output (real loopback TLS; ephemeral CA, no external publication):
+  PASS: real HTTPS certificate validation, signed catalog/package download and index update
+  PASS: Ed25519 package and catalog signing, trusted-key lookup, tamper rejection, and HTTPS policy
+
+Additional checks:
+  Production app/order handlers: builtin disable/package uninstall, unknown and
+  disabled launch, bad DELETE suffix, unauthorized early return; malformed
+  or duplicate order rows reject before any registry write.
+  Production log/session handlers: bounded batch, cursor/reboot, simulated-clock
+  expiry, revocation, socket failure, CR/LF sanitization. CLI resumes after a
+  broken connection/partial line without replaying a completed line.
+  Production USB header parser: zero, signs/whitespace, trailing data, overflow
+  and oversized lengths reject. Interrupted staging/rollback remains covered
+  by the package integration suite; no new physical interruption was performed.
+  git diff --check: PASS.
+
+Ready-to-install fixture (existing key ID 240, no key generation/provisioning):
+  .cache/phase15-16-device-test/dashboard-ui-v1-signed.capp
+  19144 bytes; Ed25519 signature verified against existing test public key.
+  SHA256: 3adf00d940116c017ec18dae6d51e765d1f07e49e5893c49130a53d95e68ff4b
+
+Limits:
+  Host suite deliberately prints FAIL messages while testing invalid/replayed
+  device-test state; the following PASS verifies rejection. Overall exit is 0.
+  This does not establish combined ESP32 Dashboard/panel/TLS internal headroom,
+  outside-tap dismissal on the updated firmware, discovery edge cases, or the
+  root cause of the inherited cold-boot ESP_TLS_CONNECTION_TIMEOUT.
+  Public catalog host and production signing identities remain unset deployment
+  configuration. Local HTTPS test does not publish or select release keys.
+  Pre-existing dirty reference/ESP32-S3-Touch-LCD-4B submodule was preserved.
+
+Sample follow-up, 2026-11-14:
+  Update chart uses a distinct high-low series and sits beside the chart.
+  Production host test verifies both series values and changed rendered pixels.
+  The user reported that the chart visibly changed once; recorded as passed.
+  Signed Dashboard fixture rebuilt and verified with existing test key 240.
+
+Device follow-up, 2026-11-14 (user-reported):
+  Flash/pair/install setup, list update, dialog, app switch and Weather checks
+  passed. Focus input opens and Enter dismisses the keyboard; sample text need
+  not persist. Tapping another screen area did not dismiss the keyboard.
+  Device log has no panic. Its Dashboard onPause follows the shell's explicit
+  "Opening Settings ... closing app" message. One initial Weather TLS request
+  timed out; later HTTPS and Weather requests returned status 200.
+
+Keyboard follow-up implementation:
+  Taps on other clickable controls and blank space in the owning view now
+  dismiss the keyboard after the click action. Host regression covers both
+  paths and firmware build passes. Flash this firmware and confirm the input
+  dismissal once on-device; do not repeat the other checks.
+
+Focus-button regression correction, 2026-11-14:
+  User reported Focus input no longer worked after the outside-tap fix.
+  Reproduced in the host suite by clicking the actual Dashboard JSON button:
+  the listener added during that click also queued keyboard dismissal. The
+  previous test had bypassed the button and called ui.set_focus directly.
+  Outside clicks are now observed before the control action; a focus request
+  cancels pending dismissal, including refocus while the keyboard is open.
+  Pending dismissal is also cancelled on explicit keyboard teardown.
+  Host suite passes opening/refocusing through the real button, typing q,
+  Done, reopening, and a separate outside control/background click.
+  User confirmed on device, 2026-11-14: Focus input remains open after its
+  button tap, and a later tap elsewhere dismisses the keyboard. Core device
+  confirmation is complete; earlier passed flows still count.

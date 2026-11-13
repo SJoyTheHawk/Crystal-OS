@@ -7,6 +7,7 @@ import struct
 import sys
 import base64
 import hashlib
+import http.client
 import os
 import select
 import urllib.error
@@ -380,16 +381,20 @@ def catalog_download(url, app_id, destination, trusted_catalog_keys, trusted_pac
     if len(package) != app['size'] or hashlib.sha256(package).hexdigest() != app['sha256']:
         raise ValueError('Downloaded package size or SHA-256 does not match the signed catalog')
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(package)
+    # Verify beside the destination, then replace it atomically. A failed
+    # download must not overwrite a previously verified local package.
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.crystal-', suffix='.capp', delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(package)
     try:
-        result = verify(destination, trusted_package_keys)
+        result = verify(temporary, trusted_package_keys)
         if result['key_id'] != app['package_key_id']:
             raise ValueError('Downloaded package signing key ID does not match the catalog')
         if result['manifest']['id'] != app['id'] or result['manifest']['version'] != app['version']:
             raise ValueError('Downloaded package identity/version does not match the catalog')
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
     return result, catalog_key_id
 
 
@@ -485,10 +490,10 @@ def install_usb(port, package):
         except termios.error:
             # USB Serial/JTAG endpoints do not expose UART settings on every host.
             pass
-        deadline = time.monotonic() + 30
         response = bytearray()
 
-        def protocol_line():
+        def protocol_line(timeout=30):
+            deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if b'\n' in response:
                     raw, _, remainder = response.partition(b'\n')
@@ -522,8 +527,8 @@ def install_usb(port, package):
                 if acknowledgement and acknowledgement.startswith('CRYSTAL/1 ERROR '):
                     raise ValueError(f'device USB install failed: {acknowledgement[len("CRYSTAL/1 ERROR "):]}')
                 raise ValueError('device did not acknowledge USB upload progress')
-        while time.monotonic() < deadline:
-            line = protocol_line()
+        while True:
+            line = protocol_line(timeout=90)
             if line is None:
                 break
             if line.startswith('CRYSTAL/1 OK '):
@@ -541,16 +546,28 @@ def install_usb(port, package):
 
 
 def stream_logs(base, token):
-    request = urllib.request.Request(device_url(base, '/api/v1/logs'),
-                                     headers={'Authorization': f'Bearer {token}', 'Accept': 'text/event-stream'})
-    try:
-        with urllib.request.urlopen(request, timeout=75) as response:
-            for raw in response:
-                line = raw.decode('utf-8', errors='replace')
-                if line.startswith('data: '):
-                    print(line[6:].rstrip('\n'), flush=True)
-    except urllib.error.HTTPError as exc:
-        raise ValueError(f'log stream failed ({exc.code})') from exc
+    cursor = 0
+    while True:
+        request = urllib.request.Request(device_url(base, f'/api/v1/logs?since={cursor}'),
+                                         headers={'Authorization': f'Bearer {token}', 'Accept': 'text/event-stream'})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                next_id = cursor
+                for raw in response:
+                    if not raw.endswith(b'\n'):
+                        continue  # An interrupted partial line is replayed.
+                    line = raw.decode('utf-8', errors='replace').rstrip('\r\n')
+                    if line.startswith('id: ') and line[4:].isdigit():
+                        next_id = int(line[4:])
+                    elif line.startswith('data: '):
+                        print(line[6:], flush=True)
+                        cursor = next_id
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403, 404):
+                raise ValueError(f'log stream ended ({exc.code}); pair again or check the device URL') from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead):
+            pass  # Resume at the last printed line after a transient disconnect.
+        time.sleep(1)
 
 
 def main():

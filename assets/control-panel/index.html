@@ -286,12 +286,14 @@ function button(label, style, action, unavailable = false) {
   const item = document.createElement('button'); item.textContent = label; item.className = style;
   item.dataset.unavailable = String(unavailable); item.disabled = busy || unavailable; item.onclick = action; return item;
 }
+let confirmationPending = false;
 function confirmAction(title, copy, label) {
   return new Promise(resolve => {
     const dialog = $('confirm-dialog');
-    if (dialog.open) { resolve(false); return; }
+    if (dialog.open || confirmationPending) { resolve(false); return; }
+    confirmationPending = true;
     $('confirm-title').textContent = title; $('confirm-copy').textContent = copy; $('confirm-accept').textContent = label;
-    dialog.returnValue = ''; dialog.onclose = () => resolve(dialog.returnValue === 'confirm');
+    dialog.returnValue = ''; dialog.onclose = () => { confirmationPending = false; dialog.onclose = null; resolve(dialog.returnValue === 'confirm'); };
     $('confirm-cancel').onclick = () => dialog.close('cancel'); $('confirm-accept').onclick = () => dialog.close('confirm');
     dialog.showModal(); $('confirm-cancel').focus();
   });
@@ -327,7 +329,7 @@ async function refreshData() {
 }
 async function runAction(action, success) {
   if (busy || !token) return;
-  const active = session; stopLogs(); lock(true); message('device-status', 'Working…');
+  const active = session; lock(true); message('device-status', 'Working…');
   try {
     const result = await action();
     if (active !== session) return;
@@ -364,7 +366,11 @@ $('pair-form').addEventListener('submit', async event => {
   finally { $('pair').disabled = false; $('pair').textContent = 'Pair browser'; }
 });
 $('refresh').onclick = () => runAction(async () => ({}), 'Device information updated.');
-$('sign-out').onclick = () => endSession('You signed out. Generate a new code on your device to pair again.');
+$('sign-out').onclick = () => {
+  const authorization = 'Bearer ' + token;
+  endSession('You signed out. Generate a new code on your device to pair again.');
+  fetch('/api/v1/session', { method: 'DELETE', headers: { Authorization: authorization }, cache: 'no-store', keepalive: true }).catch(() => {});
+};
 $('reboot').onclick = async () => {
   if (busy || !token) return;
   const active = session;
@@ -414,21 +420,43 @@ $('logs').onclick = async () => {
   if (!token || busy) return;
   const controller = new AbortController(), active = session, output = $('log-output'); logSource = controller;
   output.classList.remove('hidden'); output.textContent = ''; $('logs').textContent = 'Pause logs'; $('logs').setAttribute('aria-pressed', 'true'); $('log-status').textContent = 'Connecting to your device…';
+  let cursor = 0;
+  const pause = () => new Promise(resolve => {
+    const done = () => { clearTimeout(timer); controller.signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, 1000); controller.signal.addEventListener('abort', done, { once: true });
+    if (controller.signal.aborted) done();
+  });
   try {
-    const response = await fetch('/api/v1/logs', { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store', signal: controller.signal });
-    if (controller.signal.aborted || active !== session) return;
-    if (response.status === 401) { endSession('Your session ended. Generate a new pairing code on your device to reconnect.'); return; }
-    if (!response.ok || !response.body) throw Error('Could not open logs. Please try again.');
-    $('log-status').textContent = 'Streaming from your Crystal.';
-    const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '';
-    while (true) {
-      const part = await reader.read(); if (part.done || active !== session) break;
-      pending += decoder.decode(part.value, { stream: true });
-      const lines = pending.split('\n'); pending = lines.pop();
-      for (const line of lines) if (line.startsWith('data:')) output.textContent = (output.textContent + line.slice(5).replace(/^ /, '').replace(/\r$/, '') + '\n').slice(-32768);
-      output.scrollTop = output.scrollHeight;
+    while (!controller.signal.aborted && active === session) {
+      try {
+        const response = await fetch('/api/v1/logs?since=' + cursor, { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store', signal: controller.signal });
+        if (controller.signal.aborted || active !== session) return;
+        if (response.status === 401) { endSession('Your session ended. Generate a new pairing code on your device to reconnect.'); return; }
+        if (!response.ok || !response.body) throw Error('Could not open logs. Reconnecting…');
+        $('log-status').textContent = 'Streaming from your Crystal.';
+        const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', nextId = cursor;
+        try {
+          while (true) {
+            const part = await reader.read(); if (part.done || active !== session || controller.signal.aborted) break;
+            pending += decoder.decode(part.value, { stream: true });
+            if (pending.length > 65536) throw Error('Invalid log response.');
+            const lines = pending.split('\n'); pending = lines.pop();
+            for (const line of lines) {
+              if (/^id: [0-9]+\r?$/.test(line)) nextId = Number(line.slice(4));
+              if (line.startsWith('data:')) {
+                output.textContent = (output.textContent + line.slice(5).replace(/^ /, '').replace(/\r$/, '') + '\n').slice(-32768);
+                cursor = nextId;
+              }
+            }
+            output.scrollTop = output.scrollHeight;
+          }
+        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      } catch (error) {
+        if (controller.signal.aborted || active !== session) return;
+        $('log-status').textContent = 'Connection lost. Reconnecting…';
+      }
+      await pause();
     }
-    if (active === session && !controller.signal.aborted) $('log-status').textContent = 'Stream ended. Start again to reconnect.';
   } catch (error) { if (error.name !== 'AbortError' && active === session) $('log-status').textContent = error instanceof TypeError ? 'Connection lost. Start logs to try again.' : error.message; }
   finally { if (logSource === controller) { logSource = null; $('logs').textContent = 'Start logs'; $('logs').setAttribute('aria-pressed', 'false'); } }
 };

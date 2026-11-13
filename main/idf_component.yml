@@ -5,3 +5,4 @@ dependencies:
   lvgl/lvgl: "8.4.0"
   waveshare/esp32_s3_touch_lcd_4b: "*"
   esphome/libsodium: "^1.10021.12"
+  espressif/mdns: "^1"

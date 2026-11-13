@@ -62,6 +62,8 @@ public:
     bool bindPackage(const char *id, size_t memory_bytes, unsigned workers);
     const std::string &packageId() const { return package_id_; }
     bool trackObject(lv_obj_t *object);
+    // Complexity-based warning budget, not a launch timeout (plan §6.8).
+    void setStartupBudget(uint32_t milliseconds) { startup_budget_ms_ = milliseconds; }
     // LVGL task only, after the manager stops the app. Resets retained state
     // and clears the constructor-name namespace, never the registry ID.
     bool clearData();
@@ -103,4 +105,5 @@ private:
     CrystalResources resources_;
     std::string package_id_;
     LifecycleState lifecycle_state_ = LifecycleState::Destroyed;
+    uint32_t startup_budget_ms_ = 80;
 };

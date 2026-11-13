@@ -30,13 +30,17 @@ finishes.
 
 The declarative runtime currently supports containers, rows/columns, scroll
 views, labels, buttons, button matrices, switches, sliders, arcs, tab views,
-package-bundled `CR16` RGB images, static lists and chart series, text areas,
+package-bundled `CR16` RGB images, dynamic rich lists and chart series, text areas,
 spinners, and dialogs. `CR16` images are UTF-8 text containing `CR16 width
 height` followed by exactly `width * height` hexadecimal `RRGGBB` pixels. Each
 image source is limited to 256 KiB, each dimension to 480 pixels, and decoded
 images to 128 KiB per app. Bindings support text and visibility for time,
-network connection, and timer state. Actions are allowlisted timer operations;
-arbitrary scripts are not evaluated.
+network connection, and timer state. Actions are allowlisted timer operations and structured UI updates;
+arbitrary scripts are not evaluated. Controls includes Focus input (the system
+keyboard), Add list item, Update chart and Show dialog. The dialog dismisses
+after a button selection; reopening the app rebuilds its initial tree.
+The shared callable contract is documented in
+[the implementation record](../../docs/APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md).
 
 The `visual/` directory contains declarative screen documents matching the
 Clock, Weather, and Calculator layouts. These are visual references; the

@@ -26,6 +26,8 @@ void crystal_shell_set_modal_open(bool open);
 // while open and scrolled only when the focused field would be obscured.
 bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport);
 void crystal_keyboard_hide();
+// Dismiss only when the field belongs to this subtree (app lifecycle hook).
+void crystal_keyboard_hide_for(lv_obj_t *root);
 bool crystal_keyboard_is_open();
 lv_coord_t crystal_keyboard_top();
 // Top of the reserved keyboard band whether or not the keyboard is open. Use

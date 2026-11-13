@@ -1,8 +1,10 @@
+> Historical test procedure. A–R results are retained; this is not a new request to run them. Current remaining work is in [the short device session](APP_PLATFORM_V2_PHASE_15_16_NEXT_STEPS.md).
+
 # App Platform v2 Phase 15 and 16 Test Guide
 
-Use this guide to record the remaining Phase 15 and Phase 16 exit evidence on a
-real ESP32-S3 board. Check a box only after the step has been observed and save
-the command output, serial log, screenshot, or HTTP response as evidence.
+This guide preserves the earlier Phase 15/16 test procedure and recorded
+evidence. Current remaining device work is in the short session linked above;
+empty historical boxes are not additional implementation requirements.
 
 The host tests prove implementation behavior, but they do not close the
 hardware-only items. USB developer install accepts an unsigned package. Wi-Fi

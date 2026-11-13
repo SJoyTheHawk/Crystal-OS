@@ -1,8 +1,8 @@
 # Crystal OS App Platform — v2 Design Guide
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
-**Date:** 2026-11-11  
+**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Date:** 2026-11-14
 **Audience:** Architects, senior developers reviewing Phase 14-17 designs
 
 **Versioning note:** Crystal OS v1 is Phases 1-13 — the baseline OS. Crystal OS v2 is Phase 14 and beyond — the app platform and publication release.
@@ -378,7 +378,9 @@ Timeline:
 
 **Implementation:** LVGL's `lv_obj_set_style_opa` with animation timeline, managed by bundled apps.
 
-**Script app guidance:** Use `set_hidden(h, bool)` to show/hide without animation (cost: zero). If you need transition animation, implement it as an LVGL timeline in the widget facade layer (not ABI-exposed yet).
+**App guidance:** Use `set_hidden(h, bool)` for immediate visibility, or the
+shared `anim`/`anim_cancel` facade for opacity, colors and radius. Animations
+are app-owned and canceled on pause, deletion and teardown.
 
 ---
 
@@ -608,31 +610,19 @@ esp_err_t crystal_fs_read(const char *app_id, const char *path,
 
 ## 9. Control Panel Architecture
 
-**Phase 15 implementation status:** The current firmware has an opt-in Wi-Fi
-panel with pairing, app/system queries, authenticated package upload, app
-management actions, and a bounded SSE log stream. Its page is served
-from the SPIFFS assets partition at the board-configured mount point
-(`CONFIG_BSP_SPIFFS_MOUNT_POINT`, currently `/spiffs`). The handler previously
-used the partition label `/storage` as a path, producing a false missing-page
-error; it now uses the configured mount point. The board has been flashed with that page;
-pairing, browser requests, package installation, and action consistency still
-need a user-driven hardware check. USB transfer and live catalog browsing are
-not implemented.
-The HTTP server is limited to four client sockets and lwIP provides sixteen
-total sockets so it can coexist with outbound HTTPS requests. The first socket
-limit adjustment did not resolve device startup: the control socket still
-returned `ENOBUFS` (105). Eligible Wi-Fi/lwIP allocations now prefer PSRAM to
-preserve internal RAM for socket mailboxes and task stacks. Startup logs include
-the socket limits and available internal/PSRAM memory. This memory adjustment
-passed socket creation on the device; the read-only notice does not disable
-the panel. That retest then exposed libsodium's Unix RNG abort during startup.
-The firmware now registers an ESP32 RNG provider before initializing libsodium
-once in early boot, temporarily enabling hardware entropy before RF/ADC startup.
-Pairing uses the live Wi-Fi entropy source; package verification works offline.
-The RNG fix booted on the board. A subsequent enable attempt during HTTPS
-returned `ESP_ERR_HTTPD_TASK`; the temporary 6 KiB startup worker now uses PSRAM
-with matching capability-aware task deletion, leaving internal RAM for the
-8 KiB HTTP server stack. Startup under HTTPS and browser pairing need retesting.
+**Phase 15 implementation status (2026-11-13):** The opt-in WiFi panel serves
+from the configured SPIFFS mount point and supports pairing, signed installs,
+management and logs. A–R device evidence is retained. Log following now uses
+short authenticated SSE batches with cursors, so it does not occupy the serial
+HTTP server for a minute. Sign-out revokes the server token. mDNS advertises
+`crystal-<chip-MAC>.local`; IP access remains available if discovery fails.
+The discovery task and allocations use PSRAM; the USB installer retains its
+internal stack because it writes flash. Four HTTP client sockets and sixteen
+lwIP sockets remain configured. Current defaults keep the established WiFi
+allocator policy and eight static TX buffers. Combined Dashboard/panel/HTTPS
+headroom and cold-boot timeout diagnosis are deferred hardening work. Earlier
+observations remain recorded; this milestone requires only a brief check of
+changed core behavior.
 
 ### 9.1 API-First Design
 
@@ -642,7 +632,7 @@ path; USB sideloading is explicitly developer-mode only.
 
 **Consequence:** Manage Apps (on-device) and external panel are clients of the same API. They can't disagree.
 
-### 9.2 Two Transports, One Message Format
+### 9.2 WiFi Panel and USB Developer Fallback
 
 **WiFi transport:**
 - HTTP over WiFi
@@ -654,9 +644,11 @@ path; USB sideloading is explicitly developer-mode only.
 - `CRYSTAL/1 INSTALL <bytes>\n` frames a bounded `.capp` upload; the device
   writes it through the same atomic package installer in developer mode.
 - `crystal install --usb --port /dev/cu.usbmodem101 package.capp` is the host client.
-- Browser Web Serial support is not implemented.
+- Browser Web Serial is outside Phase 15 scope, per the user decision on 2026-11-13.
 
-**Implication:** Developers use the same API whether the device is over WiFi or USB. Seamless.
+**Implication:** Both routes use the same bounded, atomic package installer.
+HTTP management and log following use WiFi; USB provides a physical CLI install
+fallback when WiFi is unavailable.
 
 ### 9.3 Security Model
 
@@ -887,19 +879,20 @@ verification remains a Phase 15 deliverable.
 
 ### For Phase 15
 
-Outstanding work is consolidated in the [closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+Development acceptance uses the [brief core check](APP_PLATFORM_V2_PHASE_15_16_NEXT_STEPS.md).
+Reuse existing results; production readiness and detailed hardening come later.
 
-- [ ] API endpoints match spec (§9.3 of Implementation Plan)
-- [ ] Web UI works over WiFi and USB
+- [x] API contract reviewed: builtin DELETE disables, package DELETE uninstalls, disabled launch rejects, token revocation and bounded log batches are documented
+- [x] WiFi web UI plus existing USB CLI fallback; browser USB removed from scope by user decision
 - [x] Pairing PIN generation, display, acceptance, reuse rejection, expiry and recovery device-confirmed
-- [x] Bearer token validated for protected endpoints; missing/invalid-token device matrix passes (real-token expiry/revocation checks remain separate)
+- [x] Bearer token validated for protected endpoints; reuse device authentication results and automated expiry/revocation coverage
 - [x] Ed25519 package verification uses configured test key ID 240; signed installs and untrusted/tampered rejection device-confirmed; release identity remains separate
 - [x] Host CLI signs packages and signs/lists/downloads from the signed HTTPS catalog
 - [x] Install progress bar shown on device upload for the 1328026-byte fixture
-- [x] On-device Manage Apps and external panel agree after recorded edits; remaining detailed observations are listed separately
+- [x] On-device Manage Apps and external panel agree after recorded edits; no repeat required
 - [x] Browser Live logs functional device validation, including mobile, pause/restart and sign-out (P); retained device history is volatile and shared with newly authenticated clients
-- [ ] Stream responsiveness, in-flight session invalidation and shutdown
-- [ ] Hosted catalog workflow validation and alignment with the resolved computer-side workflow
+- [x] Short-batch logs and session invalidation host-tested; changed device behavior is in the focused follow-up
+- [x] Computer-side signed HTTPS catalog workflow aligned; deployment URL and production keys remain project configuration
 
 ### For Phase 16
 
@@ -907,11 +900,12 @@ Outstanding work is consolidated in the [closure checklist](APP_PLATFORM_V2_PHAS
 - [x] `ui.json` parsing and object tree construction works
 - [x] Data binding to `crystal.service` values (time, network, timer)
 - [x] Event routing for permission-checked timer actions
-- [ ] Remaining dynamic property/event APIs implemented
+- [x] Shared UI facade implements dynamic properties/events, lists/charts, timers, animations and keyboard focus; real-LVGL host tests pass
 - [x] Visual UI references for Clock, Weather and Calculator pass production host runtime; app behavior remains in current runtimes
 - [x] Implemented lifecycle/cleanup device verification (K/L/M)
 - [x] Reconnect UI observation (O) and launcher caption truncation/full management names (N)
-- [ ] Combined Dashboard/panel/TLS load/headroom, timing classification, complete facade review and ABI v1 freeze
+- [x] Facade review and v1 UI contract freeze recorded; Standard 200 ms startup warning selected
+- [x] Brief core check of new UI controls, keyboard dismissal and logs alongside Refresh passed; combined-load profiling deferred to hardening
 
 ### For Phase 17
 

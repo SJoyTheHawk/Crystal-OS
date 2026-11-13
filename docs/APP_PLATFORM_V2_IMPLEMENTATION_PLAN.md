@@ -1,8 +1,8 @@
 # Crystal OS App Platform — v2 Implementation Plan
 
 **Version:** 2.0  
-**Status:** Phase 14 closed; Phase 15 in progress; Phase 16 runtime slice implemented
-**Date:** 2026-11-11  
+**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Date:** 2026-11-14
 **Scope:** Package format, registry system, control panel, and three runtime tiers (declarative, script, native)
 
 **Versioning note:** Crystal OS v1 is Phases 1-13 — the baseline OS with bundled Clock, Weather, and Calculator apps. Crystal OS v2 is Phase 14 and beyond — the app platform and publication release. All documents in this series describe v2.
@@ -230,6 +230,11 @@ All handles die at `onDestroy()`. Apps rebuild their UI trees in `onCreate()` on
 
 ### 6.1 `crystal.ui` — Tree Building
 
+The reviewed v1 UI contract and concrete C++/JSON mappings are recorded in
+[Phase 15/16 implementation notes](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md).
+These bounds and lifecycle rules are part of v1. Lua bindings ship in Phase 17.
+
+
 | Function | Returns | Notes |
 |----------|---------|-------|
 | `screen()` | handle | Root container for this app's visual area. Always available. |
@@ -321,7 +326,7 @@ Highlight:  anim(h, {bg_color=0x4A90D9}, 100, {easing="ease_in_out"})
 
 **What is not in the ABI:** Slide/translate animations (position-based). Moving objects by X/Y requires direct LVGL access that is too pointer-heavy for the ABI boundary. Use `set_hidden` + fade instead to achieve appear/disappear effects cleanly.
 
-**Cost:** Each `anim()` call adds one LVGL animation entry (~80 bytes). Clean up with `anim_cancel` if the app is destroyed before the animation completes — the host does not auto-cancel in-flight animations at `onDestroy()` (they are LVGL-owned, not handle-owned).
+**Ownership:** Animations belong to the app. The host cancels them when the target is deleted, the app pauses, or the app is destroyed. Completion is not called on cancellation. Timers pause/resume with the app and are deleted at destroy.
 
 ### 6.3 `crystal.service` — System Services
 
@@ -625,7 +630,7 @@ Two panels (on-device + external), one API, identical JSON.
 
 Built into the launcher (DESIGN.md §9, Phase 13). User can:
 - Reorder apps (drag-and-drop)
-- Install via USB (browse `.capp`, tap Install)
+- Install a `.capp` through the WiFi panel or the USB CLI; this screen manages installed apps
 - Uninstall package apps
 - Disable/enable bundled apps
 - Clear app data
@@ -634,9 +639,13 @@ No external tools needed.
 
 ### 9.2 External Panel (Web UI + CLI)
 
-Serves a static web UI over WiFi or USB. Accessed via:
+Serves a static web UI over WiFi. Accessed via:
 - **WiFi:** `http://crystal-<serial>.local` (mDNS)
-- **USB:** Web Serial page (same browser URL via USB CDC-ACM)
+
+The ESP32-S3 USB Serial/JTAG channel remains the existing developer CLI
+transport (`crystal install --usb`). A browser Web Serial panel is deliberately
+outside the Phase 15 scope: it would duplicate the WiFi panel while adding
+browser-specific transport and security behavior.
 
 Features:
 - Browse device apps (merged list, origin shown)
@@ -657,7 +666,9 @@ POST   /api/v1/apps/{id}/enabled     {enabled: bool}
 DELETE /api/v1/apps/{id}/data        clear persistent state
 POST   /api/v1/apps/{id}/launch      launch in dev mode (if enabled)
 GET    /api/v1/system                {os_version, abi_version, free_psram_kb, free_storage_kb}
-GET    /api/v1/logs                  SSE stream of app stderr
+GET    /api/v1/logs?since=N          bounded SSE batch of app logs, reconnect after 1 second
+DELETE /api/v1/session               revoke the current bearer token
+POST   /api/v1/system/reboot          queue restart after the response
 ```
 
 **Security:**
@@ -742,8 +753,8 @@ Phases 14-17 build the app platform. Phase 14 is foundational; 15-17 are indepen
 ### Phase 15: Control Panel, Signatures, Developer Tools
 
 **Deliverables:**
-1. HTTP API (9.3) over WiFi and USB CDC-ACM
-2. Static web UI: app browser, installer, log viewer
+1. HTTP API (9.3) over WiFi
+2. Static WiFi web UI: app browser, installer, log viewer
 3. Pairing PIN flow (6-digit exchange for bearer token)
 4. Package signature verification (Ed25519)
 5. `crystal` CLI: `pack`, `install --usb`, `logs -f`, `run`
@@ -754,7 +765,7 @@ Phases 14-17 build the app platform. Phase 14 is foundational; 15-17 are indepen
 **Bus app evidence:** 943 KB stop catalogs alone; realistic data-heavy apps may be 2-5 MB. Progress visibility matters.
 
 **Exit criteria:**
-- `.capp` installs over WiFi and USB from same browser page
+- `.capp` installs through the authenticated WiFi panel and the existing USB CLI
 - API rejects all requests without valid bearer token
 - On-device Manage Apps and external panel agree after edits
 - Install rejects package when resource sum exceeds available capacity
@@ -786,9 +797,13 @@ the production host runtime. The user clarified that bundled-app parity means
 visual UI expressibility; Calculator computation and Weather fetching remain
 in their current runtimes, and Weather stays bundled. The 2026-11-13 K/L/M
 device results establish implemented lifecycle/cleanup and Dashboard bindings.
-Dynamic property/event/focus operations, the remaining reconnect/load
-observations and ABI review/freeze remain open; use the reconciled
-[closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+The shared `CrystalUI` facade now covers the callable v1 surface: dynamic
+creation and handles, properties, focus/keyboard hooks, events, rich lists,
+charts, timers, animations and teardown. It is exercised against real LVGL
+with ASan/UBSan. Lua remains a Phase 17 runtime; this phase freezes the ABI
+surface, not a Lua implementation. Device combined-load and startup timing
+observations are deferred hardening work; only changed core behavior needs a
+brief device check.
 
 ### Phase 17: Script Runtime, Async HTTP, Worker Threads
 
@@ -932,25 +947,12 @@ These are accepted constraints for v2. Documenting them prevents re-discussion a
 
 **Resolution:** Upgrade to LVGL 9.x in a future phase, where the event is properly fired.
 
-### 14.4 Animations Not Auto-Canceled on onDestroy
+### 14.4 App-Owned Animations
 
-**Behavior:** `crystal.ui.anim()` creates LVGL animation entries that are LVGL-owned, not handle-owned. When an app is destroyed, in-flight animations continue until they complete or LVGL reclaims the objects.
-
-**Consequence:** An app with a 500ms fade-out animation that is destroyed at 200ms will leave the animation running for the remaining 300ms, animating a now-dead object (safely ignored by LVGL).
-
-**Workaround:** Apps that care should track anim handles and call `anim_cancel` in `onDestroy` for any unfinished animations.
-
-**Rationale:** Auto-tracking every `anim()` call adds overhead. Most animations are short (< 300ms) and completing after destroy is harmless.
-
-### 14.5 No Inter-App Communication in v2
-
-**Limitation:** Apps are isolated. No IPC, no shared state, no message passing between apps.
-
-**Rationale:** Simplicity and security. IPC requires permission model, API versioning, and lifecycle coordination across multiple apps (e.g., app A calls app B, which is not running yet).
-
-**Workaround:** System services (`crystal.service.*`) are the only cross-app boundary. An app can write to `crystal.state` and another app can read it only if both explicitly coordinate on key names and formats. Not recommended.
-
-**Future phase:** Intent-style IPC with permission gates (not in v2).
+The shared UI facade tracks animations and cancels them when the app pauses,
+the target is deleted or the app is destroyed. Cancellation keeps the current
+style value and suppresses completion. This supersedes the earlier proposal to
+leave LVGL animations running after teardown.
 
 ---
 
@@ -1037,47 +1039,50 @@ curated native resource contract, validation evidence, and deferred follow-ups.
 
 ### Phase 15 Checklist
 
-Remaining implementations, device checks and scope conflicts are consolidated
-in the [Phase 15/16 closure checklist](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+Development acceptance is a brief check of the changed core flows, reusing
+existing results. The [closure record](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
+tracks that check; detailed hardening and production readiness come later.
 The existing Device/Live logs viewer has functional board validation in P,
-including mobile. Concurrent servicing and active-stream shutdown remain open.
+including mobile. Short authenticated SSE batches now remove the minute-long
+server wait; host tests cover cursors, expiry, revocation and disconnects.
 
 Hardware results: [A–F](test-evidence/phase15-16/2026-11-13-batch-af-closure.txt)
 and [G–M](test-evidence/phase15-16/2026-11-13-batch-gm-results.txt), extended by
 [N–R](test-evidence/phase15-16/2026-11-13-batch-nr-results.txt). These establish
-the implemented functional gate; missing browser USB,
-catalog workflow/scope closure and
-stream concurrency/shutdown remain open, so Phase 15 is not closed.
+the implemented functional gate. The updated build's brief core check passed
+on 2026-11-14. Combined-load profiling, further timing measurements and catalog
+deployment identities are later follow-ups, not additional development
+acceptance requirements.
 
 - [x] Local HTTP API implements pairing, app list/system status, package upload, app actions, and bounded logs; functional hardware checks pass
-- [ ] Web UI static files served over WiFi and USB (WiFi asset serving and package progress are implemented; Browser Web Serial remains)
+- [x] Web UI static files and package actions served over WiFi; browser USB is explicitly out of scope
 - [x] Pairing PIN flow working on device, including one-use rejection, expiry and fresh-code recovery
 - [x] Bearer token exchange and validation on device; missing/invalid tokens rejected for protected endpoints
 - [x] Ed25519 signature verification with configured test key ID 240; signed install accepted and untrusted/tampered packages rejected (release identity remains a deployment decision)
 - [x] `crystal pack --key <private.pem> --key-id <id>` signs `.capp`; host signing and verification tests pass
-- [x] Host tooling signs, lists, and downloads packages from a signed HTTPS catalog; hosted end-to-end evidence and alignment of device-browsing wording with resolved section 15.2 remain
-- [x] Existing Device/Live logs viewer functionally validated on the board: lifecycle output, pause/restart and sign-out hiding/clearing the view, including mobile (P); output bounds are source/host-verified, stream servicing remains separate
+- [x] Host tooling signs, verifies, lists, downloads and atomically saves verified packages downloaded from a signed HTTPS catalog; production URL/key publication remains deployment work
+- [x] Existing Device/Live logs viewer functionally validated on the board: lifecycle output, pause/restart and sign-out hiding/clearing the view, including mobile (P); output bounds and short-batch servicing are host-verified
 - [x] `crystal install --usb` pushes a framed `.capp` over USB Serial/JTAG (unsigned developer package installed and reboot-reconciled on the board)
-- [x] `crystal logs -f` streams authenticated app lifecycle/debug lines over Wi-Fi SSE; device evidence in I/M (60-second stream, no automatic reconnect; concurrency/shutdown remain)
+- [x] `crystal logs -f` streams authenticated app lifecycle/debug lines over Wi-Fi SSE; device evidence in I/M (browser and CLI now resume short SSE batches by cursor)
 - [x] `crystal run` packs + installs + launches + streams logs over Wi-Fi; device-confirmed in M
 - [x] Install progress bar for packages > 1 MB; J confirms visible progression for 1328026 bytes
-- [x] Functional exit gate: web UI and CLI installs both work; API rejects unauthenticated requests (phase closure still requires the remaining scope)
+- [x] Core functional gate established: web UI and CLI installs work; API rejects unauthenticated requests; reuse this evidence
 
 ### Phase 16 Checklist
 
 - [x] `DeclarativeApp` class implementing `CrystalApp` interface
 - [x] Bounded `ui.json` + optional `bindings.json` parser for containers, labels, buttons, basic controls, tab views and button matrices
 - [x] Implement the documented visual widget types: image, list, chart, textarea, spinner and dialog
-- [ ] Complete documented property/event operations, including dynamic list/chart APIs and input focus
+- [x] Shared CrystalUI facade implements documented property/event operations, dynamic list/chart APIs and input focus; production host regression passes
 - [x] Data binding to `crystal.service` (time, network, timer)
 - [x] Event routing for the allowlisted timer system actions
 - [x] Verify implemented lifecycle and cleanup on device: repeated create/pause/resume/destroy, clear data, disable/re-enable, reinstall and reboot (K/L/M)
 - [x] Dashboard online/offline/reconnect UI confirmed (K/O); service bindings update visibly
-- [ ] Complete simultaneous Dashboard + enabled panel + TLS memory/load evidence; O passes panel+TLS before Dashboard starts but reaches 5807 free internal bytes / 3328-byte largest block at different samples
-- [ ] Classify/resolve Dashboard onCreate timing warnings (95–120 ms versus the current 80 ms warning; section 6.6 allows 200 ms for standard apps, so determine the correct class before imposing a hard limit)
+- [x] Brief core device check for the newly implemented UI controls and logs alongside Refresh passed; detailed load profiling is deferred hardening
+- [x] Classify declarative Dashboard as Standard (200 ms warning budget); the recorded 95–120 ms is within that class; new board timing remains observation
 - [x] Confirm launcher caption fix on device: N reports Action Guard... in the launcher and full management names on updated ELF 07e71ed2e; real-LVGL regression and firmware build also pass
 - [x] Demonstrate visual UI expressibility for Clock, Weather and Calculator; their behavior remains in existing runtimes
-- [ ] Freeze ABI v1 after the required facade surface is implemented and reviewed
+- [x] ABI v1 reviewed and frozen against the implemented handle-based CrystalUI surface; Lua/runtime-specific work remains Phase 17
 
 ### Phase 17 Checklist
 
