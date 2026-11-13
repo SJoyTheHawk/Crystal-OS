@@ -1,3 +1,5 @@
+> Archived historical procedure. Phase 15/16 are complete; pending items below are historical. See the [current regression guide](../../APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) and [closure record](../../APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+
 # Phase 15/16: step-by-step core development check
 
 The focused device check passed on 2026-11-14. This short procedure is retained

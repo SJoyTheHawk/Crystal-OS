@@ -1046,9 +1046,9 @@ The existing Device/Live logs viewer has functional board validation in P,
 including mobile. Short authenticated SSE batches now remove the minute-long
 server wait; host tests cover cursors, expiry, revocation and disconnects.
 
-Hardware results: [A–F](test-evidence/phase15-16/2026-11-13-batch-af-closure.txt)
-and [G–M](test-evidence/phase15-16/2026-11-13-batch-gm-results.txt), extended by
-[N–R](test-evidence/phase15-16/2026-11-13-batch-nr-results.txt). These establish
+Hardware results: [A–F](archive/phase15-16/test-evidence/2026-11-13-batch-af-closure.txt)
+and [G–M](archive/phase15-16/test-evidence/2026-11-13-batch-gm-results.txt), extended by
+[N–R](archive/phase15-16/test-evidence/2026-11-13-batch-nr-results.txt). These establish
 the implemented functional gate. The updated build's brief core check passed
 on 2026-11-14. Combined-load profiling, further timing measurements and catalog
 deployment identities are later follow-ups, not additional development

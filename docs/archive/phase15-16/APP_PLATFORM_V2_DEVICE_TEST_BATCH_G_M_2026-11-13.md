@@ -1,8 +1,10 @@
+> Archived historical procedure. Phase 15/16 are complete; pending items below are historical. See the [current regression guide](../../APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) and [closure record](../../APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+
 # Device test batch G–M — 2026-11-13
 
 Status: **G/H/I/J/L/M functional checks reported passed on 2026-11-13; K
-partially complete**. [Results and qualifications](test-evidence/phase15-16/2026-11-13-batch-gm-results.txt).
-O in the [N–R follow-up](test-evidence/phase15-16/2026-11-13-batch-nr-results.txt)
+partially complete**. [Results and qualifications](test-evidence/2026-11-13-batch-gm-results.txt).
+O in the [N–R follow-up](test-evidence/2026-11-13-batch-nr-results.txt)
 closes K's reconnect UI observation; combined Dashboard/panel/TLS evidence
 still remains. N confirms the launcher caption fix on the device. The
 onCreate timing classification remains separate. A–F are already

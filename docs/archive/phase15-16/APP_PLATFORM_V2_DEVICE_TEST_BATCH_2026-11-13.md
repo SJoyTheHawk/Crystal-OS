@@ -1,17 +1,19 @@
+> Archived historical procedure. Phase 15/16 are complete; pending items below are historical. See the [current regression guide](../../APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) and [closure record](../../APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+
 # Device test batch — 2026-11-13
 
 Status: A–F closed on 2026-11-13, with host verification of E's transient
-startup state/guard. [Closure record and qualification](test-evidence/phase15-16/2026-11-13-batch-af-closure.txt).
+startup state/guard. [Closure record and qualification](test-evidence/2026-11-13-batch-af-closure.txt).
 This closes this batch only; the phase-exit gates remain separate.
 
 The instructions below are retained for reproducibility; they are not
 themselves pass evidence. Icons, basic sign-out, selected-file cleanup and
 reboot cancellation are already confirmed and do not need repeating.
 Follow-up: A–C have now been reported and recorded in the
-[batch evidence](test-evidence/phase15-16/2026-11-13-batch-abc-clock-disable.txt).
+[batch evidence](test-evidence/2026-11-13-batch-abc-clock-disable.txt).
 D initially exposed a built-in ID parser bug when disabling Clock. The
 correction is now device-confirmed by D's follow-up. D–F results are retained
-in [the follow-up evidence](test-evidence/phase15-16/2026-11-13-batch-def-persistence-recovery.txt):
+in [the follow-up evidence](test-evidence/2026-11-13-batch-def-persistence-recovery.txt):
 Clock enable/order persistence and restoration, controlled reboots, switch
 state/service stop/Wi-Fi recovery, and unused-PIN expiry/fresh-code recovery
 pass. Original order is restored: Dev Tester, Clock, Weather, Calculator,

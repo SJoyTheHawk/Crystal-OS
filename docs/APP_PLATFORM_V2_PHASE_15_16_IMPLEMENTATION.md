@@ -152,10 +152,10 @@ rich lists/charts, focus/blur and Settings ownership, timers, animations and
 cleanup. The catalog regression uses an ephemeral local HTTPS server and CA,
 including rejection before that CA is trusted; it publishes nothing externally.
 
-The retained [A–F](test-evidence/phase15-16/2026-11-13-batch-af-closure.txt),
-[G–M](test-evidence/phase15-16/2026-11-13-batch-gm-results.txt) and
-[N–R](test-evidence/phase15-16/2026-11-13-batch-nr-results.txt) board evidence
-is not repeated. The user completed the [brief core check](APP_PLATFORM_V2_PHASE_15_16_NEXT_STEPS.md)
+The retained [A–F](archive/phase15-16/test-evidence/2026-11-13-batch-af-closure.txt),
+[G–M](archive/phase15-16/test-evidence/2026-11-13-batch-gm-results.txt) and
+[N–R](archive/phase15-16/test-evidence/2026-11-13-batch-nr-results.txt) board evidence
+is not repeated. The user completed the [brief core check](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
 on 2026-11-14, including keyboard focus and outside-tap dismissal. No USB
 board was attached during the original implementation run.
 

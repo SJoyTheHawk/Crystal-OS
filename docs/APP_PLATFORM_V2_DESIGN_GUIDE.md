@@ -879,7 +879,7 @@ verification remains a Phase 15 deliverable.
 
 ### For Phase 15
 
-Development acceptance uses the [brief core check](APP_PLATFORM_V2_PHASE_15_16_NEXT_STEPS.md).
+Development acceptance uses the [brief core check](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md).
 Reuse existing results; production readiness and detailed hardening come later.
 
 - [x] API contract reviewed: builtin DELETE disables, package DELETE uninstalls, disabled launch rejects, token revocation and bounded log batches are documented
