@@ -32,6 +32,9 @@
 #include "crystal_control.hpp"
 #include "crystal_declarative.hpp"
 #include "crystal_shell.hpp"
+#include "crystal_stylesheet.hpp"
+#include "crystal_boot_screen.hpp"
+#include "crystal_ui_metrics.hpp"
 #include "lvgl.h"
 #include "nvs_flash.h"
 #ifdef CRYSTAL_PHASE14_DEVICE_TEST
@@ -43,6 +46,8 @@ extern const uint8_t phase14_package_end[] asm("_binary_phase14_calculator_capp_
 
 static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
+static bool s_boot_display_locked = false;
+static bool s_boot_ui_visible = false;
 
 static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
@@ -108,6 +113,14 @@ static void require_boot_step(bool succeeded, const char *message)
 {
     if (!succeeded) {
         ESP_LOGE(TAG, "%s", message);
+        crystal_boot_screen_fail(message);
+        if (s_boot_display_locked) {
+            bsp_display_unlock();
+            s_boot_display_locked = false;
+        }
+        // Allow the LVGL task to present the error before the normal crash and
+        // rollback path restarts the device. Pre-display failures still abort.
+        if (s_boot_ui_visible) vTaskDelay(pdMS_TO_TICKS(1500));
         abort();
     }
 }
@@ -158,9 +171,24 @@ extern "C" void app_main(void)
     // the first frame is fully rendered.
     (void)bsp_display_brightness_set(0);
     crystal_hal_init();
+#if CONFIG_IDF_TARGET_ESP32P4
+    require_boot_step(bsp_display_lock(0), "Failed to lock display for boot screen");
+    s_boot_display_locked = true;
+    crystal_ui_metrics_start(display);
+    require_boot_step(crystal_boot_screen_show(), "Failed to create boot screen");
+    lv_refr_now(display);
+    bsp_display_unlock();
+    s_boot_display_locked = false;
+    (void)bsp_display_brightness_set(hal().brightness->get());
+    s_boot_ui_visible = true;
+    ESP_LOGI(TAG, "boot-screen first frame: %" PRId64 " ms",
+             (esp_timer_get_time() - s_boot_start_us) / 1000);
+#endif
+    crystal_boot_screen_update("Verifying app trust...", 20);
     require_boot_step(crystal_signature_init(), "Failed to initialize package signature trust store");
     crystal_app_set_log_hook(crystal_control_log_line);
     crystal_registry_set_package_factory(make_package_app);
+    crystal_boot_screen_update("Loading your apps...", 35);
     std::string package_error;
     const esp_partition_t *apps_partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "apps");
@@ -175,6 +203,8 @@ extern "C" void app_main(void)
         ESP_LOGI(TAG, "LittleFS mounted at /littlefs; package storage ready (%zu packages)", crystal_packages().size());
     }
     require_boot_step(bsp_display_lock(0), "Failed to lock display for UI initialization");
+    s_boot_display_locked = true;
+    crystal_boot_screen_update("Preparing Crystal OS...", 55);
 #if !CONFIG_IDF_TARGET_ESP32P4
     if (display->driver != nullptr) {
         display->driver->rounder_cb = my_rounder_cb;
@@ -209,57 +239,8 @@ extern "C" void app_main(void)
     auto *phone = new ESP_Brookesia_Phone(display);
     require_boot_step(phone != nullptr, "Failed to create Brookesia phone");
 
-    auto *stylesheet = new ESP_Brookesia_PhoneStylesheet_t ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+    auto *stylesheet = crystal_stylesheet_create_dark();
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
-#if CONFIG_IDF_TARGET_ESP32P4
-    // Brookesia has no square 720px preset; adapt Crystal's square dark style to
-    // the P4 canvas while retaining its navigation and motion treatment.
-    stylesheet->core.name = "Crystal OS 720x720 Dark";
-    stylesheet->core.screen_size.width = 720;
-    stylesheet->core.screen_size.height = 720;
-    stylesheet->core.home.background.wallpaper_image_resource.resource =
-        &esp_brookesia_image_large_wallpaper_dark_720_720;
-    auto &launcher = stylesheet->home.app_launcher.data;
-    stylesheet->home.status_bar.data.main.text_font.size_px = 24;
-    launcher.table.size.height = 660;
-    launcher.icon.main.size.width = 216;
-    launcher.icon.main.size.height = 216;
-    launcher.icon.image.default_size.width_percent = 63;
-    launcher.icon.image.default_size.height_percent = 63;
-    launcher.icon.image.default_size.flags.enable_width_percent = 1;
-    launcher.icon.image.default_size.flags.enable_height_percent = 1;
-    launcher.icon.image.default_size.flags.enable_square = 1;
-    launcher.icon.image.press_size.width_percent = 56;
-    launcher.icon.image.press_size.height_percent = 56;
-    launcher.icon.image.press_size.flags.enable_width_percent = 1;
-    launcher.icon.image.press_size.flags.enable_height_percent = 1;
-    launcher.icon.image.press_size.flags.enable_square = 1;
-    launcher.icon.label.text_font.size_px = 28;
-    launcher.indicator.main_size.height = 120;
-    launcher.indicator.main_layout_column_pad = 15;
-    launcher.indicator.spot_inactive_size.width = 18;
-    launcher.indicator.spot_inactive_size.height = 18;
-    launcher.indicator.spot_active_size.width = 45;
-    launcher.indicator.spot_active_size.height = 18;
-#endif
-    stylesheet->core.manager.app.max_running_num = 1;
-    stylesheet->home.flags.enable_recents_screen = 0;
-    stylesheet->home.app_launcher.data.flags.enable_table_scroll_anim = 1;
-    stylesheet->manager.gesture.threshold.direction_horizon = 12;
-    stylesheet->manager.gesture.threshold.direction_vertical = 12;
-    stylesheet->manager.gesture.threshold.horizontal_edge = 24;
-    stylesheet->manager.gesture_mask_indicator_trigger_time_ms = UINT32_MAX;
-    // Kill Brookesia's bottom indicator bar so Crystal's home pill is the only one.
-    // This flag is the only gate the manager does not re-assert: begin() calls
-    // setIndicatorBarVisible(BOTTOM, true) once, and the MAIN branch of
-    // processGestureScreenChange() re-shows it on every return to the launcher, so
-    // hiding the object from the shell loses on the next navigation. With the flag
-    // clear, setIndicatorBarVisible() and setIndicatorBarLength() return early and
-    // the bar keeps the LV_OBJ_FLAG_HIDDEN it was created with. Gesture detection is
-    // unaffected: the flag only gates the bar's visuals, not the touch handling.
-    // LEFT and RIGHT already ship as 0, so this path is already exercised.
-    stylesheet->manager.gesture.flags.enable_indicator_bars
-        [ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_BOTTOM] = 0;
     require_boot_step(phone->addStylesheet(stylesheet), "Failed to add phone stylesheet");
     require_boot_step(phone->activateStylesheet(stylesheet), "Failed to activate phone stylesheet");
     delete stylesheet;
@@ -273,6 +254,7 @@ extern "C" void app_main(void)
         reinterpret_cast<ESP_Brookesia_LvUnlockCallback_t>(bsp_display_unlock)
     );
     require_boot_step(phone->begin(), "Failed to start Brookesia phone");
+    crystal_boot_screen_update("Starting system services...", 70);
     require_boot_step(
         crystal_core_init(display, update_status_clock, update_status_connectivity,
                           update_status_battery, phone),
@@ -287,6 +269,7 @@ extern "C" void app_main(void)
         crystal_crash_mark_displayed();
     }
 
+    crystal_boot_screen_update("Restoring your workspace...", 85);
     require_boot_step(
         crystal_registry_install(phone, kApps, sizeof(kApps) / sizeof(kApps[0])),
         "Failed to install app registry"
@@ -309,6 +292,12 @@ extern "C" void app_main(void)
         (void)crystal_ui_post(UI_EVT_OTA_ROLLED_BACK);
     }
 
+    crystal_boot_screen_finish();
+#if CONFIG_IDF_TARGET_ESP32P4
+    // Shell objects live on the top layer too; present startup above them until
+    // its timer applies Ready and completes the fade. Never wait for Wi-Fi.
+    (void)crystal_boot_screen_show();
+#endif
     lv_refr_now(display);
     const int64_t elapsed_ms = (esp_timer_get_time() - s_boot_start_us) / 1000;
     ESP_LOGI(TAG, "first-frame baseline: %" PRId64 " ms", elapsed_ms);
@@ -317,9 +306,9 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "main task stack headroom: %u bytes",
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     bsp_display_unlock();
-    // In RGB direct mode every LVGL draw reaches the panel immediately. Keep
-    // the backlight off through all object creation and enable it only after
-    // the final refresh and LVGL unlock, so intermediate UI states stay hidden.
+    s_boot_display_locked = false;
+    // S3 stays dark through UI construction. P4 has already presented the boot
+    // overlay, which now fades away when the shell is ready.
     (void)bsp_display_brightness_set(hal().brightness->get());
     crystal_core_start_services();
 }

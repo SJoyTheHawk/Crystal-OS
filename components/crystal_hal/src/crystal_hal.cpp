@@ -10,6 +10,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <mutex>
+#include <atomic>
 
 #include "esp_app_desc.h"
 #include "esp_err.h"
@@ -417,6 +418,7 @@ public:
         has_connected_ = false;
         has_ip_ = false;
         pending_connect_ = false;
+        associated_.store(false);
         retries_ = 0;
         backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
@@ -443,6 +445,7 @@ public:
         backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         last_ssid_[0] = '\0';
+        associated_.store(false);
         (void)esp_wifi_disconnect();
         wifi_config_t empty = {};
         const esp_err_t config_err = esp_wifi_set_config(WIFI_IF_STA, &empty);
@@ -459,8 +462,10 @@ public:
 
     bool connected() const override
     {
-        wifi_ap_record_t record = {};
-        return started_ && esp_wifi_sta_get_ap_info(&record) == ESP_OK;
+        // A status getter runs on the LVGL task as well as service tasks.
+        // On P4, querying the driver here is a synchronous C6 round trip.
+        // Association events preserve the pre-DHCP meaning without that wait.
+        return associated_.load();
     }
 
     bool has_ip() const override { return has_ip_; }
@@ -471,6 +476,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (enabled == enabled_) return;
         enabled_ = enabled;
+        if (!enabled) associated_.store(false);
         write_enabled(enabled_);
         // The service task starts after the UI. Preserve an early toggle now;
         // start() will read the same persisted value before touching the radio.
@@ -652,6 +658,7 @@ private:
         if (self == nullptr) return;
         std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
         if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            self->associated_.store(true);
             self->has_ip_ = true;
             self->notify(GotIp);
         } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
@@ -665,7 +672,10 @@ private:
                     self->notify(ConnectFailed);
                 }
             }
+        } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+            self->associated_.store(true);
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            self->associated_.store(false);
             // The lease dies with the association, and LOST_IP is not always
             // delivered on a drop, so clear it here as well.
             self->has_ip_ = false;
@@ -746,9 +756,8 @@ private:
                     }
                     self->scan_results_[j] = current;
                 }
-                wifi_ap_record_t connected_ap = {};
-                if (esp_wifi_sta_get_ap_info(&connected_ap) == ESP_OK) {
-                    const char *connected_ssid = reinterpret_cast<const char *>(connected_ap.ssid);
+                if (self->connected()) {
+                    const char *connected_ssid = self->last_ssid_;
                     for (size_t i = 0; i < self->scan_count_; ++i) {
                         if (strcmp(self->scan_results_[i].ssid, connected_ssid) == 0 && i != 0) {
                             Network connected = self->scan_results_[i];
@@ -867,6 +876,7 @@ private:
     size_t cancelled_scan_events_ = 0;
     esp_netif_t *netif_ = nullptr;
     bool started_ = false;
+    std::atomic<bool> associated_{false};
     bool enabled_ = true;
     EventCallback callback_ = nullptr;
     void *callback_context_ = nullptr;

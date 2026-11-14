@@ -632,6 +632,20 @@ remain separate work.
 
 **Goal:** Add loading screen, smooth animations, new home pill design.
 
+**Implementation checkpoint — 2026-11-14:** Theme extraction, staged P4 boot UI,
+300ms Settings transitions, thinner Crystal-owned home pill, P4 motion timings,
+Wi-Fi scan/signal/password polish and redraw telemetry are implemented. IDF v6.1
+build, app-only flash hash verification, startup/network smoke checks and host
+lifecycle/interaction regressions pass. Physical visual acceptance and sustained
+animation qualification remain open. See
+[Phase P4.2 design and validation](ESP32_P4_PHASE2_VALIDATION.md).
+
+The following API snippets are illustrative, not the final implementation.
+Crystal retains Brookesia 0.4.2/LVGL 8.4 and its existing app lifecycle and shell
+pill; it does not enable a duplicate Brookesia navigation indicator. The tested
+P4 runs at 360MHz with PPA disabled and a 30ms LVGL redraw period. Automatic PPA
+acceleration and 60fps below are unverified proposals, not established results.
+
 **Duration:** 5-7 days  
 **Risk:** Low (all LVGL/Brookesia features)
 
@@ -2216,13 +2230,18 @@ If any fail, root cause before declaring port complete.
 - [x] Verify Crystal card/home interface appears: user confirms it is visible
 
 ### Phase P4.2: Visual Enhancements (Week 2)
-- [ ] Implement stylesheet system (`crystal_stylesheet.cpp`)
-- [ ] Apply dark theme to Brookesia
-- [ ] Implement boot screen (`crystal_boot_screen.cpp`)
-- [ ] Integrate boot screen into main.cpp
-- [ ] Add page transition animations
-- [ ] Cherry-pick WiFi scan UI from P4 example
+- [x] Implement stylesheet system (`crystal_stylesheet.cpp`)
+- [x] Apply dark theme to Brookesia, retaining accepted P4 sizing
+- [x] Implement staged boot screen (`crystal_boot_screen.cpp`)
+- [x] Integrate boot screen into main.cpp
+- [x] Add interruptible Settings page transitions and target-specific shell motion
+- [x] Adapt factory WiFi scan/password patterns to Crystal Settings/HAL
+- [ ] Complete physical visual and interaction acceptance
 - [ ] Test all animations at 60fps
+
+Implementation/build/flash and measured limitations are recorded in
+[the Phase P4.2 validation guide](ESP32_P4_PHASE2_VALIDATION.md). The 60fps item
+remains open; current telemetry measures redraw cost, not panel scanout FPS.
 
 ### Phase P4.3: Network Expansion (Week 2-3)
 - [ ] Implement ethernet driver (`crystal_ethernet.cpp`)

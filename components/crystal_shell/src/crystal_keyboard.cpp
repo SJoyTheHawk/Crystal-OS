@@ -7,11 +7,22 @@
 #include "lvgl.h"
 
 namespace {
-// Match Calculator's proven bottom inset. The reserved band remains 200 px so
-// the keyboard top does not move; the actual object stops above the gesture
-// edge and home indicator.
+// Both boards use a 4-inch square panel. Preserve the S3 keyboard's physical
+// geometry at P4's 720px resolution (1.5x the S3's 480px), including key gaps
+// and the bottom gesture inset, rather than shrinking its physical key height.
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kKeyboardBandHeight = 300;
+constexpr lv_coord_t kBottomSafe = 39;
+constexpr lv_coord_t kKeyPadding = 6;
+constexpr lv_coord_t kKeyColumnGap = 3;
+constexpr lv_coord_t kFieldMargin = 12;
+#else
 constexpr lv_coord_t kKeyboardBandHeight = 200;
 constexpr lv_coord_t kBottomSafe = 26;
+constexpr lv_coord_t kKeyPadding = 4;
+constexpr lv_coord_t kKeyColumnGap = 2;
+constexpr lv_coord_t kFieldMargin = 8;
+#endif
 constexpr lv_coord_t kKeyboardHeight = kKeyboardBandHeight - kBottomSafe;
 constexpr uint32_t kRevealAnimMs = 250;
 constexpr uint8_t kPressedKeyScalePercent = 6;
@@ -241,7 +252,7 @@ void center_covered_field()
     lv_obj_get_coords(s_keyboard, &keyboard_area);
     lv_area_t viewport_area{};
     lv_obj_get_coords(s_viewport, &viewport_area);
-    const lv_coord_t margin = 8;
+    const lv_coord_t margin = kFieldMargin;
     const lv_coord_t safe_top = viewport_area.y1 + margin;
     const lv_coord_t safe_bottom = keyboard_area.y1 - margin;
     lv_coord_t delta = 0;
@@ -351,10 +362,16 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
     lv_obj_set_style_bg_opa(s_keyboard, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_keyboard, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(s_keyboard, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_keyboard, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(s_keyboard, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(s_keyboard, 2, LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_keyboard, &lv_font_montserrat_16, LV_PART_ITEMS);
+    lv_obj_set_style_pad_all(s_keyboard, kKeyPadding, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_keyboard, kKeyPadding, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(s_keyboard, kKeyColumnGap, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_keyboard,
+#if CONFIG_IDF_TARGET_ESP32P4
+                               &lv_font_montserrat_24,
+#else
+                               &lv_font_montserrat_16,
+#endif
+                               LV_PART_ITEMS);
     lv_obj_add_event_cb(s_keyboard, style_key_cb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
     lv_obj_add_event_cb(s_keyboard, keyboard_close_event, LV_EVENT_READY, nullptr);
     lv_obj_add_event_cb(s_keyboard, keyboard_close_event, LV_EVENT_CANCEL, nullptr);

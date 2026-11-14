@@ -320,6 +320,17 @@ repeating or replacing the working board/network implementation.
 ### **Phase 2: Display & Bootloader** (Week 1-2)
 **Goal:** See Brookesia loading screen on P4 hardware.
 
+**Reconciled checkpoint — 2026-11-14:** Phase 1 already establishes display,
+touch, the card shell and working C6 Wi-Fi; Phase 1.5 layouts/typography have
+user acceptance. Continue with **Phase P4.2 Visual Enhancements** in the v2 plan,
+rather than replacing the existing board path or deferring working networking.
+The staged Crystal boot UI, reusable dark stylesheet, Settings transitions,
+thin home pill and Wi-Fi view polish now build and flash under IDF v6.1, and
+startup/SNTP/Weather/HTTPS plus host regressions pass. See
+[Phase P4.2 validation](ESP32_P4_PHASE2_VALIDATION.md). Physical acceptance and
+sustained animation profiling remain open; 60fps is not established with the
+current 30ms redraw period. No C6 firmware update is part of this work.
+
 1. Port `main.cpp` initialization:
    - Update BSP display config for DPI interface
    - Adapt Brookesia Phone initialization after dependency/API audit
@@ -328,7 +339,8 @@ repeating or replacing the working board/network implementation.
 4. Benchmark LVGL performance (should see ~60fps easily)
 5. **Checkpoint:** Brookesia home screen appears, touch works
 
-**Deliverable:** Interactive UI (no WiFi yet)
+**Deliverable:** Interactive Crystal UI with staged loading and coherent motion;
+preserve the already working Wi-Fi baseline and existing C6 firmware.
 
 ---
 

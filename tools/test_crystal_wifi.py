@@ -16,6 +16,7 @@ MOCK = r'''
 #include <cstring>
 #include <cstdio>
 #include <mutex>
+#include <atomic>
 #include <vector>
 using esp_err_t = int;
 using esp_event_base_t = int;
@@ -25,6 +26,7 @@ constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_INVALID_STATE=1, ESP_ERR_WIFI_STATE
 constexpr int ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED=3;
 constexpr int WIFI_EVENT=1, IP_EVENT=2, ESP_EVENT_ANY_ID=-1;
 constexpr int WIFI_EVENT_STA_START=1, WIFI_EVENT_STA_DISCONNECTED=2, WIFI_EVENT_SCAN_DONE=3;
+constexpr int WIFI_EVENT_STA_CONNECTED=4;
 constexpr int IP_EVENT_STA_GOT_IP=1, IP_EVENT_STA_LOST_IP=2;
 constexpr int WIFI_MODE_STA=1, WIFI_STORAGE_FLASH=1, WIFI_IF_STA=0;
 constexpr int WIFI_AUTH_OPEN=0, WIFI_AUTH_WPA_PSK=2, ESP_LOG_ERROR=1;
@@ -61,7 +63,7 @@ struct Timer { void (*callback)(void *)=nullptr; void *arg=nullptr; bool armed=f
 using esp_timer_handle_t = Timer *;
 static Timer timer;
 static bool associated, connecting, scanning;
-static int connect_calls, disconnect_calls, scan_calls, clear_calls, scan_error, count_error, records_error;
+static int connect_calls, disconnect_calls, scan_calls, clear_calls, scan_error, count_error, records_error, status_queries;
 static int init_error, mode_error, netif_created, netif_destroyed, deinit_calls;
 static wifi_config_t saved;
 static std::vector<wifi_ap_record_t> aps;
@@ -92,6 +94,7 @@ int esp_wifi_stop() { associated=connecting=scanning=false; return 0; }
 int esp_wifi_disconnect() { ++disconnect_calls; associated=connecting=false; return 0; }
 int esp_wifi_connect() { ++connect_calls; if (scanning) return ESP_ERR_WIFI_STATE; connecting=true; return 0; }
 int esp_wifi_sta_get_ap_info(wifi_ap_record_t *out) {
+    ++status_queries;
     if (!associated) return ESP_FAIL;
     std::memcpy(out->ssid,saved.sta.ssid,sizeof(out->ssid)); return 0;
 }
@@ -151,6 +154,16 @@ static void add_ap(const char *ssid, int8_t rssi) {
     wifi_ap_record_t ap; strlcpy(reinterpret_cast<char *>(ap.ssid),ssid,sizeof(ap.ssid)); ap.rssi=rssi; aps.push_back(ap);
 }
 int main() {
+    { // Association status stays local and is available before DHCP.
+        DeviceWifi w; boot(w); assert(!w.connected());
+        associated=true; connecting=false; emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED);
+        const int queries=status_queries;
+        for(int i=0;i<100;++i) assert(w.connected());
+        assert(status_queries==queries && !w.has_ip());
+        drop(); assert(!w.connected());
+        associated=true;emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED);
+        w.set_enabled(false);assert(!w.connected());
+    }
     for (bool fail_mode : {false, true}) {
         // Allocation/setup failures notify the UI and release the default
         // netif, so a later start does not duplicate its registered key.

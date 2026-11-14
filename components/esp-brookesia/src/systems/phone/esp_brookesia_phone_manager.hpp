@@ -23,6 +23,23 @@ public:
     bool checkInitialized(void) const   { return _flags.is_initialized; }
     ESP_Brookesia_Gesture *getGesture(void)    { return _gesture.get(); }
 
+    // Temporarily gate the app back gesture when an application-owned overlay
+    // is on top of the active app. The screen-change path restores this flag
+    // whenever Brookesia changes screens.
+    bool setGestureNavigationBackEnabled(bool enabled)
+    {
+        if (!_flags.is_initialized) {
+            return false;
+        }
+        _flags.enable_gesture_navigation_back = enabled;
+        return true;
+    }
+
+    bool isGestureNavigationBackEnabled(void) const
+    {
+        return _flags.enable_gesture_navigation_back;
+    }
+
     static bool calibrateData(const ESP_Brookesia_StyleSize_t screen_size, ESP_Brookesia_PhoneHome &home,
                               ESP_Brookesia_PhoneManagerData_t &data);
 

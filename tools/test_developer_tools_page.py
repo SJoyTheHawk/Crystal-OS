@@ -5,6 +5,7 @@ An optional --output-dir saves renders. Networking, task creation, and the
 Settings header are fixtures; physical pairing remains an on-device check.
 """
 import argparse
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -198,6 +199,10 @@ def main():
     parser.add_argument('--output-dir', type=Path)
     args = parser.parse_args()
     source = SOURCE.read_text()
+    # Phase 1.5 moved layout literals into target constants. Exercise the S3
+    # values used by this 480px fixture directly from production definitions.
+    target_block = source.split("constexpr lv_coord_t kHomePillWidth = 216;", 1)[1]
+    target_block = target_block.split("#else", 1)[1].split("#endif", 1)[0]
     functions = '\n'.join(function(source, signature) for signature in (
         'void settings_button_feedback(lv_obj_t *button)',
         'lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)',
@@ -209,10 +214,15 @@ def main():
         'void settings_push_developer_tools()',
         'void crystal_shell_control_start_event(const char pairing_pin[7])',
     ))
+    constants = "\n".join(
+        line for line in target_block.splitlines()
+        if (match := re.match(r"constexpr .*[* ](kSettings\w+)\s*=", line))
+        and re.search(r"\b" + match[1] + r"\b", functions)
+    )
     with tempfile.TemporaryDirectory(prefix='crystal-developer-tools-') as directory:
         temp = Path(directory)
         (temp / 'lv_conf.h').write_text(CONF)
-        (temp / 'check.cpp').write_text(FIXTURE + functions + CHECK)
+        (temp / 'check.cpp').write_text(FIXTURE + constants + functions + CHECK)
         (temp / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)
 project(developer_tools_test LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)

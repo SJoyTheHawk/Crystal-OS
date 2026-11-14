@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 
 #include "crystal_shell.hpp"
+#include "crystal_stylesheet.hpp"
+#include "crystal_page_transition.hpp"
+#include "crystal_boot_screen.hpp"
 #include "manage_apps_page.h"
 
 #include <cmath>
+#include <algorithm>
 #include <memory>
 #include <stdlib.h>
 #include <string.h>
@@ -368,6 +372,7 @@ void wifi_tile_text(char *out, size_t size);
 bool shell_consume_back();
 void close_settings_and_restore_app();
 void system_page_pop();
+void settings_button_feedback(lv_obj_t *button);
 
 namespace {
 constexpr int kTopBand = 20;
@@ -379,7 +384,7 @@ constexpr int kBottomBand = 24;
 // puts it inside kBottomBand, so it marks the band it belongs to.
 #if CONFIG_IDF_TARGET_ESP32P4
 constexpr lv_coord_t kHomePillWidth = 216;
-constexpr lv_coord_t kHomePillHeight = 8;
+constexpr lv_coord_t kHomePillHeight = 6;
 constexpr lv_coord_t kHomePillInset = 10;
 constexpr lv_coord_t kHomePillHitMargin = 12;
 constexpr lv_coord_t kQuickCell = 86;
@@ -428,7 +433,7 @@ constexpr lv_coord_t kWifiDialogWidth = 600;
 constexpr lv_coord_t kWifiDialogHeight = 248;
 constexpr lv_coord_t kWifiDialogGap = 24;
 constexpr lv_coord_t kWifiDialogInset = 24;
-constexpr lv_coord_t kWifiFieldWidth = 380;
+constexpr lv_coord_t kWifiFieldWidth = 432;
 constexpr lv_coord_t kWifiFieldHeight = 56;
 constexpr lv_coord_t kWifiFieldTop = 96;
 constexpr lv_coord_t kWifiRevealWidth = 108;
@@ -438,6 +443,7 @@ constexpr lv_coord_t kWifiActionInset = 90;
 constexpr lv_coord_t kWifiActionBottom = 16;
 constexpr lv_coord_t kWifiListHeight = 480;
 constexpr lv_coord_t kWifiNetworkRowHeight = 68;
+constexpr lv_coord_t kWifiNetworkRowInset = 24;
 constexpr const lv_font_t *kSettingsTitleFont = &lv_font_montserrat_28;
 constexpr const lv_font_t *kSettingsSummaryFont = &lv_font_montserrat_20;
 constexpr const lv_font_t *kSettingsStatusFont = &lv_font_montserrat_20;
@@ -505,6 +511,7 @@ constexpr lv_coord_t kWifiActionInset = 78;
 constexpr lv_coord_t kWifiActionBottom = 14;
 constexpr lv_coord_t kWifiListHeight = 320;
 constexpr lv_coord_t kWifiNetworkRowHeight = 48;
+constexpr lv_coord_t kWifiNetworkRowInset = 10;
 constexpr const lv_font_t *kSettingsTitleFont = &lv_font_montserrat_20;
 constexpr const lv_font_t *kSettingsSummaryFont = &lv_font_montserrat_16;
 constexpr const lv_font_t *kSettingsStatusFont = &lv_font_montserrat_16;
@@ -522,7 +529,11 @@ constexpr lv_coord_t quick_icon_px(lv_coord_t pixels)
 
 constexpr lv_coord_t kHomePillHitWidth = kHomePillWidth + 2 * kHomePillHitMargin;
 constexpr lv_coord_t kHomePillMaxLift = 8;
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr uint32_t kHomePillSettleMs = 180;
+#else
 constexpr uint32_t kHomePillSettleMs = 120;
+#endif
 constexpr lv_opa_t kHomePillTouchGlowOpa = LV_OPA_20;
 constexpr lv_opa_t kHomePillMaxGlowOpa = LV_OPA_50;
 constexpr lv_coord_t kHomePillTouchGlowWidth = 6;
@@ -539,10 +550,16 @@ constexpr uint32_t kSnapshotCropPercent = 90;
 constexpr uint32_t kSnapshotScaleDivisor = 2;
 constexpr uint32_t kIdentityRevealPercent = 10;
 constexpr uint32_t kCrossoverCommitPercent = 50;
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr uint32_t kTransitionMs = 300;
+constexpr uint32_t kCrossoverSettleMs = 300;
+constexpr uint32_t kQuickAnimMs = 350;
+#else
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
-constexpr lv_coord_t kQuickPanelSize = 4 * kQuickCell + 3 * kQuickGap + 2 * kQuickPad;
 constexpr uint32_t kQuickAnimMs = 200;
+#endif
+constexpr lv_coord_t kQuickPanelSize = 4 * kQuickCell + 3 * kQuickGap + 2 * kQuickPad;
 constexpr size_t kSystemPageDepthMax = 4;
 // An lv_anim ready callback runs inside lv_timer_handler, before the display is
 // refreshed, so the animation's final frame is still unpainted at that moment.
@@ -585,8 +602,16 @@ lv_obj_t *s_manage_apps_restart_dialog = nullptr;
 lv_obj_t *s_wifi_page = nullptr;
 lv_obj_t *s_wifi_page_list = nullptr;
 lv_obj_t *s_wifi_page_status = nullptr;
+lv_obj_t *s_wifi_scan_spinner = nullptr;
+lv_obj_t *s_wifi_refresh = nullptr;
+lv_timer_t *s_wifi_scan_timeout = nullptr;
+bool s_wifi_scanning = false;
+IWifi::Network s_wifi_rows[20] = {};
+size_t s_wifi_row_count = 0;
 lv_obj_t *s_system_page_stack[kSystemPageDepthMax] = {};
 size_t s_system_page_depth = 0;
+bool s_settings_back_gesture_saved = false;
+bool s_settings_back_gesture_was_enabled = false;
 lv_obj_t *s_ip_fields[5] = {};
 lv_obj_t *s_ip_apply_status = nullptr;
 lv_obj_t *s_root_network_row = nullptr;
@@ -1791,7 +1816,7 @@ void on_app_event(lv_event_t *event)
 void on_gesture_press(lv_event_t *event)
 {
     s_gesture_owner = CrystalGestureOwner::None;
-    s_swallow_wake_touch = crystal_core_consume_wake_touch();
+    s_swallow_wake_touch = crystal_core_consume_wake_touch() || crystal_boot_screen_active();
     if (s_swallow_wake_touch && s_gesture != nullptr) {
         (void)s_gesture->setMaskObjectVisible(true);
     }
@@ -2084,16 +2109,27 @@ static void wifi_open_credentials(const char *ssid)
     lv_label_set_text(network, network_text);
     lv_obj_set_style_text_color(network, lv_color_hex(0xcbd5e1), 0);
     lv_obj_set_style_text_font(network, kWifiBodyFont, 0);
+    lv_obj_set_width(network, kWifiDialogWidth - 2 * kWifiDialogInset);
+    lv_label_set_long_mode(network, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(network, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(network, LV_ALIGN_TOP_MID, 0,
                  kWifiDialogInset + static_cast<lv_coord_t>(kWifiTitleFont->line_height) + 8);
 
-    // Field and Show share one row, both 44 tall so their centres line up.
+    // Keep the field and visibility control on one compact, aligned row.
     lv_obj_t *input = lv_textarea_create(s_wifi_dialog);
     lv_obj_set_size(input, kWifiFieldWidth, kWifiFieldHeight);
     lv_obj_align(input, LV_ALIGN_TOP_LEFT, kWifiDialogInset, kWifiFieldTop);
     lv_obj_set_style_text_font(input, kWifiBodyFont, 0);
+    lv_obj_set_style_bg_color(input, lv_color_hex(0x1b2028), 0);
+    lv_obj_set_style_bg_opa(input, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(input, lv_color_hex(0xf2f4f7), 0);
+    lv_obj_set_style_border_color(input, lv_color_hex(0x59636e), 0);
+    lv_obj_set_style_border_color(input, lv_color_hex(0x3b82f6), LV_STATE_FOCUSED);
+    lv_obj_set_style_text_color(input, lv_color_hex(0x94a3b8), LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_bg_color(input, lv_color_hex(0xf2f4f7), LV_PART_CURSOR);
     lv_textarea_set_password_mode(input, true);
     lv_textarea_set_one_line(input, true);
+    lv_textarea_set_max_length(input, 64);
     lv_textarea_set_placeholder_text(input, "Password");
     // Without this the field is dead after the first dismissal.
     lv_obj_add_event_cb(input, [](lv_event_t *event) {
@@ -2102,6 +2138,9 @@ static void wifi_open_credentials(const char *ssid)
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *reveal = lv_btn_create(s_wifi_dialog);
+    settings_button_feedback(reveal);
+    lv_obj_set_style_bg_color(reveal, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_bg_color(reveal, lv_color_hex(0x3b82f6), LV_STATE_PRESSED);
     lv_obj_set_size(reveal, kWifiRevealWidth, kWifiFieldHeight);
     lv_obj_align(reveal, LV_ALIGN_TOP_RIGHT, -kWifiDialogInset, kWifiFieldTop);
     lv_obj_t *reveal_label = lv_label_create(reveal);
@@ -2113,6 +2152,10 @@ static void wifi_open_credentials(const char *ssid)
         if (password == nullptr) return;
         const bool masked = lv_textarea_get_password_mode(password);
         lv_textarea_set_password_mode(password, !masked);
+        // This is part of password entry, not an outside tap. Cancel the
+        // keyboard's deferred dismissal without moving or rebinding the form.
+        if (crystal_keyboard_is_open() && s_wifi_dialog != nullptr)
+            (void)crystal_keyboard_show(password, s_wifi_dialog);
         lv_obj_t *button = static_cast<lv_obj_t *>(lv_event_get_target(event));
         lv_obj_t *label = lv_obj_get_child(button, 0);
         if (label != nullptr) lv_label_set_text(label, masked ? "Hide" : "Show");
@@ -2121,6 +2164,9 @@ static void wifi_open_credentials(const char *ssid)
     // Keep the same 54 px gap as the 350 px forget-network box. This dialog is
     // 100 px wider, so add half of that difference to each edge offset.
     lv_obj_t *connect = lv_btn_create(s_wifi_dialog);
+    settings_button_feedback(connect);
+    lv_obj_set_style_bg_color(connect, lv_color_hex(0x3b82f6), 0);
+    lv_obj_set_style_bg_color(connect, lv_color_hex(0x2563eb), LV_STATE_PRESSED);
     lv_obj_set_size(connect, kWifiActionWidth, kWifiActionHeight);
     lv_obj_align(connect, LV_ALIGN_BOTTOM_LEFT, kWifiActionInset, -kWifiActionBottom);
     lv_obj_t *label = lv_label_create(connect);
@@ -2137,6 +2183,9 @@ static void wifi_open_credentials(const char *ssid)
     }, LV_EVENT_CLICKED, input);
 
     lv_obj_t *cancel = lv_btn_create(s_wifi_dialog);
+    settings_button_feedback(cancel);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x475569), LV_STATE_PRESSED);
     lv_obj_set_size(cancel, kWifiActionWidth, kWifiActionHeight);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -kWifiActionInset, -kWifiActionBottom);
     lv_obj_t *cancel_label = lv_label_create(cancel);
@@ -2223,20 +2272,28 @@ void settings_button_feedback(lv_obj_t *button)
 lv_obj_t *system_page_push(const char *title)
 {
     if (s_system_page_depth >= kSystemPageDepthMax) return nullptr;
+    crystal_page_transition_settle();
     crystal_shell_front_layer_changed();
-    if (s_system_page_depth != 0) {
-        lv_obj_add_flag(s_system_page_stack[s_system_page_depth - 1], LV_OBJ_FLAG_HIDDEN);
-    }
+    lv_obj_t *covered_page = s_system_page_depth != 0
+        ? s_system_page_stack[s_system_page_depth - 1] : nullptr;
     const lv_area_t area = active_app_area();
     lv_obj_t *page = lv_obj_create(lv_layer_top());
     if (page == nullptr) return nullptr;
     lv_obj_set_size(page, lv_area_get_width(&area), lv_area_get_height(&area));
     lv_obj_set_pos(page, area.x1, area.y1);
-    lv_obj_set_style_bg_color(page, lv_color_hex(0x11151b), 0);
+    lv_obj_set_style_bg_color(page, lv_color_hex(crystal_visual_style().background), 0);
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+    if (s_system_page_depth == 0 && s_phone != nullptr) {
+        auto &manager = s_phone->getManager();
+        s_settings_back_gesture_was_enabled = manager.isGestureNavigationBackEnabled();
+        s_settings_back_gesture_saved = manager.setGestureNavigationBackEnabled(false);
+        ESP_LOGD(TAG, "Settings overlay: app back gesture %s (was %s)",
+                 s_settings_back_gesture_saved ? "disabled" : "unchanged",
+                 s_settings_back_gesture_was_enabled ? "enabled" : "disabled");
+    }
     // Add event filter to block all input events when home gesture is active.
     // We need to catch PRESSING (early drag) not just PRESSED (tap complete).
     lv_obj_add_event_cb(page, [](lv_event_t *e) {
@@ -2304,6 +2361,9 @@ lv_obj_t *system_page_push(const char *title)
         lv_obj_move_foreground(s_home_pill);
         ESP_LOGD(TAG, "Moved pill to foreground after creating Settings page");
     }
+    // The child fades over its actual parent. Hide the parent only after the
+    // child is opaque, otherwise the root app backdrop shows through instead.
+    crystal_page_transition_enter(page, covered_page);
     return content;
 }
 
@@ -2326,6 +2386,14 @@ void clear_page_cache(lv_obj_t *page)
         s_connection_details_content = nullptr;
     }
     if (page == s_wifi_page) {
+        if (s_wifi_scan_timeout != nullptr) {
+            lv_timer_del(s_wifi_scan_timeout);
+            s_wifi_scan_timeout = nullptr;
+        }
+        s_wifi_scanning = false;
+        s_wifi_row_count = 0;
+        s_wifi_scan_spinner = nullptr;
+        s_wifi_refresh = nullptr;
         s_wifi_page = nullptr;
         s_wifi_page_list = nullptr;
         s_wifi_page_status = nullptr;
@@ -2367,14 +2435,21 @@ void clear_page_cache(lv_obj_t *page)
 void system_page_pop()
 {
     if (s_system_page_depth == 0) return;
+    crystal_page_transition_settle();
     crystal_shell_front_layer_changed();
     lv_obj_t *page = s_system_page_stack[--s_system_page_depth];
     s_system_page_stack[s_system_page_depth] = nullptr;
     crystal_keyboard_set_state_cb(nullptr, nullptr);
     clear_page_cache(page);
-    lv_obj_del(page);
+    crystal_page_transition_retire(page);
     if (s_system_page_depth != 0) {
         lv_obj_clear_flag(s_system_page_stack[s_system_page_depth - 1], LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_system_page_depth == 0 && s_settings_back_gesture_saved && s_phone != nullptr) {
+        (void)s_phone->getManager().setGestureNavigationBackEnabled(s_settings_back_gesture_was_enabled);
+        ESP_LOGD(TAG, "Settings overlay closed: app back gesture %s",
+                 s_settings_back_gesture_was_enabled ? "restored" : "kept disabled");
+        s_settings_back_gesture_saved = false;
     }
     update_home_pill();
 }
@@ -3507,19 +3582,39 @@ void crystal_shell_control_action_event(const CrystalControlAction *action)
 void settings_open()
 {
     if (s_system_page_depth != 0) return;
+    lv_obj_t *backdrop = nullptr;
+    crystal_page_transition_settle();
     // Save what app was active before opening Settings
     if (s_phone != nullptr && s_phone->getManager().getActiveApp() != nullptr) {
         s_last_app_before_settings = static_cast<int>(s_current_index);
-        ESP_LOGI(TAG, "Opening Settings from app index %d, closing app", s_last_app_before_settings);
-        // Close the app (send it to background) so Settings has a clean state
+#if CONFIG_IDF_TARGET_ESP32P4
+        // Capture before HOME: Settings fades over the app the user was using,
+        // while Brookesia can pause it behind the overlay as before.
+        backdrop = crystal_page_transition_capture_backdrop(active_app_area());
+        if (backdrop == nullptr) {
+            ESP_LOGW(TAG, "Cannot create Settings backdrop; keeping the app visible");
+            s_last_app_before_settings = -1;
+            return;
+        }
+#endif
+        ESP_LOGI(TAG, "Opening Settings from app index %d, pausing app", s_last_app_before_settings);
+        // Pause the app without exposing Brookesia's launcher during the fade.
         (void)s_phone->sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
     } else {
         s_last_app_before_settings = -1;  // Opened from launcher
         ESP_LOGI(TAG, "Opening Settings from launcher");
     }
     lv_obj_t *content = system_page_push("Settings");
-    if (content == nullptr) return;
+    if (content == nullptr) {
+        if (s_last_app_before_settings >= 0) {
+            (void)start_card(static_cast<size_t>(s_last_app_before_settings), false);
+        }
+        if (backdrop != nullptr) lv_obj_del(backdrop);
+        s_last_app_before_settings = -1;
+        return;
+    }
     s_root_settings_page = lv_obj_get_parent(content);
+    crystal_page_transition_bind_backdrop(s_root_settings_page, backdrop);
     IWifi *wifi = hal().wifi;
     const char *network_summary = wifi == nullptr || !wifi->enabled() ? "WiFi Off" :
                                   wifi->connected() ? wifi->last_ssid() : "WiFi On - Not connected";
@@ -3615,57 +3710,199 @@ bool shell_consume_back()
     return false;
 }
 
+static void wifi_scan_busy(bool busy)
+{
+    s_wifi_scanning = busy;
+    if (s_wifi_scan_spinner != nullptr) {
+        if (busy) lv_obj_clear_flag(s_wifi_scan_spinner, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_wifi_scan_spinner, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_wifi_refresh != nullptr) {
+        if (busy) lv_obj_add_state(s_wifi_refresh, LV_STATE_DISABLED);
+        else lv_obj_clear_state(s_wifi_refresh, LV_STATE_DISABLED);
+    }
+    if (!busy && s_wifi_scan_timeout != nullptr) {
+        lv_timer_del(s_wifi_scan_timeout);
+        s_wifi_scan_timeout = nullptr;
+    }
+}
+
+static void wifi_scan_worker(void *)
+{
+    // Hosted Wi-Fi RPCs can wait for the C6 transport. Keep that wait off the
+    // LVGL task; the HAL posts ScanDone through Crystal core as before.
+    if (hal().wifi != nullptr) hal().wifi->scan();
+    vTaskDeleteWithCaps(nullptr);
+}
+
+static void wifi_scan_start()
+{
+    if (s_wifi_page == nullptr || s_wifi_scanning || hal().wifi == nullptr) return;
+    if (!hal().wifi->enabled()) {
+        lv_label_set_text(s_wifi_page_status, "WiFi is off. Enable it in Network settings.");
+        return;
+    }
+    wifi_scan_busy(true);
+    ESP_LOGI(TAG, "WiFi scan requested");
+    lv_label_set_text(s_wifi_page_status, "Finding nearby networks...");
+    s_wifi_scan_timeout = lv_timer_create([](lv_timer_t *) {
+        wifi_scan_busy(false);
+        if (s_wifi_page_status != nullptr) {
+            lv_label_set_text(s_wifi_page_status, "Scan timed out. Tap refresh to try again.");
+        }
+    }, 15000, nullptr);
+    if (s_wifi_scan_timeout == nullptr) {
+        wifi_scan_busy(false);
+        lv_label_set_text(s_wifi_page_status, "Cannot start scan. Please try again.");
+        return;
+    }
+    if (xTaskCreateWithCaps(wifi_scan_worker, "wifi_scan_ui", 4096, nullptr, 2, nullptr,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        wifi_scan_busy(false);
+        lv_label_set_text(s_wifi_page_status, "Cannot start scan. Please try again.");
+    }
+}
+
 void wifi_page_open()
 {
     if (s_wifi_page != nullptr) return;
     lv_obj_t *content = system_page_push("WiFi Networks");
     if (content == nullptr) return;
+    const auto &style = crystal_visual_style();
     s_wifi_page = s_system_page_stack[s_system_page_depth - 1];
-    s_wifi_page_status = lv_label_create(content); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_set_style_text_font(s_wifi_page_status, kSettingsStatusFont, 0); lv_obj_set_width(s_wifi_page_status, LV_PCT(100));
-    s_wifi_page_list = lv_list_create(content); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), kWifiListHeight); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
-    lv_obj_t *scanning = lv_list_add_text(s_wifi_page_list, "Scanning...");
-    if (scanning != nullptr) lv_obj_set_style_text_color(scanning, lv_color_white(), 0);
-    if (hal().wifi != nullptr) hal().wifi->scan();
+    auto *toolbar = lv_obj_create(content);
+    lv_obj_remove_style_all(toolbar);
+    lv_obj_set_size(toolbar, LV_PCT(100), kWifiFieldHeight);
+    lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_SCROLLABLE);
+    s_wifi_page_status = lv_label_create(toolbar);
+    lv_label_set_text(s_wifi_page_status, "Nearby networks");
+    lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(style.secondary), 0);
+    lv_obj_set_style_text_font(s_wifi_page_status, kSettingsStatusFont, 0);
+    lv_obj_set_width(s_wifi_page_status, lv_disp_get_hor_res(nullptr) -
+                     2 * kSettingsContentInset - kWifiFieldHeight - 60);
+    lv_label_set_long_mode(s_wifi_page_status, LV_LABEL_LONG_WRAP);
+    lv_obj_align(s_wifi_page_status, LV_ALIGN_LEFT_MID, 0, 0);
+    s_wifi_scan_spinner = lv_spinner_create(toolbar, 1000, 60);
+    lv_obj_set_size(s_wifi_scan_spinner, 28, 28);
+    lv_obj_align(s_wifi_scan_spinner, LV_ALIGN_RIGHT_MID, -kWifiFieldHeight - 12, 0);
+    lv_obj_set_style_arc_width(s_wifi_scan_spinner, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_wifi_scan_spinner, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_wifi_scan_spinner, lv_color_hex(style.accent), LV_PART_INDICATOR);
+    s_wifi_refresh = lv_btn_create(toolbar);
+    settings_button_feedback(s_wifi_refresh);
+    lv_obj_set_size(s_wifi_refresh, kWifiFieldHeight, kWifiFieldHeight);
+    lv_obj_align(s_wifi_refresh, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(s_wifi_refresh, lv_color_hex(style.elevated), 0);
+    auto *refresh_icon = lv_label_create(s_wifi_refresh);
+    lv_label_set_text(refresh_icon, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_text_font(refresh_icon, kWifiTitleFont, 0);
+    lv_obj_center(refresh_icon);
+    lv_obj_add_event_cb(s_wifi_refresh, [](lv_event_t *) { wifi_scan_start(); }, LV_EVENT_CLICKED, nullptr);
+    s_wifi_page_list = lv_list_create(content);
+    // Fill the space below the toolbar. A fixed legacy list height leaves a
+    // keyboard-sized empty band on the taller P4 after the keyboard closes.
+    lv_obj_set_size(s_wifi_page_list, LV_PCT(100), 0);
+    lv_obj_set_flex_grow(s_wifi_page_list, 1);
+    lv_obj_set_style_pad_all(s_wifi_page_list, 0, 0);
+    lv_obj_set_style_pad_row(s_wifi_page_list, 6, 0);
+    lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(style.surface), 0);
+    lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_wifi_page_list, 0, 0);
+    lv_obj_clear_flag(s_wifi_page_list, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    wifi_scan_busy(false);
+    wifi_scan_start();
 }
 
 static void wifi_page_fill_list()
 {
-    if (s_wifi_page == nullptr || s_wifi_page_list == nullptr || hal().wifi == nullptr) return;
+    if (s_wifi_page == nullptr || s_wifi_page_list == nullptr || hal().wifi == nullptr || s_wifi_scanning) return;
+    const uint32_t render_started = lv_tick_get();
+    const auto &style = crystal_visual_style();
     lv_obj_clean(s_wifi_page_list);
     IWifi::Network networks[20] = {};
-    const size_t count = hal().wifi->scan_results(networks, 20);
-    if (count == 0) { if (s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "No networks found"); lv_obj_t *empty = lv_list_add_text(s_wifi_page_list, "No networks found"); if (empty != nullptr) lv_obj_set_style_text_color(empty, lv_color_white(), 0); return; }
-    if (s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Select a network");
-    for (size_t i = 0; i < count && i < 20; ++i) {
+    const size_t count = std::min<size_t>(hal().wifi->scan_results(networks, 20), 20);
+    // connected() is a hosted C6 RPC on P4. Sorting must use one snapshot,
+    // rather than making a round trip for every comparison and every row.
+    char connected_ssid[33] = {};
+    if (hal().wifi->connected()) strlcpy(connected_ssid, hal().wifi->last_ssid(), sizeof(connected_ssid));
+    s_wifi_row_count = 0;
+    // Snapshot and deduplicate by SSID. Row callbacks use this stable snapshot,
+    // not an index into HAL results that can change after another scan.
+    for (size_t i = 0; i < count; ++i) {
         if (networks[i].ssid[0] == 0) continue;
-        IWifi *wifi = hal().wifi;
-        const bool connected = wifi != nullptr && wifi->connected() &&
-                               strcmp(networks[i].ssid, wifi->last_ssid()) == 0;
-        const bool attempting = strcmp(networks[i].ssid, s_wifi_connecting) == 0;
-        char text[64]; snprintf(text, sizeof(text), "%s%.32s  %d%.3s", connected ? LV_SYMBOL_OK " " : "", networks[i].ssid, networks[i].rssi, networks[i].secured ? "  *" : "");
-        lv_obj_t *button = lv_list_add_btn(s_wifi_page_list, networks[i].secured ? LV_SYMBOL_WIFI : LV_SYMBOL_WIFI, text);
-        if (button != nullptr) {
-            lv_obj_set_height(button, kWifiNetworkRowHeight);
-            lv_obj_set_style_text_font(button, kWifiBodyFont, 0);
-            lv_obj_set_style_text_color(button, lv_color_white(), 0);
-            lv_obj_set_style_bg_color(button, lv_color_hex(0x252a30), 0);
-            lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-            // The old grey highlight sat a few shades off the row colour and read as
-            // flat. Blue matches the accent used by the quick-settings toggles.
-            lv_obj_set_style_bg_color(button, lv_color_hex(0x3b82f6), LV_STATE_PRESSED);
-            lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
-            if (connected || attempting) {
-                lv_obj_set_style_bg_color(button, lv_color_hex(0x3b82f6), 0);
-                lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-            }
-            for (uint32_t child_index = 0; ; ++child_index) {
-                lv_obj_t *child = lv_obj_get_child(button, static_cast<int32_t>(child_index));
-                if (child == nullptr) break;
-                lv_obj_set_style_text_color(child, lv_color_white(), 0);
-            }
-            lv_obj_add_event_cb(button, [](lv_event_t *e) { size_t index = reinterpret_cast<size_t>(lv_event_get_user_data(e)); IWifi::Network rows[20] = {}; if (hal().wifi != nullptr && hal().wifi->scan_results(rows, 20) > index) { if (hal().wifi->connected() && strcmp(rows[index].ssid, hal().wifi->last_ssid()) == 0) wifi_open_forget_confirm(rows[index].ssid); else wifi_open_credentials(rows[index].ssid); } }, LV_EVENT_CLICKED, reinterpret_cast<void *>(i));
-        }
+        size_t row = 0;
+        while (row < s_wifi_row_count && strcmp(s_wifi_rows[row].ssid, networks[i].ssid) != 0) ++row;
+        if (row == s_wifi_row_count) s_wifi_rows[s_wifi_row_count++] = networks[i];
+        else if (networks[i].rssi > s_wifi_rows[row].rssi) s_wifi_rows[row] = networks[i];
     }
+    std::sort(s_wifi_rows, s_wifi_rows + s_wifi_row_count, [&connected_ssid](const IWifi::Network &a, const IWifi::Network &b) {
+        const bool ac = strcmp(a.ssid, connected_ssid) == 0;
+        const bool bc = strcmp(b.ssid, connected_ssid) == 0;
+        if (ac != bc) return ac;
+        return a.rssi > b.rssi;
+    });
+    if (s_wifi_page_status != nullptr) {
+        if (!hal().wifi->enabled()) lv_label_set_text(s_wifi_page_status, "WiFi is off");
+        else if (s_wifi_connecting[0] != 0) lv_label_set_text_fmt(s_wifi_page_status, "Connecting to %.32s...", s_wifi_connecting);
+        else lv_label_set_text(s_wifi_page_status, s_wifi_row_count == 0 ? "No networks found. Tap refresh to try again." : "Choose a network");
+    }
+    for (size_t i = 0; i < s_wifi_row_count; ++i) {
+        const auto &network = s_wifi_rows[i];
+        const bool connected = strcmp(network.ssid, connected_ssid) == 0;
+        const bool attempting = strcmp(network.ssid, s_wifi_connecting) == 0;
+        auto *button = lv_btn_create(s_wifi_page_list);
+        settings_button_feedback(button);
+        lv_obj_set_size(button, LV_PCT(100), kWifiNetworkRowHeight);
+        lv_obj_set_style_pad_all(button, 10, 0);
+        // Keep the row full width; inset its signal, name and status instead.
+        lv_obj_set_style_pad_hor(button, kWifiNetworkRowInset, 0);
+        lv_obj_set_style_radius(button, 10, 0);
+        lv_obj_set_style_shadow_width(button, 0, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(connected || attempting ? 0x173254 : style.elevated), 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(style.accent), LV_STATE_PRESSED);
+        auto *bars = lv_obj_create(button);
+        lv_obj_remove_style_all(bars);
+        lv_obj_set_size(bars, 30, 28);
+        lv_obj_align(bars, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_clear_flag(bars, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        const int strength = network.rssi >= -55 ? 3 : network.rssi >= -70 ? 2 : 1;
+        for (int bar = 0; bar < 3; ++bar) {
+            auto *segment = lv_obj_create(bars);
+            lv_obj_remove_style_all(segment);
+            lv_obj_set_size(segment, 6, 8 + bar * 8);
+            lv_obj_set_pos(segment, bar * 10, 20 - bar * 8);
+            lv_obj_set_style_radius(segment, 2, 0);
+            lv_obj_set_style_bg_opa(segment, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(segment, lv_color_hex(bar < strength ? style.text : 0x475569), 0);
+            lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        }
+        auto *name = lv_label_create(button);
+        lv_obj_set_style_text_font(name, kWifiBodyFont, 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(style.text), 0);
+        lv_obj_set_width(name, LV_PCT(44));
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+        lv_label_set_text(name, network.ssid);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 44, 0);
+        auto *detail = lv_label_create(button);
+        lv_obj_set_style_text_font(detail, kWifiBodyFont, 0);
+        lv_obj_set_style_text_color(detail, lv_color_hex(connected ? style.success : style.secondary), 0);
+        lv_label_set_text_fmt(detail, "%s%s%s", connected ? LV_SYMBOL_OK " " : "", attempting ? "Joining" : network.secured ? "Secured" : "Open", !attempting ? LV_SYMBOL_RIGHT : "");
+        lv_obj_align(detail, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_add_event_cb(button, [](lv_event_t *event) {
+            const auto index = reinterpret_cast<size_t>(lv_event_get_user_data(event));
+            if (index >= s_wifi_row_count || hal().wifi == nullptr) return;
+            const auto network = s_wifi_rows[index];
+            if (hal().wifi->connected() && strcmp(network.ssid, hal().wifi->last_ssid()) == 0) wifi_open_forget_confirm(network.ssid);
+            else if (network.secured) wifi_open_credentials(network.ssid);
+            else hal().wifi->connect(network.ssid, "");
+        }, LV_EVENT_CLICKED, reinterpret_cast<void *>(i));
+    }
+    // Commit the replacement list as a single page redraw, including the old
+    // scroll position and spinner area. Do not flush intermediate empty rows.
+    lv_obj_update_layout(s_wifi_page);
+    lv_obj_invalidate(s_wifi_page);
+    ESP_LOGI(TAG, "WiFi list ready: %u networks, %u ms UI work",
+             static_cast<unsigned>(s_wifi_row_count), static_cast<unsigned>(lv_tick_elaps(render_started)));
 }
 
 void crystal_shell_wifi_event(uint8_t event)
@@ -3723,6 +3960,7 @@ void crystal_shell_wifi_event(uint8_t event)
         wifi_page_fill_list();
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
     } else if (event == UI_EVT_WIFI_SCAN_DONE) {
+        wifi_scan_busy(false);
         wifi_page_fill_list();
     }
 }

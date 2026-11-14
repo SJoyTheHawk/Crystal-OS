@@ -36,6 +36,7 @@ CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
 # Crystal UI and Brookesia stay on LVGL 8.4 during this port.
 CONFIG_ESP_BROOKESIA_MEMORY_USE_CUSTOM=y
 CONFIG_LV_COLOR_DEPTH=16
+CONFIG_LV_FONT_MONTSERRAT_24=y
 
 # Keep Crystal's established TLS memory policy until P4 runtime tests justify
 # changing it. Factory hardware-AES success is not Crystal OS validation.
