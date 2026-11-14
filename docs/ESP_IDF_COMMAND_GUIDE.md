@@ -1,5 +1,9 @@
 # ESP-IDF command guide
 
+This guide covers the preserved S3 target. For P4, use the
+[isolated Phase 1 build and validation guide](ESP32_P4_PHASE1_VALIDATION.md).
+Do not use the S3 partition/provisioning commands for P4.
+
 Commands in this guide assume the shell is in the Crystal OS repository root:
 
 ```bash
@@ -344,7 +348,7 @@ not USB-flash it before this test.
    is the **System is up to date** toast.
 
 For OTA watchdog diagnostics, see the
-[Phase 12 quick reference](PHASE_12_QUICK_REFERENCE.md#issue-task_wdt-reports-idle0-while-checking-for-updates).
+[Phase 12 quick reference](archive/PHASE_12_QUICK_REFERENCE.md#issue-task_wdt-reports-idle0-while-checking-for-updates).
 
 ## Quick reference
 

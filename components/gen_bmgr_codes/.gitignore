@@ -1,0 +1,8 @@
+*
+!.gitignore
+!CMakeLists.txt
+!Kconfig.projbuild
+!idf_component.yml
+!board_manager.defaults
+!gen_board_*.c
+!gen_board_metadata.yaml

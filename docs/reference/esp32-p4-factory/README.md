@@ -3,6 +3,13 @@
 Reconciled on 2026-11-14 (Asia/Hong_Kong). This documentation update does not
 implement the Crystal OS port or repeat hardware tests.
 
+This page describes the earlier factory handoff. Subsequent Crystal port work
+and hardware tests are recorded separately in the
+[Crystal Phase 1 validation](../../ESP32_P4_PHASE1_VALIDATION.md). Statements
+below about unmodified implementation inputs and unexecuted next steps refer
+to the handoff checkpoint, not the current migration status. The two copied
+source records remain unchanged.
+
 ## Evidence and provenance
 
 - [Session handoff](CRYSTAL_OS_P4_SESSION_HANDOFF.md)

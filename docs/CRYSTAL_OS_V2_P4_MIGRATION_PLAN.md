@@ -3,8 +3,8 @@
 **Original plan date:** 2025-01-13; reconciled 2026-11-14 (Asia/Hong_Kong)  
 **Strategy:** Keep Crystal OS architecture, port to P4, cherry-pick visual/UX enhancements  
 **Target Hardware:** ESP32-P4-WIFI6-Touch-LCD-4B  
-**Target IDF:** v6.1 (factory validated; Crystal OS port pending)  
-**Target Brookesia:** pending dependency/API audit; Crystal currently pins 0.4.2
+**Target IDF:** v6.1 (Crystal builds, flashes and boots on P4 rev1.3)
+**Target Brookesia:** existing Crystal 0.4.2 / LVGL 8.4.0; retained for Phase P4.1
 
 ## Baseline reconciliation — 2026-11-14
 
@@ -29,19 +29,36 @@ This section supersedes conflicting assumptions in the original plan below.
   and artifacts are `build/idf6-rev1_x/`. Do not substitute this repo's vendor copy,
   import generated build trees, or claim an established upstream commit.
 
-**Remaining plan content is a proposal, not validated Crystal OS code.** Audit
-Board Manager/local BSP/bsp_extra initialization, Brookesia/LVGL versions and
-hosted Wi-Fi APIs before using the snippets below. In particular, do not assume
-`esp_wifi_remote_init()` alone supplies the integration or display APIs are unchanged.
-Claims of drop-in compatibility, performance gains and 3–4-week effort are unverified.
-Preserve Crystal OTA/security/persistence requirements when designing partitions.
+**Phase P4.1 implementation and device results — 2026-11-14:** See the
+[Crystal Phase 1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md).
+Crystal's signed IDF v6.1 image now builds, flashes with hash verification and
+boots on rev1.3. JD9365DA/720x720 and GT911 initialization, Crystal's four-app
+registry/card shell, encrypted NVS, both filesystems, Wi-Fi association/IPv4,
+SNTP/RTC synchronization, weather HTTPS and the HTTPS smoke test passed in serial
+evidence. The final capture includes two startup connection retries before
+success; this is not a controlled reconnect qualification. The C6 was not flashed.
 
-**Next implementation step:** preserve current Crystal work and audit dependencies
-and security, then establish isolated P4 build/sdkconfig paths for IDF v6.1/rev1.3.
-Port minimal board/display/touch/PSRAM, integrate hosted Wi-Fi with the working C6,
-and validate Crystal lifecycle, persistence, networking, packages and OTA incrementally.
-Factory smoke-test completion does not mark any Crystal OS feature test complete.
-This reconciliation updates documentation only; no implementation or flashing occurred.
+The root S3 configuration remains S3/16 MB, and an isolated S3 IDF v6.1 regression
+build also passes. Crystal's existing card transitions and gesture logic are
+retained, with a square 720px dark stylesheet. The user confirms the card
+interface is visible and app taps and between-card swipes work. Detailed visual
+polish and animation quality still need device acceptance. The host launcher/swipe
+regression also passes.
+
+**Remaining content is proposed guidance where not explicitly checked off.**
+The tested profile uses 360 MHz CPU and HEX PSRAM, not the generic 400 MHz/OCT
+assumptions below. Hardware AES and PPA acceleration are not enabled for Phase 1.
+Use the isolated build guide instead of the old root `set-target` instructions
+or proposed API snippets. Preserve Crystal OTA/security and persistence
+requirements; package/OTA regressions, soak and performance claims remain open.
+
+**Next Phase P4.1 validation:** physically verify the Crystal card interface,
+touch/edge gestures, app open/return and animation continuity; repeat a Crystal
+Wi-Fi scan and controlled reconnect. Then validate state persistence, packages,
+control panel and OTA incrementally. The factory evidence above remains a
+separate historical baseline. A complete 32 MB backup of the current factory P4
+flash was made before the Crystal flash; it is not the missing original-factory
+backup described in that record.
 
 ---
 
@@ -104,6 +121,10 @@ Camera, video, advanced features.
 **Risk:** Medium (WiFi remote driver is new)
 
 ### P4.1.1: Build System Updates
+
+**Implemented path:** `sdkconfig.defaults.common`, `sdkconfig.defaults.esp32p4`,
+`partitions.esp32p4.csv` and target-gated components. Root S3 defaults are retained.
+The diff below is historical planning material, not the applied configuration.
 
 **Files to modify:**
 - `sdkconfig.defaults`
@@ -193,6 +214,11 @@ apps,       data, littlefs, ,       10M     # Expanded from 5.5M
 
 ### P4.1.2: WiFi Remote Driver Integration
 
+**Implemented correction:** existing `esp_wifi_*` calls use the IDF v6.1 remote
+wrapper. No separate `crystal_wifi_p4.cpp` or `esp_wifi_remote_init()` call is
+needed. Crystal association, IPv4 and two HTTPS requests passed with the unchanged
+C6. The proposed code below is superseded by the implemented HAL path.
+
 **Create:** `components/crystal_core/src/crystal_wifi_p4.cpp`
 
 ```cpp
@@ -249,6 +275,12 @@ bool crystal_wifi_init()
 
 ### P4.1.3: Display BSP Porting
 
+**Implemented path:** `components/crystal_board_p4` provides Crystal's BSP facade
+using Board Manager and `esp_lvgl_adapter` with LVGL 8.4.0. It retains the
+adapter's P4 flush alignment and maps Crystal's zero-timeout lock contract to
+the adapter's indefinite wait. The user confirms the card screen, app taps and
+card swipes work; detailed visual and animation acceptance remains open.
+
 **Modify:** `main/main.cpp` display initialization
 
 ```cpp
@@ -270,6 +302,9 @@ ESP_LOGI(TAG, "Display: %dx%d", h_res, v_res);
 **Compatibility audit required:** factory JD9365DA/720x720 display and touch passed; validate Crystal initialization and Brookesia/LVGL APIs separately.
 
 ### P4.1.4: Build & Flash Test
+
+**Superseded commands:** follow [the tested isolated-build procedure](ESP32_P4_PHASE1_VALIDATION.md).
+The original commands below would change the root S3 target configuration.
 
 ```bash
 cd "/Users/szemy/Workspace/ESP32 Crystal OS"
@@ -1861,19 +1896,20 @@ If any fail, root cause before declaring port complete.
 - [ ] Review P4 example code (1 day)
 - [x] P4 board available: rev1.3 tested in the factory session
 - [x] Factory IDF v6.1 build/flash/basic-device prerequisite passed on rev1.3
-- [ ] Establish isolated Crystal P4 build/sdkconfig paths under IDF v6.1
-- [ ] Audit dependencies, BSP/APIs, OTA/security and persistence; retain existing C6
+- [x] Establish isolated Crystal P4 build/sdkconfig paths under IDF v6.1
+- [x] Audit the tested P4 dependency/BSP/API path and preserve Crystal security and storage defaults; keep existing C6 firmware unchanged
 
 ### Phase P4.1: Hardware Port (Week 1)
-- [ ] Create branch `feature/esp32-p4-port`
-- [ ] Update `sdkconfig.defaults` for P4 target
-- [ ] Update P4 dependencies after audit (Brookesia/LVGL, BSP, hosted Wi-Fi)
-- [ ] Review a 32MB P4 layout preserving Crystal OTA/security/persistence requirements
-- [ ] Implement `crystal_wifi_p4.cpp` (WiFi remote driver)
-- [ ] Build firmware successfully
-- [ ] Flash and verify boot (loading screen appears)
-- [ ] Verify touch input works
-- [ ] Verify home screen appears
+- [x] Create branch `feature/esp32-p4-port`
+- [x] Add isolated common/P4 defaults and partition profile; leave the S3 defaults intact
+- [x] Resolve P4 dependencies after audit (Brookesia/LVGL, Board Manager, display adapter and hosted Wi-Fi)
+- [x] Review a 32MB P4 layout preserving Crystal OTA/security/persistence requirements; runtime OTA remains untested
+- [x] Route existing Crystal Wi-Fi calls through IDF v6.1's `esp_wifi_remote` wrapper; association/IPv4, SNTP and HTTPS passed with unchanged C6 firmware
+- [x] Build and sign firmware successfully; image fits the 8MB OTA slot
+- [x] Flash with hash verification and verify Crystal boot, first-frame milestone and four-app shell initialization by serial log
+- [ ] Inspect loading/first-frame visual quality and animation continuity
+- [x] Verify touch input: user confirms app taps and card swipes work
+- [x] Verify Crystal card/home interface appears: user confirms it is visible
 
 ### Phase P4.2: Visual Enhancements (Week 2)
 - [ ] Implement stylesheet system (`crystal_stylesheet.cpp`)

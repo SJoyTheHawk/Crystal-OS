@@ -8,6 +8,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -112,6 +113,7 @@ static void require_boot_step(bool succeeded, const char *message)
 }
 
 // Kept verbatim from the board reference: RGB flush areas must be even-aligned.
+#if !CONFIG_IDF_TARGET_ESP32P4
 static void my_rounder_cb(lv_disp_drv_t *disp_drv, lv_area_t *area)
 {
     (void)disp_drv;
@@ -120,6 +122,7 @@ static void my_rounder_cb(lv_disp_drv_t *disp_drv, lv_area_t *area)
     area->x2 = ((area->x2 >> 1) << 1) + 1;
     area->y2 = ((area->y2 >> 1) << 1) + 1;
 }
+#endif
 
 extern "C" void app_main(void)
 {
@@ -159,21 +162,32 @@ extern "C" void app_main(void)
     crystal_app_set_log_hook(crystal_control_log_line);
     crystal_registry_set_package_factory(make_package_app);
     std::string package_error;
-    if (!crystal_packages_mount() ||
+    const esp_partition_t *apps_partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "apps");
+    const size_t package_storage_bytes = apps_partition != nullptr && apps_partition->size > 128 * 1024
+        ? apps_partition->size - 128 * 1024 : 0;
+    if (apps_partition == nullptr || !crystal_packages_mount() ||
         !crystal_packages_init("/littlefs/apps",
             {static_cast<size_t>(hal().system_info->free_psram()) * 3 / 4,
-             0x580000 - 128 * 1024, 4}, &package_error)) {
+             package_storage_bytes, 4}, &package_error)) {
         ESP_LOGE(TAG, "Package storage unavailable: %s", package_error.c_str());
     } else {
         ESP_LOGI(TAG, "LittleFS mounted at /littlefs; package storage ready (%zu packages)", crystal_packages().size());
     }
+    require_boot_step(bsp_display_lock(0), "Failed to lock display for UI initialization");
+#if !CONFIG_IDF_TARGET_ESP32P4
     if (display->driver != nullptr) {
         display->driver->rounder_cb = my_rounder_cb;
     }
+#endif
 
     // Subscribe the LVGL task to the watchdog because touch I2C reads can block
     // for several seconds in critical sections, starving the IDLE task.
-    TaskHandle_t lvgl_task = xTaskGetHandle("taskLVGL");
+    const char *lvgl_task_name = "taskLVGL";
+#if CONFIG_IDF_TARGET_ESP32P4
+    lvgl_task_name = "lvgl";
+#endif
+    TaskHandle_t lvgl_task = xTaskGetHandle(lvgl_task_name);
     if (lvgl_task != nullptr) {
         esp_err_t wdt_err = esp_task_wdt_add(lvgl_task);
         if (wdt_err == ESP_OK) {
@@ -192,14 +206,41 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "Could not find LVGL task to subscribe to watchdog");
     }
 
-    bsp_display_lock(0);
-
     auto *phone = new ESP_Brookesia_Phone(display);
     require_boot_step(phone != nullptr, "Failed to create Brookesia phone");
 
-    auto *stylesheet = new ESP_Brookesia_PhoneStylesheet_t
-        ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
+    auto *stylesheet = new ESP_Brookesia_PhoneStylesheet_t ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
     require_boot_step(stylesheet != nullptr, "Failed to create phone stylesheet");
+#if CONFIG_IDF_TARGET_ESP32P4
+    // Brookesia has no square 720px preset; adapt Crystal's square dark style to
+    // the P4 canvas while retaining its navigation and motion treatment.
+    stylesheet->core.name = "Crystal OS 720x720 Dark";
+    stylesheet->core.screen_size.width = 720;
+    stylesheet->core.screen_size.height = 720;
+    stylesheet->core.home.background.wallpaper_image_resource.resource =
+        &esp_brookesia_image_large_wallpaper_dark_720_720;
+    auto &launcher = stylesheet->home.app_launcher.data;
+    launcher.table.size.height = 480;
+    launcher.icon.main.size.width = 210;
+    launcher.icon.main.size.height = 210;
+    launcher.icon.image.default_size.width_percent = 63;
+    launcher.icon.image.default_size.height_percent = 63;
+    launcher.icon.image.default_size.flags.enable_width_percent = 1;
+    launcher.icon.image.default_size.flags.enable_height_percent = 1;
+    launcher.icon.image.default_size.flags.enable_square = 1;
+    launcher.icon.image.press_size.width_percent = 56;
+    launcher.icon.image.press_size.height_percent = 56;
+    launcher.icon.image.press_size.flags.enable_width_percent = 1;
+    launcher.icon.image.press_size.flags.enable_height_percent = 1;
+    launcher.icon.image.press_size.flags.enable_square = 1;
+    launcher.icon.label.text_font.size_px = 28;
+    launcher.indicator.main_size.height = 120;
+    launcher.indicator.main_layout_column_pad = 15;
+    launcher.indicator.spot_inactive_size.width = 18;
+    launcher.indicator.spot_inactive_size.height = 18;
+    launcher.indicator.spot_active_size.width = 45;
+    launcher.indicator.spot_active_size.height = 18;
+#endif
     stylesheet->core.manager.app.max_running_num = 1;
     stylesheet->home.flags.enable_recents_screen = 0;
     stylesheet->home.app_launcher.data.flags.enable_table_scroll_anim = 1;

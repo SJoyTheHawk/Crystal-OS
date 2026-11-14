@@ -1,0 +1,13 @@
+dependencies:
+  waveshare/esp_lcd_st7703:
+    version: "2.0.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lcd_jd9365:
+    version: "2.0.2"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lcd_touch_gt911:
+    version: "1.2.1"
+    rules:
+      - if: "target == esp32p4"

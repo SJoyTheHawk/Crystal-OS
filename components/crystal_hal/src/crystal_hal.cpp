@@ -23,7 +23,11 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "bsp/display.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "bsp/esp32_p4_wifi6_touch_lcd_4b.h"
+#else
 #include "bsp/esp32_s3_touch_lcd_4b.h"
+#endif
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "freertos/FreeRTOS.h"
@@ -1137,7 +1141,9 @@ void crystal_hal_init()
         (void)crystal_hal_set_volume(volume);
     }
 
+#if !CONFIG_IDF_TARGET_ESP32P4
     start_reset_button();
+#endif
 }
 
 void crystal_hal_bind_touch(void *lvgl_input_device)

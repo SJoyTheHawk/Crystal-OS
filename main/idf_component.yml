@@ -1,8 +1,38 @@
 dependencies:
   idf: ">=5.3.0"
   espressif/esp-brookesia: "0.4.2"
-  espressif/esp_lvgl_port: "^2"
+  espressif/esp_lvgl_port:
+    version: "^2"
+    rules:
+      - if: "target == esp32s3"
   lvgl/lvgl: "8.4.0"
-  waveshare/esp32_s3_touch_lcd_4b: "*"
+  waveshare/esp32_s3_touch_lcd_4b:
+    version: "*"
+    rules:
+      - if: "target == esp32s3"
+  espressif/esp_wifi_remote:
+    version: "1.6.5"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_hosted:
+    version: "3.0.10"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_codec_dev:
+    version: "2.0.0-beta5"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_board_manager:
+    version: "0.7.5"
+    rules:
+      - if: "target == esp32p4"
+  waveshare/waveshare_boards:
+    version: "0.3.3"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lvgl_adapter:
+    version: "0.6.2"
+    rules:
+      - if: "target == esp32p4"
   esphome/libsodium: "^1.10021.12"
   espressif/mdns: "^1"

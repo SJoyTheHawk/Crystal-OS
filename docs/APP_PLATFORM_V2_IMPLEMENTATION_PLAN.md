@@ -1,5 +1,7 @@
 # Crystal OS App Platform — v2 Implementation Plan
 
+> Current work order: migrate the completed Phase 14–16 baseline to ESP32-P4 on main, then resume Phase 17. See the [documentation index](README.md).
+
 **Version:** 2.0  
 **Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
 **Date:** 2026-11-14

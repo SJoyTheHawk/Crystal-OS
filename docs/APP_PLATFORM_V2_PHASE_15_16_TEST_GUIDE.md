@@ -8,7 +8,7 @@ No full device checklist is pending.
 - [Implementation and frozen v1 UI contract](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
 - [Closure and deferred work](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
 - [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
-- [Historical procedures and raw evidence](archive/phase15-16/README.md)
+- [Retained device evidence](archive/phase15-16/README.md)
 
 ## Automated checks by change
 

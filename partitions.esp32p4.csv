@@ -1,0 +1,11 @@
+# Crystal OS P4 layout. Preserve OTA, NVS encryption, coredump, and app storage.
+# Name,     Type, SubType,  Offset,  Size
+nvs,        data, nvs,      ,        0x6000
+nvs_keys,   data, nvs_keys, ,        0x1000
+otadata,    data, ota,      ,        0x2000
+phy_init,   data, phy,      ,        0x1000
+coredump,   data, coredump, ,        0x10000
+ota_0,      app,  ota_0,    ,        8M
+ota_1,      app,  ota_1,    ,        8M
+storage,    data, spiffs,   ,        4M
+apps,       data, littlefs, ,        10M

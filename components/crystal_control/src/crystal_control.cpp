@@ -35,6 +35,12 @@
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 
+#if CONFIG_IDF_TARGET_ESP32P4
+#define CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/spiffs"
+#else
+#define CRYSTAL_CONTROL_STORAGE_MOUNT_POINT CONFIG_BSP_SPIFFS_MOUNT_POINT
+#endif
+
 namespace {
 constexpr int64_t kPinLifetimeUs = 10LL * 60 * 1000000;
 constexpr int64_t kTokenLifetimeUs = 24LL * 60 * 60 * 1000000;
@@ -463,13 +469,13 @@ esp_err_t panel_handler(httpd_req_t *request)
     // by the board (currently /spiffs). A partition label is not a file path.
     struct Asset { const char *uri; const char *path; const char *type; };
     constexpr Asset assets[] = {
-        {"/", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/index.html", "text/html; charset=utf-8"},
-        {"/favicon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/favicon.png", "image/png"},
-        {"/favicon.ico", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/favicon.ico", "image/x-icon"},
+        {"/", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/index.html", "text/html; charset=utf-8"},
+        {"/favicon.png", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/favicon.png", "image/png"},
+        {"/favicon.ico", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/favicon.ico", "image/x-icon"},
         // SPIFFS limits the full stored name to 31 bytes; URLs can be longer.
-        {"/apple-icon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
-        {"/apple-touch-icon.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
-        {"/apple-touch-icon-precomposed.png", CONFIG_BSP_SPIFFS_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+        {"/apple-icon.png", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+        {"/apple-touch-icon.png", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
+        {"/apple-touch-icon-precomposed.png", CRYSTAL_CONTROL_STORAGE_MOUNT_POINT "/control-panel/apple-icon.png", "image/png"},
     };
     const size_t uri_length = std::strcspn(request->uri, "?");
     const Asset *asset = nullptr;

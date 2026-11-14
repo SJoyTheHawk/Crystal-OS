@@ -1,5 +1,7 @@
 # Crystal OS App Platform v2 — Documentation Overview
 
+> Current work order: migrate the completed Phase 14–16 baseline to ESP32-P4 on main, then resume Phase 17. See the [documentation index](README.md).
+
 **Date:** 2026-11-14
 **Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
 **Documents:** 3 guides + this overview
@@ -235,7 +237,7 @@ These are documented in Implementation Plan §12 and Design Guide §14. Decide b
 
 ```
 /Users/szemy/Workspace/ESP32 Crystal OS/docs/
-├── APP_PLATFORM.md                           (v1 reference; don't update)
+├── archive/proposals/APP_PLATFORM.md                           (v1 reference; don't update)
 ├── APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md    (NEW; use this for Phase 14+)
 ├── APP_PLATFORM_V2_DESIGN_GUIDE.md           (NEW; use this for architecture)
 ├── APP_PLATFORM_V2_CODE_GUIDE.md             (NEW; use this for coding)
@@ -244,7 +246,7 @@ These are documented in Implementation Plan §12 and Design Guide §14. Decide b
 └── (other docs)
 ```
 
-The v1 `APP_PLATFORM.md` remains for reference. The three v2 documents are standalone and complete.
+The [original app-platform proposal](archive/proposals/APP_PLATFORM.md) remains for reference. The three v2 documents are standalone and complete.
 
 ---
 

@@ -2,10 +2,13 @@
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE.md)
 
-A touch-first shell and app framework for the **Waveshare ESP32-S3-Touch-LCD-4B**,
-the 4-inch, 480 × 480 ESP32-S3 panel in an **86-box form factor**. Crystal OS
-builds on LVGL and Espressif's `esp-brookesia` to bring swipeable app cards,
-a paged launcher, Quick Settings, and everyday utilities to this board.
+Crystal OS is a touch-first shell and app framework built on LVGL and
+esp-brookesia, with swipeable app cards, Quick Settings and installable apps.
+
+**Development direction:** main is now the ESP32-P4 migration branch. Complete
+migration first, then resume Phase 17 (Lua runtime). The validated S3 version is
+preserved on branch ESP32-S3-Touch-LCD-4B. Firmware is still configured for S3;
+P4 support has not yet been implemented. See the [documentation index](docs/README.md).
 
 [Hardware](#supported-hardware) · [Build and flash](#build-and-flash) ·
 [Documentation](#documentation) · [Project status](#project-status)
@@ -73,7 +76,7 @@ within the board's memory budget.
 
 The current development stack uses **ESP-IDF 6.1**, **LVGL 8.4.0**, and
 **esp-brookesia 0.4.2**. The repository includes a project-local Brookesia
-override; see the [version strategy](docs/BROOKESIA_VERSION_STRATEGY.md).
+override; see the [version strategy](docs/report/BROOKESIA_VERSION_STRATEGY.md).
 
 From the repository root, activate your ESP-IDF installation and build:
 
@@ -95,7 +98,7 @@ idf.py -p "$PORT" monitor
 The example uses a Bash/Zsh shell. Press `Ctrl+]` to exit the serial monitor.
 For configuration, update-only flashing, and recovery, see the
 [ESP-IDF command guide](docs/ESP_IDF_COMMAND_GUIDE.md),
-[baseline flashing notes](docs/NO_BUS_BASELINE.md#build-and-flash), and
+[baseline flashing notes](docs/report/NO_BUS_BASELINE.md#build-and-flash), and
 [USB recovery tools](tools/README.md#usb-recovery).
 
 Host development currently provides a mock HAL and headless LVGL checks/captures.
@@ -104,18 +107,13 @@ A full interactive desktop simulator is still planned; see
 
 ## Project status
 
-Crystal OS is under development. Apps currently ship inside the firmware.
-Bundled-app management through Phase 13.7 is implemented; the broader Phase 13.8
-device regression pass and documentation closure remain pending.
+Phases 14–16 are complete for development acceptance: package installation,
+signature verification, the WiFi panel and USB CLI fallback, and the shared
+UI/declarative framework. See the [closure record](docs/APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
 
-- **Current firmware:** the no-bus baseline. Bus app development paused after
-  internal DRAM exhaustion; its source and findings are preserved in
-  [examples/bus_app](examples/bus_app/README.md).
-- **Next platform track:** installable apps, packages, and a PC-assisted loader.
-  Phases 14–17 are a [design proposal](docs/APP_PLATFORM.md), not implemented features.
-- **Detailed progress:** see the [implementation plan](docs/IMPLEMENTATION_PLAN.md),
-  [Phase 13 checklist](docs/PHASE_13_CHECKLIST.md), and
-  [validation checklist](docs/VALIDATION_CHECKLIST.md).
+Current work is the P4 board migration on main. Phase 17 follows migration.
+Retained memory, HTTPS and lifecycle findings are listed in the
+[documentation index](docs/README.md#important-findings).
 
 ## Project layout
 
@@ -139,17 +137,19 @@ sdkconfig.defaults           Firmware configuration defaults
 
 ## Documentation
 
+Start with [docs/README.md](docs/README.md) for current plans, original design
+references, implementation records and important unresolved findings.
+
 | Topic | Start here |
 | --- | --- |
-| Architecture and app lifecycle | [Design](docs/DESIGN.md) · [Code guide](docs/CODE_GUIDE.md) |
-| Build, flash, and recovery | [ESP-IDF commands](docs/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
-| Roadmap and validation | [Implementation plan](docs/IMPLEMENTATION_PLAN.md) · [Regression checklist](docs/VALIDATION_CHECKLIST.md) |
-| Manage Apps | [Release notes](docs/PHASE_13_RELEASE_NOTES.md) · [Phase 13 checklist](docs/PHASE_13_CHECKLIST.md) |
-| Host development | [Mock HAL](docs/SIMULATOR.md) · [Screenshot generation](tools/README.md#readme-screenshots) |
-| Future installable apps | [App platform design](docs/APP_PLATFORM.md) · [Bus workload lessons](docs/APP_PLATFORM_BUS_LESSONS.md) |
-| Bus reference and baseline | [Architecture handoff](examples/bus_app/ARCHITECTURE_HANDOFF.md) · [Baseline testing](docs/NO_BUS_BASELINE.md) |
+| P4 migration | [Overview](docs/MIGRATION_PLAN_ESP32_P4.md) · [Detailed proposal](docs/CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) |
+| App platform | [Overview](docs/APP_PLATFORM_V2_OVERVIEW.md) · [Implementation plan](docs/APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md) |
+| Original OS architecture | [Design](docs/v1_implementation_plan/DESIGN.md) · [Code guide](docs/v1_implementation_plan/CODE_GUIDE.md) |
+| Build and recovery | [ESP-IDF commands](docs/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
+| Focused checks | [Regression guide](docs/APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) |
+| Host development | [Simulator status](docs/SIMULATOR.md) |
 
-Historical phase reports and proposals live in [docs/archive](docs/archive/).
+Historical reports and proposals live in [the archive](docs/archive/README.md).
 
 ## Use of AI
 

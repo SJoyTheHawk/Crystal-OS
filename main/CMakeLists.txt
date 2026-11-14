@@ -1,7 +1,14 @@
+set(CRYSTAL_BOARD_COMPONENT esp32_s3_touch_lcd_4b)
+set(CRYSTAL_LVGL_PORT_COMPONENT esp_lvgl_port)
+if(IDF_TARGET STREQUAL "esp32p4")
+    set(CRYSTAL_BOARD_COMPONENT crystal_board_p4)
+    set(CRYSTAL_LVGL_PORT_COMPONENT)
+endif()
+
 idf_component_register(
     SRCS "main.cpp" "crystal_memory.c" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
     INCLUDE_DIRS "."
-    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_shell esp-brookesia esp_lvgl_port esp32_s3_touch_lcd_4b nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
+    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_shell esp-brookesia ${CRYSTAL_LVGL_PORT_COMPONENT} ${CRYSTAL_BOARD_COMPONENT} nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)
@@ -63,11 +70,16 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
 
+set(CRYSTAL_STORAGE_IMAGE_SIZE 0x200000)
+if(IDF_TARGET STREQUAL "esp32p4")
+    set(CRYSTAL_STORAGE_IMAGE_SIZE 0x400000)
+endif()
+
 spiffs_create_partition_image(
     storage
     ../assets
     FLASH_IN_PROJECT
-    SPIFFS_IMAGE_FLAGS="-b 4096 -p 256 -s 0x200000 -q"
+    SPIFFS_IMAGE_FLAGS="-b 4096 -p 256 -s ${CRYSTAL_STORAGE_IMAGE_SIZE} -q"
 )
 
 # A factory image is generated explicitly; normal boots never reformat apps.

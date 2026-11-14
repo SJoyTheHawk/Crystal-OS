@@ -706,12 +706,21 @@ void power_saving_apply(bool enabled)
     // not the RGB panel -- so the UI would render at min most of the time. Energy
     // Saving caps the clock by moving both ends down together, not by widening the
     // range. light_sleep_enable is never true in v1: the RGB panel is DMA scan-out.
+#if CONFIG_IDF_TARGET_ESP32P4
+    // P4 rev1.x uses the 360/180 MHz PLL points; S3's 240 MHz point is invalid.
+    const int freq_mhz = enabled ? 180 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+#else
     const int freq_mhz = enabled ? 80 : 240;
+#endif
     esp_pm_config_t config = {};
     config.max_freq_mhz = freq_mhz;
     config.min_freq_mhz = freq_mhz;
     config.light_sleep_enable = false;
-    (void)esp_pm_configure(&config);
+    const esp_err_t pm_err = esp_pm_configure(&config);
+    if (pm_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to apply CPU power policy (%d MHz): %s",
+                 freq_mhz, esp_err_to_name(pm_err));
+    }
     if (hal().wifi != nullptr) hal().wifi->set_power_save(enabled);
     const uint8_t target = enabled && saved_brightness() > kSavingBrightnessMax
                                ? kSavingBrightnessMax : saved_brightness();

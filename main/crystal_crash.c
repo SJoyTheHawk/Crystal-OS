@@ -56,13 +56,22 @@ void crystal_crash_init(void)
     s_last_crash.version = 1;
     s_last_crash.reset_reason = (uint8_t)esp_reset_reason();
     s_last_crash.pc = core.exc_pc;
+#if CONFIG_IDF_TARGET_ARCH_XTENSA
     size_t depth = core.exc_bt_info.depth;
     if (depth > CRASH_BACKTRACE_DEPTH) depth = CRASH_BACKTRACE_DEPTH;
     memcpy(s_last_crash.backtrace, core.exc_bt_info.bt, depth * sizeof(uint32_t));
+    s_last_crash.is_corrupted = core.exc_bt_info.corrupted;
+#elif CONFIG_IDF_TARGET_ARCH_RISCV
+    // ESP-IDF provides a raw stack dump on RISC-V; keep the exception PC as
+    // the only decoded frame until host-side symbolization is added.
+    s_last_crash.backtrace[0] = core.exc_pc;
+    s_last_crash.is_corrupted = false;
+#else
+#error "Crystal OS crash summary needs a backtrace adapter for this architecture"
+#endif
     memcpy(s_last_crash.elf_sha, core.app_elf_sha256, sizeof(s_last_crash.elf_sha));
     memcpy(s_last_crash.task_name, core.exc_task, sizeof(s_last_crash.task_name));
     s_last_crash.task_name[sizeof(s_last_crash.task_name) - 1] = '\0';
-    s_last_crash.is_corrupted = core.exc_bt_info.corrupted;
     s_has_crash = save_summary(&s_last_crash);
     s_should_notify = s_has_crash;
     ESP_LOGI(TAG, "Coredump saved: task=%s pc=0x%08lx corrupted=%s",

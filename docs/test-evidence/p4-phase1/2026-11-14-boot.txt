@@ -1,0 +1,73 @@
+Crystal OS P4 Phase 1 final boot — 2026-11-14 (Asia/Hong_Kong)
+Selected serial excerpt; ROM bytes, network identifiers and unrelated lines omitted.
+App SHA-256: 17fc78c931f5eb2c7c2adb215b6ddeca8de68cb6cab1b0573f36c0a2560a6400
+Capture duration: 40 seconds; baud: 1000000.
+
+I (25) boot: ESP-IDF v6.1 2nd stage bootloader
+I (27) boot: chip revision: v1.3
+I (28) boot.esp32p4: SPI Speed      : 80MHz
+I (28) boot.esp32p4: SPI Mode       : DIO
+I (28) boot.esp32p4: SPI Flash Size : 32MB
+I esp_psram: Found 32MB PSRAM device
+I esp_psram: Speed: 200MHz
+I (2138) esp_psram: SPI SRAM memory test OK
+I (2148) cpu_start: cpu freq: 360000000 Hz
+I (2148) app_init: Project name:     crystal_os
+I (2150) app_init: ESP-IDF:          v6.1
+I (2156) esp_psram: Adding pool of 28480K of PSRAM memory to heap allocator
+I (2157) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+I (2158) esp_psram: Adding pool of 32K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+I (2164) nvs_sec_provider: NVS Encryption - Registering HMAC-based scheme...
+I (2208) esp_psram: Reserving pool of 4K of internal memory for DMA/internal allocations
+I (2222) nvs: NVS partition "nvs" is encrypted.
+I (2357) crystal_board_p4: Storage mounted: 92870/3848081 bytes used
+I (2503) waveshare_lcd_probe: JD9365 page 1 ID: 93 65 (ESP_OK)
+I (2503) ESP32_P4_4B_LCD: Detected JD9365DA; selecting 8904ANT 720x720 initialization (210 commands)
+W (2503) gpio: conflict found for GPIO[27]
+W (2818) DEV_DISPLAY_LCD: Failed to swap LCD panel XY: ESP_ERR_NOT_SUPPORTED
+I (2825) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+I (2846) GT911: TouchPad_ID:0x39,0x31,0x31
+I (2846) GT911: TouchPad_Config_Version:91
+I (2851) crystal_board_p4: P4 MIPI-DSI display and touch ready (720x720)
+W (2852) crystal_signature: No initial package signing key configured; signed packages will be rejected
+I (2867) crystal_boot: LittleFS mounted at /littlefs; package storage ready (0 packages)
+I (2867) crystal_boot: Subscribed LVGL task to watchdog
+I (2895) crystal_registry: installed: dev_tester (slot 0)
+I (2898) crystal_registry: installed: clock (slot 2)
+I (2973) crystal_registry: installed: weather (slot 3)
+I (2977) crystal_registry: installed: calculator (slot 4)
+I (2985) crystal_app: Dev Tester lifecycle: onCreate
+I (3094) crystal_shell: snapshot transition: app 720x680 at (0,40) crop=90% (648x606) -> 360x340, zoom=512/256, 180 ms
+I (3094) crystal_shell: active card 1/4: dev_tester
+I (3096) crystal_control: USB developer transport ready (CRYSTAL/1 INSTALL <bytes>)
+I (3096) crystal_boot: Startup baseline: automatic Phase 14 device test disabled
+I (3301) crystal_boot: first-frame baseline: 1091 ms
+I (3301) crystal_boot: main task stack headroom: 5064 bytes
+I (3917) eh_init_evt: capabilities: 0x0d
+I (3919) eh_init_evt: esp-hosted fw versions: host=3.0.10 coprocessor=0.0.0
+E (3920) eh_init_evt: major version mismatch — OTA coprocessor from host
+I (4303) crystal_core: Startup: first frame ready; starting background services
+I (4304) crystal_hal: WiFi init: internal=283519 largest_internal=217088 dma=244031 largest_dma=217088 static_rx=10 static_tx=0
+I (4422) crystal_hal: WiFi initialized: internal=283519 largest_internal=217088
+I (4539) pm: Frequency switching config: CPU_MAX: 360, APB_MAX: 360, APB_MIN: 360, Light sleep: DISABLED
+W (7685) crystal_hal: WiFi disconnected, reason=7
+W (7686) crystal_hal: Retrying connect (1/10)
+W (11122) crystal_hal: WiFi disconnected, reason=205
+W (11122) crystal_hal: Retrying connect (2/10)
+I (16923) crystal_core: publishing network connected signal
+I (16923) crystal_core: network connected signal received; starting SNTP
+I (16924) crystal_core: SNTP request started
+I (19358) crystal_core: SNTP synchronized system clock and RTC
+I (21363) crystal_http: TLS connected id=1
+I (21557) crystal_http: request completed id=1 attempts=1 elapsed=3942 ms status=200
+I (21557) crystal_http: request callback id=1 error=ESP_OK
+I (21558) crystal_http: stats requests=1 successes=1 retries=0 failures=0 cancelled=0 peak_body=468
+I (21561) crystal_core: weather fetched: 23.3 C, humidity 98%, code 80, wind 12.4 km/h
+I (21562) crystal_core: Startup: weather step finished; queuing HTTPS smoke test
+I (23844) crystal_http: TLS connected id=2
+I (23877) crystal_http: request completed id=2 attempts=1 elapsed=2313 ms status=200
+I (23878) crystal_http: request callback id=2 error=ESP_OK
+I (23879) crystal_http: stats requests=2 successes=2 retries=0 failures=0 cancelled=0 peak_body=577
+I (23881) crystal_core: HTTPS smoke result id=2 status=200 body=577 bytes elapsed=2313 ms error=ESP_OK
+I (23882) crystal_core: HTTPS smoke heap id=2 before_internal=279671 before_largest=212992 before_psram=26015240 tls_internal=279559 tls_largest=212992 tls_psram=25985224
+I (23884) crystal_core: HTTPS smoke test passed

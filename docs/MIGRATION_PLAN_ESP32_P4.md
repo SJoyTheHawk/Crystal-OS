@@ -3,7 +3,8 @@
 **Original plan date:** 2025-01-13; reconciled 2026-11-14 (Asia/Hong_Kong)  
 **Target Hardware:** ESP32-P4-WIFI6-Touch-LCD-4B  
 **Tested factory reference:** `/Users/szemy/Downloads/ESP32-P4-WIFI6-Touch-LCD-4B-main/examples/factory`  
-**Status:** Factory v6.1 smoke test passed on rev1.3; Crystal migration planning
+**Status:** Crystal Phase 1 builds, flashes and boots under IDF v6.1 on rev1.3;
+Wi-Fi/HTTPS pass, and the user confirms card display, app taps and swipes
 
 ## Baseline reconciliation — 2026-11-14
 
@@ -28,31 +29,41 @@ This section supersedes conflicting original assumptions below.
   no exact upstream commit is established. Do not substitute the repo's vendor copy
   or import managed components, SDKs or generated build trees.
 
-Factory testing is complete; **Crystal OS implementation and tests remain pending**.
-Current Crystal inputs still select S3/16 MB flash, Brookesia 0.4.2 and LVGL 8.4.0.
-Audit Board Manager/local BSP/bsp_extra, hosted initialization and dependency APIs.
-Retained code/configuration snippets, performance claims and estimates below are
-proposals, not validated v6.1 implementations. Do not assume unchanged APIs or
-copy factory partitions over Crystal OTA/security/persistence requirements.
+**Crystal results are now recorded separately in the
+[Phase 1 validation/build guide](ESP32_P4_PHASE1_VALIDATION.md).** The signed
+Crystal image passed flash hash verification and boots on rev1.3, initializes
+JD9365DA/720x720 and GT911, mounts encrypted NVS/SPIFFS/LittleFS, initializes the
+four-app card shell, associates through the unchanged C6, gets IPv4, synchronizes
+SNTP/RTC and passes weather plus smoke-test HTTPS requests. Two startup connection
+retries were observed before success; controlled reconnect is still unqualified.
 
-**Next implementation step:** preserve current work and audit dependencies/security;
-establish separate P4 build/sdkconfig paths, port minimal board/display/touch/PSRAM,
-then hosted Wi-Fi with the working C6. Validate Crystal lifecycle, persistence,
-networking, packages and OTA before optional peripherals and UI enhancements.
-This reconciliation changes documentation only; no implementation or flashing occurred.
+The root S3 `sdkconfig` remains S3/16 MB, and a separate S3 IDF v6.1 build passes.
+Crystal retains Brookesia 0.4.2, LVGL 8.4.0 and its card animations/gesture logic.
+The user confirms the card interface displays and app taps/card swipes respond.
+Detailed visual polish and animation quality remain open. The tested P4 uses a
+360 MHz CPU and HEX PSRAM; 400 MHz/OCT and automatic PPA enablement below are
+superseded assumptions. Hardware AES stays disabled.
+
+**Next acceptance:** inspect the 720px screen for clipping and visual polish,
+exercise every bundled app and edge/interrupted gestures, and assess animation
+continuity. Then validate Crystal scan/reconnect, state persistence, packages,
+control panel and OTA. A full current-factory P4 flash backup was captured before
+Crystal was flashed; the older original-firmware backup limitation in the factory
+record remains true. Keep that reference workspace separate and preserve the
+existing C6 firmware.
 
 ---
 
 ## Executive Summary
 
 The ESP32-P4 represents a generational leap over the S3:
-- **Dual-core 400MHz RISC-V** (vs 240MHz Xtensa dual-core)
+- **Dual-core RISC-V; tested rev1.3 profile uses 360 MHz** (vs 240 MHz Xtensa)
 - **32MB PSRAM** standard (vs 8MB OCT PSRAM on S3)
 - **Hardware 2D GPU (PPA)** for accelerated blending/rotation/scaling
 - **MIPI-DSI display interface** with DPI support (vs RGB parallel only)
 - **WiFi 6** via companion ESP32-C6 (vs WiFi 4 on S3)
-- **ESP-IDF v6.1** factory baseline verified; Crystal build/port pending
-- **Brookesia/LVGL:** audit tested reference; Crystal currently pins 0.4.2 / 8.4.0
+- **ESP-IDF v6.1** Crystal build/flash/boot and HTTPS smoke tests verified
+- **Brookesia/LVGL:** Crystal retains 0.4.2 / 8.4.0; basic card/tap/swipe UX confirmed, visual polish pending
 
 **Migration approach:** preserve the Crystal app platform and audit its compatibility with IDF v6.1 and the tested P4 stack. Factory success establishes a hardware baseline, not a direct-port guarantee.
 
@@ -64,16 +75,16 @@ The ESP32-P4 represents a generational leap over the S3:
 
 | Dimension | ESP32-S3 (Current) | ESP32-P4 (Target) | Migration Impact |
 |-----------|-------------------|-------------------|------------------|
-| **CPU** | Dual Xtensa LX7 @ 240MHz | Dual RISC-V @ 400MHz | 🟢 Faster, no code changes |
+| **CPU** | Dual Xtensa LX7 @ 240MHz | Dual RISC-V @ 360MHz on tested rev1.3 | PM uses valid P4 360/180 MHz points |
 | **RAM** | 512KB SRAM | 768KB SRAM | 🟢 More breathing room |
-| **PSRAM** | 8MB OCT @ 80MHz | 32MB OCT @ 200MHz | 🟢 4× capacity, 2.5× speed |
+| **PSRAM** | 8MB OCT @ 80MHz | 32MB HEX @ 200MHz in tested profile | Capacity verified; performance not benchmarked |
 | **Display** | RGB parallel (16-bit) | MIPI-DSI + DPI | 🟡 BSP config changes |
 | **GPU** | Software only | Hardware PPA (2D) | 🟢 LVGL can use it |
 | **WiFi** | Integrated WiFi 4 | ESP32-C6 via SDIO (WiFi 6) | 🟡 Driver changes (esp_wifi_remote) |
 | **Flash** | 16MB | 32MB standard | 🟢 More space for apps |
 | **Camera** | No BSP support | OV5647 MIPI + ISP | 🟢 New capability |
-| **IDF Version** | Historical 5.3.x baseline | v6.1 | Factory passed; Crystal audit pending |
-| **Brookesia** | 0.4.2 | Pending dependency/API audit | Compatibility unverified |
+| **IDF Version** | Current baseline 6.1; older plan used 5.3.x | v6.1 | Crystal P4 and S3 builds pass |
+| **Brookesia** | 0.4.2 | 0.4.2 / LVGL 8.4.0 | Card display, app taps and swipes user-confirmed; detailed visual checks pending |
 | **BSP** | waveshare/esp32_s3_touch_lcd_4b | Board Manager + local P4 BSP/bsp_extra | Audit initialization and APIs |
 
 **Planning scope:** Wi-Fi and display are known porting areas; the dependency/API and security audit may identify additional work.
@@ -285,20 +296,24 @@ P4's PPA (Pixel Processing Accelerator) can offload:
 ### **Phase 1: Branch & Bootstrap** (Week 1)
 **Goal:** Get Crystal OS building for P4 target.
 
-1. Create branch: `git checkout -b feature/esp32-p4-port main`
-2. Update `sdkconfig.defaults`:
-   - `CONFIG_IDF_TARGET="esp32p4"`
-   - SPIRAM/cache settings from P4 example
-   - Update partition flash size to 32MB
-3. Update `main/idf_component.yml`:
-   - Add `espressif/esp_wifi_remote`
-   - Integrate tested Board Manager/local P4 BSP in isolated P4 configuration
-4. Review a 32MB P4 layout preserving Crystal OTA/security/persistence requirements
-5. Stub out WiFi init with `esp_wifi_remote` (can be non-functional)
-6. Build firmware: `idf.py build`
-7. **Checkpoint:** Firmware builds without errors
+1. [x] Work on `feature/esp32-p4-port`.
+2. [x] Add `sdkconfig.defaults.common` and `sdkconfig.defaults.esp32p4` and build in `build/p4-idf61-phase1c`; keep the root S3 `sdkconfig.defaults` and `sdkconfig` unchanged.
+3. [x] Resolve IDF v6.1 P4 dependencies for LVGL 8/Brookesia 0.4.2, Board Manager, the Waveshare board and hosted Wi-Fi. Use the Board Manager display/touch path for the 720x720 panel.
+4. [x] Add a 32MB partition layout with dual 8MB OTA slots, 4MB SPIFFS, 10MB LittleFS and Crystal's signing/security settings. OTA behavior is not runtime-validated.
+5. [x] Keep Crystal's existing Wi-Fi API and link IDF v6.1's `esp_wifi_remote` wrapper; its `esp_wifi_init()` forwards to the remote implementation. Association/IPv4, SNTP and HTTPS passed with the existing C6.
+6. [x] Build and sign with ESP-IDF v6.1; the image fits the 8MB OTA slot.
+7. [x] Flash with hash verification; verify Crystal boot, panel/touch initialization, card-shell startup and first-frame milestone in the serial log.
+8. [x] Build the isolated S3 target and run the host launcher/swipe regression.
+9. [x] Confirm card interface visibility, app taps and between-card swipes on device (user-confirmed).
+10. [ ] Inspect detailed layout/animation quality and exercise all apps/edge/interrupted gestures.
 
-**Deliverable:** Compiling firmware (may not boot yet)
+**Current checkpoint:** Implementation and boot/network smoke tests pass; card
+display, app taps and card swipes are confirmed, while detailed UI and broader
+feature qualification remain open. Follow the
+[isolated build and validation guide](ESP32_P4_PHASE1_VALIDATION.md), not old root
+`set-target` snippets. The C6 firmware remains unchanged. The Phase 2/3 tasks below
+overlap this bootstrap; retain their unperformed acceptance checks rather than
+repeating or replacing the working board/network implementation.
 
 ---
 
@@ -588,6 +603,6 @@ Preserve Crystal OS architecture and reuse its app platform. The earlier 80% unc
 
 **The P4 is your future.** It removes S3's memory constraints, TLS allocation hacks, and performance ceilings. Camera and video capabilities open new app categories. WiFi 6 improves reliability.
 
-**Recommendation:** Branch now (Phase 1), get it booting (Phase 2), validate WiFi (Phase 3), and declare P4 the Crystal OS v2 platform within 4 weeks. Keep S3 as the v1 maintenance branch but stop adding features to it.
+**Recommendation:** Continue from the existing Phase 1 P4 build, then verify boot, display, touch, home screen and hosted Wi-Fi on hardware before moving on. Keep S3 as the v1 maintenance target.
 
 The architecture work you've done (lifecycle, packages, signatures, declarative runtime) **pays off here**—it ports to new hardware with minimal friction. This is exactly what platform abstraction is for.
