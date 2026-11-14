@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture production launcher, Quick Settings and app UI on a headless LVGL host.
+"""Capture the current 720 x 720 P4 UI on a headless LVGL host.
 
 Fixed sample time, weather, battery and connectivity; no device/network access.
 Requires CMake, a C++17 compiler and the checked-out managed LVGL dependency.
@@ -20,6 +20,7 @@ CONF = '''#pragma once
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_22 1
+#define LV_FONT_MONTSERRAT_24 1
 #define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_MONTSERRAT_48 1
 #define LV_USE_SNAPSHOT 1
@@ -31,7 +32,7 @@ def png_from_ppm(source, destination):
     with source.open('rb') as stream:
         assert stream.readline() == b'P6\n'
         width, height = map(int, stream.readline().split())
-        assert (width, height) == (480, 480)
+        assert (width, height) == (720, 720)
         assert stream.readline() == b'255\n'
         pixels = stream.read()
         assert len(pixels) == width * height * 3
@@ -51,12 +52,15 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
     (work / 'lv_conf.h').write_text(CONF)
+    (work / 'sdkconfig.h').write_text('#pragma once\n#define CONFIG_IDF_TARGET_ESP32P4 1\n')
     brookesia = ROOT / 'components/esp-brookesia/src'
     capture = ROOT / 'sim/screenshots'
     sources = [ROOT / 'components/crystal_app/src/crystal_app.cpp', ROOT / 'sim/crystal_hal_mock.cpp',
                ROOT / 'components/crystal_package/src/crystal_resources.cpp',
+               ROOT / 'components/crystal_shell/src/crystal_stylesheet.cpp',
+               ROOT / 'components/crystal_shell/src/crystal_page_transition.cpp',
                capture / 'package_stubs.cpp', capture / 'capture.cpp', capture / 'capture_shell.cpp', capture / 'services.cpp']
-    for app in ('clock_app', 'weather_app', 'calculator_app'):
+    for app in ('clock_app', 'weather_app', 'calculator_app', 'ethernet_app'):
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.cpp')))
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.c')))
     include_dirs = [brookesia, capture / 'stubs', work,
@@ -64,7 +68,7 @@ def main():
                     ROOT / 'components/manage_apps_page/include', ROOT / 'components/crystal_registry/include',
                     ROOT / 'components/crystal_update_view/include']
     include_dirs.extend(ROOT / f'components/{name}/include' for name in
-                        ('crystal_package', 'crystal_app', 'crystal_core', 'crystal_hal', 'clock_app', 'weather_app', 'calculator_app'))
+                        ('crystal_package', 'crystal_app', 'crystal_core', 'crystal_hal', 'crystal_ui', 'crystal_control', 'clock_app', 'weather_app', 'calculator_app', 'ethernet_app'))
     quoted_sources = '\n'.join(f'"{path}"' for path in sources)
     quoted_includes = '\n'.join(f'"{path}"' for path in include_dirs)
     (work / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)
@@ -78,7 +82,7 @@ file(GLOB_RECURSE BROOKESIA_SOURCES
     "{brookesia}/assets/*.c")
 add_executable(capture {quoted_sources} {chr(36)}{{BROOKESIA_SOURCES}})
 target_include_directories(capture PRIVATE {quoted_includes})
-target_compile_definitions(capture PRIVATE ESP_BROOKESIA_KCONFIG_IGNORE ESP_BROOKESIA_CONF_SKIP
+target_compile_definitions(capture PRIVATE CONFIG_IDF_TARGET_ESP32P4=1 ESP_BROOKESIA_KCONFIG_IGNORE ESP_BROOKESIA_CONF_SKIP
     ESP_BROOKESIA_SQUARELINE_USE_INTERNAL_UI_HELPERS=1 ESP_BROOKESIA_SQ1_4_1_LV8_3_11)
 target_compile_options(capture PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(capture PRIVATE -Wl,-dead_strip -Wl,-undefined,dynamic_lookup)
@@ -91,7 +95,7 @@ target_link_libraries(capture PRIVATE lvgl)
     subprocess.run(['cmake', '-S', str(work), '-B', str(work / 'build')], check=True)
     subprocess.run(['cmake', '--build', str(work / 'build'), '--target', 'capture', '-j', '8'], check=True)
     subprocess.run([str(work / 'build/capture')], check=True, cwd=work)
-    for name in ('clock', 'weather', 'calculator', 'launcher', 'quick_settings'):
+    for name in ('clock', 'weather', 'calculator', 'ethernet', 'launcher', 'quick_settings'):
         png_from_ppm(work / f'{name}.ppm', output / f'{name}.png')
     print(f'Captured screenshots: {output}')
 

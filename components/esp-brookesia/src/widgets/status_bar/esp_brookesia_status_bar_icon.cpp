@@ -129,6 +129,13 @@ end:
     return true;
 }
 
+bool ESP_Brookesia_StatusBarIcon::moveToIndex(uint32_t index)
+{
+    ESP_BROOKESIA_CHECK_FALSE_RETURN(checkInitialized(), false, "Icon is not initialized");
+    lv_obj_move_to_index(_main_obj.get(), index);
+    return true;
+}
+
 bool ESP_Brookesia_StatusBarIcon::updateByNewData(void)
 {
     int image_resource_num = _image_objs.size();

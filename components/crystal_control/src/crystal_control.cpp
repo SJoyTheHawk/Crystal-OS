@@ -18,6 +18,7 @@
 
 #include "cJSON.h"
 #include "crystal_hal.hpp"
+#include "crystal_network.h"
 #include "crystal_package.hpp"
 #include "crystal_registry.hpp"
 #include "crystal_core.hpp"
@@ -192,10 +193,10 @@ esp_err_t sign_out_handler(httpd_req_t *request)
 
 esp_err_t pair_handler(httpd_req_t *request)
 {
-    // Session tokens require live RF entropy. Wi-Fi can be disabled after
-    // enabling the panel, so check again before accepting a pairing request.
-    if (!crystal_crypto_ready() || hal().wifi == nullptr || !hal().wifi->has_ip()) {
-        return json_response(request, 500, "{\"error\":\"pairing requires an active Wi-Fi connection\"}");
+    // P4 keeps local hardware entropy active independently of the C6 radio.
+    // S3 retains the active-Wi-Fi requirement via its only available interface.
+    if (!crystal_crypto_ready() || !crystal_network_has_ip()) {
+        return json_response(request, 500, "{\"error\":\"pairing requires an active network connection\"}");
     }
     if (request->content_len == 0 || request->content_len > kMaxPairBody) {
         return json_response(request, 400, "{\"error\":\"invalid request\"}");
@@ -643,7 +644,7 @@ bool crystal_control_enable(char pairing_pin[7])
     if (pairing_pin == nullptr || !crystal_crypto_ready()) return false;
     // This service is intentionally bound only when the device has a LAN
     // address. It is opt-in in Settings and never starts during boot.
-    if (hal().wifi == nullptr || !hal().wifi->has_ip()) return false;
+    if (!crystal_network_has_ip()) return false;
     if (s_server != nullptr) crystal_control_disable();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 13;

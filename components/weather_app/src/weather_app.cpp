@@ -435,7 +435,7 @@ void WeatherApp::applyReading(const Reading &reading)
             showEmpty("--", "Couldn't reach the weather service", reading.city);
         }
         else {
-            showEmpty("--", "Connect to WiFi to refresh", reading.city);
+            showEmpty("--", "Connect to a network to refresh", reading.city);
         }
         return;
     }

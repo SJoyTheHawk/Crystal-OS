@@ -18,6 +18,9 @@
 #include "crystal_control.hpp"
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_ethernet.hpp"
+#include "crystal_network.h"
+#include "crystal_network_policy.hpp"
 #include "crystal_registry.hpp"
 #include "crystal_update_view.h"
 
@@ -79,6 +82,25 @@ static void control_pair_dialog_close()
 
 static void control_pair_dialog_build(const char *pin, const char *url)
 {
+    // Match the accepted 720px Settings scale without changing the S3 dialog.
+    constexpr auto px = [](lv_coord_t value) -> lv_coord_t {
+#if CONFIG_IDF_TARGET_ESP32P4
+        return value * 3 / 2;
+#else
+        return value;
+#endif
+    };
+#if CONFIG_IDF_TARGET_ESP32P4
+    const lv_font_t *title_font = &lv_font_montserrat_28;
+    const lv_font_t *code_font = &lv_font_montserrat_48;
+    const lv_font_t *body_font = &lv_font_montserrat_24;
+    const lv_font_t *notice_font = &lv_font_montserrat_20;
+#else
+    const lv_font_t *title_font = &lv_font_montserrat_20;
+    const lv_font_t *code_font = &lv_font_montserrat_28;
+    const lv_font_t *body_font = &lv_font_montserrat_16;
+    const lv_font_t *notice_font = &lv_font_montserrat_14;
+#endif
     control_pair_dialog_close();
     s_control_pair_dialog = lv_obj_create(lv_layer_top());
     if (s_control_pair_dialog == nullptr) return;
@@ -90,54 +112,58 @@ static void control_pair_dialog_build(const char *pin, const char *url)
     lv_obj_clear_flag(s_control_pair_dialog, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *card = lv_obj_create(s_control_pair_dialog);
-    lv_obj_set_size(card, 400, 330);
+    lv_obj_set_size(card, px(400), px(330));
     lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(card, lv_color_hex(0x59636e), 0);
     lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, 16, 0);
-    lv_obj_set_style_pad_all(card, 22, 0);
+    lv_obj_set_style_radius(card, px(16), 0);
+    lv_obj_set_style_pad_all(card, px(22), 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(card);
 
     lv_obj_t *title = lv_label_create(card);
     lv_label_set_text(title, "Pair Control Panel");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, title_font, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t *code = lv_label_create(card);
     lv_label_set_text(code, pin);
     lv_obj_set_style_text_color(code, lv_color_hex(0x72a7ff), 0);
-    lv_obj_set_style_text_font(code, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_letter_space(code, 5, 0);
-    lv_obj_align(code, LV_ALIGN_TOP_MID, 0, 55);
+    lv_obj_set_style_text_font(code, code_font, 0);
+    lv_obj_set_style_text_letter_space(code, px(5), 0);
+    lv_obj_align(code, LV_ALIGN_TOP_MID, 0, px(55));
 
     lv_obj_t *detail = lv_label_create(card);
-    lv_obj_set_width(detail, 350);
-    lv_obj_set_height(detail, 75);
+    lv_obj_set_width(detail, px(350));
+    lv_obj_set_height(detail, px(75));
     lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
-    lv_label_set_text_fmt(detail, "Open %s on a computer on this WiFi network.\nThe code expires in 10 minutes and can be used once.", url);
+    lv_label_set_text_fmt(detail, "Open %s on a computer on the same local network.\nThe code expires in 10 minutes and can be used once.", url);
     lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0);
     lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
-    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 112);
+    lv_obj_set_style_text_font(detail, body_font, 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, px(112));
 
     lv_obj_t *notice = lv_label_create(card);
     lv_label_set_text(notice, "Keep this code private. The panel is available until restart or disabled here.");
-    lv_obj_set_width(notice, 350);
+    lv_obj_set_width(notice, px(350));
     lv_label_set_long_mode(notice, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(notice, lv_color_hex(0xf0b35a), 0);
     lv_obj_set_style_text_align(notice, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(notice, &lv_font_montserrat_14, 0);
-    lv_obj_align(notice, LV_ALIGN_BOTTOM_MID, 0, -54);
+    lv_obj_set_style_text_font(notice, notice_font, 0);
+    lv_obj_align(notice, LV_ALIGN_BOTTOM_MID, 0, -px(54));
 
     lv_obj_t *done = lv_btn_create(card);
-    lv_obj_set_size(done, 140, 42);
+    lv_obj_set_size(done, px(140), px(42));
     lv_obj_align(done, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(done, lv_color_hex(0x3b82f6), 0);
     lv_obj_t *done_label = lv_label_create(done);
     lv_label_set_text(done_label, "Done");
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(done_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(done_label, lv_color_white(), 0);
+#endif
     lv_obj_center(done_label);
     lv_obj_add_event_cb(done, [](lv_event_t *) { control_pair_dialog_close(); }, LV_EVENT_CLICKED, nullptr);
 
@@ -413,6 +439,14 @@ constexpr lv_coord_t kSettingsSwitchClick = 22;
 constexpr lv_coord_t kSettingsSliderWidth = 240;
 constexpr lv_coord_t kSettingsSliderHeight = 24;
 constexpr lv_coord_t kSettingsNarrowSliderWidth = 220;
+// Keep sliders on the same right edge as the settings toggles. Their expanded
+// hit area remains independent of the visual alignment.
+constexpr lv_coord_t kSettingsSliderClick = 20;
+constexpr lv_coord_t kSettingsSliderRightInset = 0;
+constexpr int kBrightnessUiMin = 1;
+constexpr int kBrightnessUiMax = 100;
+constexpr int kDimBrightnessUiMin = 1;
+constexpr int kDimBrightnessUiMax = 50;
 constexpr lv_coord_t kSettingsDropdownWidth = 200;
 constexpr lv_coord_t kSettingsInputHeight = 60;
 constexpr lv_coord_t kSettingsConfirmWidth = 480;
@@ -481,6 +515,12 @@ constexpr lv_coord_t kSettingsSwitchClick = 15;
 constexpr lv_coord_t kSettingsSliderWidth = 180;
 constexpr lv_coord_t kSettingsSliderHeight = 18;
 constexpr lv_coord_t kSettingsNarrowSliderWidth = 160;
+constexpr lv_coord_t kSettingsSliderClick = 20;
+constexpr lv_coord_t kSettingsSliderRightInset = 0;
+constexpr int kBrightnessUiMin = 0;
+constexpr int kBrightnessUiMax = 95;
+constexpr int kDimBrightnessUiMin = 5;
+constexpr int kDimBrightnessUiMax = 50;
 constexpr lv_coord_t kSettingsDropdownWidth = 170;
 constexpr lv_coord_t kSettingsInputHeight = 52;
 constexpr lv_coord_t kSettingsConfirmWidth = 360;
@@ -623,6 +663,11 @@ lv_obj_t *s_network_wifi_row = nullptr;
 lv_obj_t *s_network_details_row = nullptr;
 lv_obj_t *s_network_page = nullptr;
 lv_obj_t *s_connection_details_content = nullptr;
+lv_obj_t *s_ethernet_page = nullptr;
+lv_obj_t *s_ethernet_rows[8] = {};
+lv_obj_t *s_network_ethernet_row = nullptr;
+lv_obj_t *s_network_active_row = nullptr;
+lv_timer_t *s_ethernet_timer = nullptr;
 lv_obj_t *s_power_auto_dim_row = nullptr;
 lv_obj_t *s_sound_alerts_row = nullptr;
 lv_obj_t *s_region_auto_time_row = nullptr;
@@ -750,7 +795,7 @@ void quick_set_bar_from_touch(lv_obj_t *bar)
     value = LV_CLAMP(0, value, 100);
     lv_bar_set_value(bar, value, LV_ANIM_OFF);
     if (bar == s_quick_brightness) {
-        value = LV_CLAMP(0, value, 95);
+        value = LV_CLAMP(kBrightnessUiMin, value, kBrightnessUiMax);
         crystal_brightness_set(static_cast<uint8_t>(value));
     } else if (bar == s_quick_volume) {
         if (crystal_hal_set_volume(value) && hal().storage != nullptr) {
@@ -910,7 +955,7 @@ bool create_quick_settings()
     lv_obj_set_style_text_opa(lv_obj_get_child(bt, 1), LV_OPA_40, 0);
     lv_obj_set_style_text_opa(lv_obj_get_child(bt, 2), LV_OPA_40, 0);
 #endif
-    s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, crystal_brightness_level(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
+    s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, kBrightnessUiMin, kBrightnessUiMax); lv_bar_set_value(s_quick_brightness, crystal_brightness_level(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
     // The bundled font has no sun glyph, so draw a native icon without
     // theme styles. Its bottom alignment matches the volume symbol exactly.
     lv_obj_t *brightness_icon = lv_obj_create(s_quick_brightness); lv_obj_remove_style_all(brightness_icon); lv_obj_set_size(brightness_icon, kQuickNativeIconSize, kQuickNativeIconSize); lv_obj_align(brightness_icon, LV_ALIGN_BOTTOM_MID, 0, -quick_icon_px(8)); lv_obj_clear_flag(brightness_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -1696,22 +1741,43 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
     if (target_app != nullptr) {
         const void *icon_resource = target_app->getLauncherIcon().resource;
         if (icon_resource != nullptr) {
-            identity_icon = lv_img_create(incoming_card);
+            identity_icon = lv_obj_create(incoming_card);
             if (identity_icon != nullptr) {
-                lv_img_set_src(identity_icon, icon_resource);
-#if CONFIG_IDF_TARGET_ESP32P4
-                lv_img_set_zoom(identity_icon, LV_IMG_ZOOM_NONE * 3 / 2);
-                lv_obj_refr_size(identity_icon);
-                const lv_coord_t label_height = lv_font_get_line_height(&lv_font_montserrat_28);
-                const lv_coord_t group_height = lv_obj_get_height(identity_icon) + 20 + label_height;
-                lv_obj_set_y(identity_icon, static_cast<lv_coord_t>((height - group_height) / 2));
-#else
-                lv_obj_set_y(identity_icon, static_cast<lv_coord_t>(
-                    (height - lv_obj_get_height(identity_icon)) / 2 - 34));
-#endif
-                lv_obj_set_style_opa(identity_icon, LV_OPA_COVER, 0);
-                lv_obj_add_flag(identity_icon, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_style_all(identity_icon);
+                lv_obj_set_style_bg_opa(identity_icon, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(identity_icon, 0, 0);
                 lv_obj_clear_flag(identity_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_t *icon_image = lv_img_create(identity_icon);
+                if (icon_image != nullptr) {
+                    lv_img_set_src(icon_image, icon_resource);
+                    // Measure the zoomed artwork, not its unscaled source bounds.
+                    lv_img_set_size_mode(icon_image, LV_IMG_SIZE_MODE_REAL);
+#if CONFIG_IDF_TARGET_ESP32P4
+                    lv_img_set_zoom(icon_image, LV_IMG_ZOOM_NONE * 3 / 2);
+#endif
+                    lv_obj_refr_size(icon_image);
+                    const lv_coord_t icon_width = lv_obj_get_width(icon_image);
+                    const lv_coord_t icon_height = lv_obj_get_height(icon_image);
+                    lv_obj_set_size(identity_icon, icon_width, icon_height);
+                    lv_obj_set_style_radius(identity_icon, std::min(icon_width, icon_height) / 5, 0);
+                    lv_obj_set_style_clip_corner(identity_icon, true, 0);
+                    lv_obj_center(icon_image);
+#if CONFIG_IDF_TARGET_ESP32P4
+                    const lv_coord_t label_height = lv_font_get_line_height(&lv_font_montserrat_28);
+                    const lv_coord_t group_height = icon_height + 20 + label_height;
+                    lv_obj_set_y(identity_icon, static_cast<lv_coord_t>((height - group_height) / 2));
+#else
+                    lv_obj_set_y(identity_icon, static_cast<lv_coord_t>((height - icon_height) / 2 - 34));
+#endif
+                    lv_obj_clear_flag(icon_image, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+                } else {
+                    lv_obj_del(identity_icon);
+                    identity_icon = nullptr;
+                }
+                if (identity_icon != nullptr) {
+                    lv_obj_set_style_opa(identity_icon, LV_OPA_COVER, 0);
+                    lv_obj_add_flag(identity_icon, LV_OBJ_FLAG_HIDDEN);
+                }
             }
         }
         identity_name = lv_label_create(incoming_card);
@@ -2402,6 +2468,7 @@ void clear_page_cache(lv_obj_t *page)
         s_network_page = nullptr;
         s_network_wifi_row = nullptr;
         s_network_details_row = nullptr;
+        s_network_ethernet_row = s_network_active_row = nullptr;
     }
     if (s_connection_details_content != nullptr &&
             lv_obj_get_parent(s_connection_details_content) == page) {
@@ -2443,6 +2510,7 @@ void clear_page_cache(lv_obj_t *page)
         s_network_wifi_row = nullptr;
         s_network_details_row = nullptr;
         s_network_page = nullptr;
+        s_network_ethernet_row = s_network_active_row = nullptr;
         s_connection_details_content = nullptr;
         s_power_auto_dim_row = nullptr;
         s_sound_alerts_row = nullptr;
@@ -2546,7 +2614,8 @@ void settings_row_set_summary(lv_obj_t *row, const char *summary)
     if (row == nullptr) return;
     auto *detail = static_cast<lv_obj_t *>(lv_obj_get_user_data(row));
     if (detail == nullptr) return;
-    lv_label_set_text(detail, summary != nullptr ? summary : "");
+    const char *text = summary != nullptr ? summary : "";
+    if (strcmp(lv_label_get_text(detail), text) != 0) lv_label_set_text(detail, text);
     // Phase 11 edit end.
 }
 
@@ -2755,12 +2824,79 @@ void settings_push_ip()
     s_ip_apply_status = settings_status_label(content);
 }
 
+const char *ethernet_status(const CrystalEthernetInfo &info)
+{
+    if (!info.supported) return "Not available on this board";
+    if (info.error != ESP_OK) return "Unavailable - WiFi still works";
+    if (!info.initialized) return "Starting...";
+    if (!info.started) return "Stopped";
+    if (!info.link) return "Cable disconnected";
+    return info.has_ip ? "Connected" : "Getting an IP address...";
+}
+
+void ethernet_details_refresh(lv_timer_t *)
+{
+    if (s_ethernet_page == nullptr) return;
+    const auto info = crystal_ethernet_info();
+    char value[64] = {};
+    const auto set = [](size_t index, const char *text) {
+        auto *detail = static_cast<lv_obj_t *>(lv_obj_get_user_data(s_ethernet_rows[index]));
+        if (detail && strcmp(lv_label_get_text(detail), text) != 0) lv_label_set_text(detail, text);
+    };
+    set(0, ethernet_status(info));
+    set(1, crystal_network_active_type() == CrystalNetworkType::Ethernet ? "Active connection" : "Automatic - preferred when connected");
+    const uint32_t addresses[] = {info.ip, info.mask, info.gateway, info.dns};
+    for (size_t i = 0; i < 4; ++i) {
+        if (info.has_ip && addresses[i] != 0)
+            ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&addresses[i]), value, sizeof(value));
+        else strlcpy(value, "Not assigned", sizeof(value));
+        set(i + 2, value);
+    }
+    if (info.initialized) snprintf(value, sizeof(value), "%02X:%02X:%02X:%02X:%02X:%02X",
+        info.mac[0], info.mac[1], info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+    else strlcpy(value, "Unavailable", sizeof(value));
+    set(6, value);
+    if (info.link && info.speed_mbps) snprintf(value, sizeof(value), "%u Mbps - %s duplex", info.speed_mbps, info.full_duplex ? "Full" : "Half");
+    else strlcpy(value, "No link", sizeof(value));
+    set(7, value);
+}
+
+void ethernet_details_deleted(lv_event_t *event)
+{
+    if (lv_event_get_target(event) != s_ethernet_page) return;
+    if (s_ethernet_timer) lv_timer_del(s_ethernet_timer);
+    s_ethernet_timer = nullptr;
+    s_ethernet_page = nullptr;
+    memset(s_ethernet_rows, 0, sizeof(s_ethernet_rows));
+}
+
+void settings_push_ethernet()
+{
+    lv_obj_t *content = system_page_push("Ethernet");
+    if (!content) return;
+    s_ethernet_page = lv_obj_get_parent(content);
+    lv_obj_add_event_cb(s_ethernet_page, ethernet_details_deleted, LV_EVENT_DELETE, nullptr);
+    const char *labels[] = {"Status", "Network Priority", "IP Address", "Subnet Mask", "Gateway", "DNS Server", "Ethernet MAC", "Link Speed"};
+    for (size_t i = 0; i < 8; ++i) {
+        s_ethernet_rows[i] = settings_row(content, labels[i], "--");
+        lv_obj_clear_flag(s_ethernet_rows[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+    ethernet_details_refresh(nullptr);
+    s_ethernet_timer = lv_timer_create(ethernet_details_refresh, 1000, nullptr);
+}
+
 void settings_push_network()
 {
     lv_obj_t *content = system_page_push("Network");
     if (content == nullptr) return;
     s_network_page = lv_obj_get_parent(content);
     IWifi *wifi = hal().wifi;
+#if CONFIG_IDF_TARGET_ESP32P4
+    s_network_active_row = settings_row(content, "Active Connection", crystal_network_type_name(crystal_network_active_type()));
+    lv_obj_clear_flag(s_network_active_row, LV_OBJ_FLAG_CLICKABLE);
+    s_network_ethernet_row = settings_row(content, "Ethernet", ethernet_status(crystal_ethernet_info()));
+    lv_obj_add_event_cb(s_network_ethernet_row, [](lv_event_t *) { settings_push_ethernet(); }, LV_EVENT_CLICKED, nullptr);
+#endif
     const char *summary = wifi == nullptr || !wifi->enabled() ? "Off" :
                           s_wifi_connecting[0] != '\0' ? "Connecting..." :
                           wifi->connected() ? wifi->last_ssid() : "On - Not connected";
@@ -2775,7 +2911,7 @@ void settings_push_network()
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *networks = settings_row(content, "WiFi Networks", "Scan, connect, or forget");
     lv_obj_add_event_cb(networks, [](lv_event_t *) { wifi_page_open(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *ip = settings_row(content, "IP Settings", "Automatic or validated manual address");
+    lv_obj_t *ip = settings_row(content, "WiFi IP Settings", "Automatic or validated manual address");
     lv_obj_add_event_cb(ip, [](lv_event_t *) { settings_push_ip(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *details = settings_row(content, "Connection Details", wifi != nullptr && wifi->has_ip() ? "Connected" : "Not connected");
     s_network_details_row = details;
@@ -2786,12 +2922,19 @@ void settings_push_display_power()
 {
     lv_obj_t *content = system_page_push("Display & Power");
     if (content == nullptr) return;
-    lv_obj_t *brightness_row = settings_row(content, "Brightness", "0-95");
+    lv_obj_t *brightness_row = settings_row(content, "Brightness",
+#if CONFIG_IDF_TARGET_ESP32P4
+                                             "1-100"
+#else
+                                             "0-95"
+#endif
+                                            );
     lv_obj_t *brightness = lv_slider_create(brightness_row);
     lv_obj_set_size(brightness, kSettingsSliderWidth, kSettingsSliderHeight);
-    lv_obj_align(brightness, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(brightness_row, kSettingsSliderWidth);
-    lv_slider_set_range(brightness, 0, 95);
+    lv_obj_set_ext_click_area(brightness, kSettingsSliderClick);
+    lv_obj_align(brightness, LV_ALIGN_RIGHT_MID, -kSettingsSliderRightInset, 0);
+    settings_row_reserve_right(brightness_row, kSettingsSliderWidth + kSettingsSliderRightInset);
+    lv_slider_set_range(brightness, kBrightnessUiMin, kBrightnessUiMax);
     lv_slider_set_value(brightness, crystal_brightness_level(), LV_ANIM_OFF);
     lv_obj_add_event_cb(brightness, [](lv_event_t *e) { crystal_brightness_set(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -2826,13 +2969,26 @@ void settings_push_display_power()
     lv_obj_set_style_text_font(off, kSettingsInputFont, 0);
     lv_obj_add_event_cb(off, [](lv_event_t *e) { static const uint16_t values[] = {0, 60, 120, 300, 900}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_off_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_off_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t *level_row = settings_row(content, "Dim Brightness", "HAL level 5-50");
+    lv_obj_t *level_row = settings_row(content, "Dim Brightness", "1-50");
     lv_obj_t *level = lv_slider_create(level_row);
     lv_obj_set_size(level, kSettingsNarrowSliderWidth, kSettingsSliderHeight);
-    lv_obj_align(level, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(level_row, kSettingsNarrowSliderWidth);
-    lv_slider_set_range(level, 5, 50); lv_slider_set_value(level, crystal_power_dim_level(), LV_ANIM_OFF);
-    lv_obj_add_event_cb(level, [](lv_event_t *e) { crystal_power_set_dim_level(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_set_ext_click_area(level, kSettingsSliderClick);
+    lv_obj_align(level, LV_ALIGN_RIGHT_MID, -kSettingsSliderRightInset, 0);
+    settings_row_reserve_right(level_row, kSettingsNarrowSliderWidth + kSettingsSliderRightInset);
+    lv_slider_set_range(level, kDimBrightnessUiMin, kDimBrightnessUiMax); lv_slider_set_value(level, crystal_power_dim_level(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(level, [](lv_event_t *e) {
+        auto *slider = static_cast<lv_obj_t *>(lv_event_get_target(e));
+        const lv_event_code_t code = lv_event_get_code(e);
+        if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING || code == LV_EVENT_VALUE_CHANGED) {
+            const uint8_t dim_level = static_cast<uint8_t>(lv_slider_get_value(slider));
+            if (code == LV_EVENT_VALUE_CHANGED) crystal_power_set_dim_level(dim_level);
+            if (hal().brightness != nullptr) hal().brightness->set(dim_level);
+        } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+            // Dim Brightness is a preview while editing. Restore the user's
+            // normal brightness after the control is released.
+            crystal_brightness_set(crystal_brightness_level());
+        }
+    }, LV_EVENT_ALL, nullptr);
 
     lv_obj_t *saving_row = settings_row(content, "Energy Saving", "Shorter timeouts and lower power");
     lv_obj_t *saving = settings_switch(saving_row, crystal_power_saving_enabled());
@@ -2853,8 +3009,9 @@ void settings_push_sound()
     lv_obj_t *volume_row = settings_row(content, "Volume", "0-100");
     lv_obj_t *volume = lv_slider_create(volume_row);
     lv_obj_set_size(volume, kSettingsSliderWidth, kSettingsSliderHeight);
-    lv_obj_align(volume, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(volume_row, kSettingsSliderWidth);
+    lv_obj_set_ext_click_area(volume, kSettingsSliderClick);
+    lv_obj_align(volume, LV_ALIGN_RIGHT_MID, -kSettingsSliderRightInset, 0);
+    settings_row_reserve_right(volume_row, kSettingsSliderWidth + kSettingsSliderRightInset);
     lv_slider_set_range(volume, 0, 100); lv_slider_set_value(volume, crystal_hal_get_volume(), LV_ANIM_OFF);
     lv_obj_add_event_cb(volume, [](lv_event_t *e) { const uint8_t value = static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e)))); if (crystal_hal_set_volume(value) && hal().storage != nullptr) (void)hal().storage->set("volume", &value, sizeof(value)); }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *alerts_row = settings_row(content, "Timer & Alarm Sounds", "Play timer completion alerts");
@@ -3221,8 +3378,14 @@ void settings_push_status()
                            ? "Crash recovered" : "None");
     if (info != nullptr) { snprintf(value, sizeof(value), "%lu seconds", static_cast<unsigned long>(info->uptime_seconds())); (void)settings_row(content, "Uptime", value); }
     (void)settings_row(content, "WiFi", hal().wifi != nullptr && hal().wifi->has_ip() ? hal().wifi->last_ssid() : "Not connected");
+    (void)settings_row(content, "Active Connection", crystal_network_type_name(crystal_network_active_type()));
     IWifi::IpConfig ip = {};
-    if (hal().wifi != nullptr && hal().wifi->ip_config(&ip)) ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&ip.ip), value, sizeof(value)); else strlcpy(value, "Unavailable", sizeof(value));
+    const auto ethernet = crystal_ethernet_info();
+    if (crystal_network_active_type() == CrystalNetworkType::Ethernet && ethernet.has_ip)
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&ethernet.ip), value, sizeof(value));
+    else if (hal().wifi != nullptr && hal().wifi->ip_config(&ip))
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&ip.ip), value, sizeof(value));
+    else strlcpy(value, "Unavailable", sizeof(value));
     (void)settings_row(content, "IP Address", value);
     int percent = 0; bool charging = false;
     if (crystal_battery_cached(&percent, &charging)) snprintf(value, sizeof(value), "%d%% - %s", percent, charging ? "Charging" : "On battery"); else strlcpy(value, "Waiting for reading", sizeof(value));
@@ -3445,11 +3608,10 @@ void control_panel_toggle_changed(lv_event_t *event)
         lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0x91a0b3), 0);
         return;
     }
-    IWifi *wifi = hal().wifi;
-    if (wifi == nullptr || !wifi->has_ip()) {
+    if (!crystal_network_has_ip()) {
         lv_obj_clear_state(control, LV_STATE_CHECKED);
         settings_row_set_summary(s_control_api_row, "Off - enable to pair a browser");
-        lv_label_set_text(s_control_status_label, "Connect the device to WiFi before enabling the local panel.");
+        lv_label_set_text(s_control_status_label, "Connect WiFi or Ethernet before enabling the local panel.");
         lv_obj_set_style_text_color(s_control_status_label, lv_color_hex(0xf59e0b), 0);
         return;
     }
@@ -3530,7 +3692,11 @@ void crystal_shell_control_start_event(const char pairing_pin[7])
     IWifi::IpConfig config = {};
     char address[24] = {};
     char url[48] = "http://device/";
-    if (wifi != nullptr && wifi->ip_config(&config)) {
+    const auto ethernet = crystal_ethernet_info();
+    if (crystal_network_active_type() == CrystalNetworkType::Ethernet && ethernet.has_ip) {
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&ethernet.ip), address, sizeof(address));
+        snprintf(url, sizeof(url), "http://%s/", address);
+    } else if (wifi != nullptr && wifi->ip_config(&config)) {
         ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t *>(&config.ip), address, sizeof(address));
         snprintf(url, sizeof(url), "http://%s/", address);
     }
@@ -3640,7 +3806,8 @@ void settings_open()
     s_root_settings_page = lv_obj_get_parent(content);
     crystal_page_transition_bind_backdrop(s_root_settings_page, backdrop);
     IWifi *wifi = hal().wifi;
-    const char *network_summary = wifi == nullptr || !wifi->enabled() ? "WiFi Off" :
+    const char *network_summary = crystal_network_active_type() == CrystalNetworkType::Ethernet ? "Ethernet connected" :
+                                  wifi == nullptr || !wifi->enabled() ? "WiFi Off" :
                                   wifi->connected() ? wifi->last_ssid() : "WiFi On - Not connected";
     lv_obj_t *network = settings_row(content, "Network", network_summary);
     s_root_network_row = network;
@@ -3988,6 +4155,19 @@ void crystal_shell_wifi_event(uint8_t event)
         wifi_scan_busy(false);
         wifi_page_fill_list();
     }
+    if (crystal_network_active_type() == CrystalNetworkType::Ethernet)
+        settings_row_set_summary(s_root_network_row, "Ethernet connected");
+}
+
+void crystal_shell_network_event()
+{
+    const auto active = crystal_network_active_type();
+    if (s_network_active_row) settings_row_set_summary(s_network_active_row, crystal_network_type_name(active));
+    if (s_network_ethernet_row) settings_row_set_summary(s_network_ethernet_row, ethernet_status(crystal_ethernet_info()));
+    if (active == CrystalNetworkType::Ethernet) settings_row_set_summary(s_root_network_row, "Ethernet connected");
+    else if (hal().wifi && hal().wifi->has_ip()) settings_row_set_summary(s_root_network_row, hal().wifi->last_ssid());
+    else settings_row_set_summary(s_root_network_row, "No active connection");
+    ethernet_details_refresh(nullptr);
 }
 
 void crystal_shell_weather_event(const CrystalWeatherReading *reading)

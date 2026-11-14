@@ -3,12 +3,13 @@ set(CRYSTAL_LVGL_PORT_COMPONENT esp_lvgl_port)
 if(IDF_TARGET STREQUAL "esp32p4")
     set(CRYSTAL_BOARD_COMPONENT crystal_board_p4)
     set(CRYSTAL_LVGL_PORT_COMPONENT)
+    set(CRYSTAL_ETHERNET_APP_COMPONENT ethernet_app)
 endif()
 
 idf_component_register(
     SRCS "main.cpp" "crystal_memory.c" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
     INCLUDE_DIRS "."
-    REQUIRES dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_shell esp-brookesia ${CRYSTAL_LVGL_PORT_COMPONENT} ${CRYSTAL_BOARD_COMPONENT} nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
+    REQUIRES ${CRYSTAL_ETHERNET_APP_COMPONENT} dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_shell esp-brookesia ${CRYSTAL_LVGL_PORT_COMPONENT} ${CRYSTAL_BOARD_COMPONENT} nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)

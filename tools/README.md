@@ -2,12 +2,23 @@
 
 ## README screenshots
 
-Run `python3 tools/capture_readme.py` to render the production Brookesia
-launcher, Crystal shell Quick Settings panel, Clock, Weather, and Calculator
-interfaces into `docs/images/`. The headless LVGL capture uses fixed sample
-time, weather, battery, brightness, volume, and Wi-Fi status; it does not need a
-device or network connection. It requires CMake, a C++17 compiler, and the
-checked-out managed LVGL dependency.
+Run `python3 tools/capture_readme.py` to render six **720 × 720 P4** images:
+the production Brookesia launcher, Crystal shell Quick Settings panel, Clock,
+Weather, Calculator, and Ethernet diagnostics. Output goes to `docs/images/`;
+use `--output-dir PATH` for a separate preview directory.
+
+The headless LVGL harness compiles the current production P4 stylesheet,
+widgets, and app sources with `CONFIG_IDF_TARGET_ESP32P4=1`. It uses fixed
+sample time, weather, battery, brightness, volume, and network snapshots.
+Ethernet is selected with documentation-only addresses; Wi-Fi is enabled but
+disconnected. This is a selected app gallery, not a complete firmware boot or
+a live network/hardware test. No device or network connection is needed.
+
+Requirements: macOS (the capture linker flags use Apple's linker), CMake, a
+C++17 compiler, and the checked-out managed LVGL dependency. Build artifacts
+and temporary PPM frames stay under `.cache/readme-captures/`. The tool checks
+app content and frame dimensions before writing PNG files. See
+[image provenance](../docs/images/README.md) and [simulator scope](../docs/SIMULATOR.md).
 
 ## Launcher swipe regression check
 

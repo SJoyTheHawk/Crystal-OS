@@ -31,10 +31,18 @@ int main() {
     assert(!crystal_crypto_ready());
     assert(crystal_crypto_init());
     assert(crystal_crypto_ready());
+#if CONFIG_IDF_TARGET_ESP32P4
+    assert(enables == 1 && disables == 0 && entropy && words > 0);
+#else
     assert(enables == 1 && disables == 1 && !entropy && words > 0);
+#endif
     assert(std::strcmp(randombytes_implementation_name(), "crystal-esp32") == 0);
     assert(crystal_crypto_init());
+#if CONFIG_IDF_TARGET_ESP32P4
+    assert(enables == 1 && disables == 0 && entropy);
+#else
     assert(enables == 1 && disables == 1);
+#endif
     // Simulate active Wi-Fi entropy for the pairing PIN and session token.
     entropy = true;
     unsigned char token[32];
@@ -42,7 +50,9 @@ int main() {
     randombytes_buf(token, sizeof(token));
     assert(words > before);
     assert(randombytes_uniform(1000000) < 1000000);
+#if !CONFIG_IDF_TARGET_ESP32P4
     entropy = false;
+#endif
     // RFC 8032 test vector 1: verification also works offline.
     unsigned char key[32], sig[64];
     assert(sodium_hex2bin(key, sizeof(key),
@@ -79,6 +89,12 @@ target_link_libraries(check PRIVATE esphome::sodium)
         subprocess.run(['cmake', '-S', str(work), '-B', str(work / 'build')], check=True, stdout=subprocess.DEVNULL)
         subprocess.run(['cmake', '--build', str(work / 'build'), '-j', '4'], check=True, stdout=subprocess.DEVNULL)
         subprocess.run([str(work / 'build/check')], check=True)
+        with (work/'CMakeLists.txt').open('a') as cmake:
+            cmake.write('\ntarget_compile_definitions(check PRIVATE CONFIG_IDF_TARGET_ESP32P4=1)\n')
+        subprocess.run(['cmake','-S',str(work),'-B',str(work/'build')],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(['cmake','--build',str(work/'build'),'-j','4'],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run([str(work/'build/check')],check=True)
+        print('PASS: P4 retains local entropy for Ethernet-only sessions; S3 releases boot entropy')
 
 if __name__ == '__main__':
     main()

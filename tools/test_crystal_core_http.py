@@ -66,7 +66,12 @@ static void finish(Queued request, const char *body, int status = 200, int error
 }
 extern "C" uint32_t crystal_http_get(const crystal_http_options_t *options,
                                      crystal_http_callback_t callback, void *context) {
-    assert(options->timeout_ms > 0 && options->max_attempts == 1);
+    assert(options->max_attempts == 1);
+#if CONFIG_IDF_TARGET_ESP32P4
+    assert(options->timeout_ms == 15000);
+#else
+    assert(options->timeout_ms == 8000);
+#endif
     assert(options->max_body_bytes > 0);
     if (reject_submission) return 0;
     queued = {callback, context};
@@ -145,11 +150,15 @@ def main():
             path.write_text('#include "mock.h"\n')
         source = ROOT / "components/crystal_core/src/crystal_core_http.cpp"
         (temp / "check.cpp").write_text(f'#include "{source}"\n' + CHECK)
-        subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                        "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                        "-I", str(temp), "-I", str(ROOT / "components/crystal_http/include"),
-                        str(temp / "check.cpp"), "-o", str(temp / "check")], check=True)
-        subprocess.run([str(temp / "check")], check=True)
+        for target, value in (("s3", 0), ("p4", 1)):
+            executable = temp / f"check_{target}"
+            subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                            f"-DCONFIG_IDF_TARGET_ESP32P4={value}",
+                            "-I", str(temp), "-I", str(ROOT / "components/crystal_http/include"),
+                            str(temp / "check.cpp"), "-o", str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
+            print(f"PASS: {target} bounded transport budget and completion/cancellation lifecycle")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,30 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 // Deterministic screenshot fixtures, never linked into firmware.
 #include "crystal_core.hpp"
+#include "crystal_ethernet.hpp"
+#include "crystal_network_policy.hpp"
+#include <arpa/inet.h>
+
+// Documentation-only addresses and locally administered MAC; no real network.
+CrystalEthernetInfo crystal_ethernet_info()
+{
+    CrystalEthernetInfo info{};
+    info.supported = info.initialized = info.started = info.link = info.has_ip = true;
+    info.ip = inet_addr("192.0.2.42");
+    info.mask = inet_addr("255.255.255.0");
+    info.gateway = info.dns = inet_addr("192.0.2.1");
+    info.mac[0] = 0x02;
+    info.mac[5] = 0x42;
+    info.speed_mbps = 100;
+    info.full_duplex = true;
+    return info;
+}
+CrystalNetworkType crystal_network_active_type() { return CrystalNetworkType::Ethernet; }
+const char *crystal_network_type_name(CrystalNetworkType type)
+{
+    return type == CrystalNetworkType::Ethernet ? "Ethernet" :
+           type == CrystalNetworkType::WiFi ? "WiFi" : "Offline";
+}
 
 // 2026-11-10 10:09:00 HKT. Only app source files substitute their time() calls.
 extern "C" time_t crystal_capture_time(time_t *out)

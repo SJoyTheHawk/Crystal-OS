@@ -176,7 +176,7 @@ bool ESP_Brookesia_AppLauncherIcon::updateByNewData(void)
         _image_default_zoom = (int)(w_factor * LV_IMG_ZOOM_NONE);
         lv_img_set_zoom(_icon_image_obj.get(), _image_default_zoom);
     }
-    lv_obj_refr_size(_icon_image_obj.get());
+    updateImageRounding();
     // Calculate the multiple of the size between the target and the image.
     h_factor = (float)(_data.image.press_size.width) / ((lv_img_dsc_t *)_info.image.resource)->header.h;
     w_factor = (float)(_data.image.press_size.height) / ((lv_img_dsc_t *)_info.image.resource)->header.w;
@@ -189,6 +189,17 @@ bool ESP_Brookesia_AppLauncherIcon::updateByNewData(void)
     }
 
     return true;
+}
+
+// REAL size mode follows zoom. Clip the image so the mask shrinks on press,
+// while the outer layout cell and caption keep their original positions.
+void ESP_Brookesia_AppLauncherIcon::updateImageRounding()
+{
+    lv_obj_refr_size(_icon_image_obj.get());
+    const lv_coord_t width = lv_obj_get_width(_icon_image_obj.get());
+    const lv_coord_t height = lv_obj_get_height(_icon_image_obj.get());
+    lv_obj_set_style_radius(_icon_image_obj.get(), std::min(width, height) / 5, 0);
+    lv_obj_set_style_clip_corner(_icon_image_obj.get(), true, 0);
 }
 
 void ESP_Brookesia_AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
@@ -228,7 +239,7 @@ void ESP_Brookesia_AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
         }
         // Zoom out icon
         lv_img_set_zoom(icon_image_obj, icon->_image_press_zoom);
-        lv_obj_refr_size(icon_image_obj);
+        icon->updateImageRounding();
         icon->_flags.is_pressed_losted = false;
         break;
     case LV_EVENT_PRESS_LOST:
@@ -239,7 +250,7 @@ void ESP_Brookesia_AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
         ESP_BROOKESIA_LOGD("Released");
         // Zoom in icon
         lv_img_set_zoom(icon_image_obj, icon->_image_default_zoom);
-        lv_obj_refr_size(icon_image_obj);
+        icon->updateImageRounding();
         break;
     default:
         ESP_BROOKESIA_CHECK_FALSE_EXIT(false, "Invalid event code(%d)", event_code);

@@ -53,9 +53,10 @@ Use the isolated build guide instead of the old root `set-target` instructions
 or proposed API snippets. Preserve Crystal OTA/security and persistence
 requirements; package/OTA regressions, soak and performance claims remain open.
 
-**Next validation after P4.2 closure:** card/touch/edge gestures, app open/return,
-visual continuity and Wi-Fi scan UI have user acceptance. Continue controlled
-radio reconnect/timing, state persistence, packages, control panel, OTA and
+**Next validation after P4.3 closure (2026-11-15):** the network expansion,
+Ethernet/Wi-Fi indicator, 2px status-bar offset and corrected rounded launcher/
+switcher icons have user acceptance. Continue controlled radio reconnect/timing,
+state persistence, packages, remaining control-panel operations, OTA and
 performance/soak qualification in their later phases. The factory evidence remains a
 separate historical baseline. A complete 32 MB backup of the current factory P4
 flash was made before the Crystal flash; it is not the missing original-factory
@@ -103,7 +104,9 @@ Closed 2026-11-15: Crystal boot logo/theme, home pill, immediate Settings and
 Wi-Fi/keyboard polish accepted. Sustained FPS qualification continues in P4.4.
 
 ### **Phase P4.3: Network Expansion** (Week 2-3, 3-5 days)
-Add ethernet, upgrade WiFi patterns.
+Closed 2026-11-15: Ethernet routing/fallback, application traffic, Settings/card,
+browser pairing and final status-bar/icon UI accepted. Sustained network
+qualification continues in P4.4.
 
 ### **Phase P4.4: Validation & Optimization** (Week 3-4, 5-7 days)
 Test, benchmark, optimize for P4 capabilities.
@@ -1203,10 +1206,44 @@ The P4 Settings app has a polished WiFi scan/connect UI. Adopt it.
 
 ## Phase P4.3: Network Expansion
 
+**Status:** Closed for the accepted scope — 2026-11-15 (Asia/Hong_Kong).
+
 **Goal:** Add ethernet support, test WiFi 6 stability, improve network reliability.
 
 **Duration:** 3-5 days  
-**Risk:** Low (P4 BSP has ethernet driver)
+**Risk:** Board-specific PHY wiring and route/failover integration require validation.
+
+**Implementation update — 2026-11-15:** See the
+[Phase P4.3 validation record](ESP32_P4_PHASE3_VALIDATION.md). The IDF v6.1
+implementation uses the board's IP101 PHY at address 1, external RMII clock on
+GPIO50 and pinned espressif/ip101 1.1.0. A 100 Mbps link, DHCP
+192.168.1.233, Ethernet default route, SNTP, Weather and HTTPS are recorded.
+Wi-Fi also obtained 192.168.1.52 without replacing the working C6 firmware.
+The user confirms unplugging Ethernet switches Active Connection to WiFi and
+shows Ethernet disconnected; reconnecting restores Ethernet as the active
+connection with an IP address. The updated build passes Ethernet-only Weather,
+SNTP and HTTPS; the user confirms three manual Weather refreshes with Wi-Fi off.
+The earlier Weather timeout and unresolved precise cause remain documented.
+The user confirms Ethernet-only browser pairing succeeds and the authenticated
+installed-app list loads. The user also accepts Ethernet Settings/app details,
+scrolling and return navigation. A fresh Weather refresh after enabling Wi-Fi
+and unplugging Ethernet passes (user-confirmed). The user now confirms the
+Ethernet/Wi-Fi status indicator, two-pixel downward status-bar offset and rounded
+launcher/switcher icons all pass on device, completing P4.3 visual acceptance.
+Follow-up fixes make launcher corner clipping follow the pressed image size, measure switcher artwork at its full zoomed size, and
+store Ethernet artwork as true-color plus alpha (LVGL 8 cannot scale alpha-only
+images). Rendered-pixel regression checks now cover those cases and Ethernet
+route changes; the corrected P4 build and launcher swipe regression pass.
+Device pairing typography now uses the accepted P4 scale (600x495 card; 28/48/24/20px text); P4/S3 host
+layout tests pass, and the user confirms readable text with no clipping or overlap.
+
+Driver and policy live in crystal_hal; the existing core service task owns
+startup. Ethernet becomes preferred after IPv4 acquisition, with explicit default
+route selection and per-interface DHCP DNS. Wi-Fi keeps its existing user
+setting for fallback. Settings uses its established Network rows and Ethernet
+detail page; the diagnostic card follows CrystalApp lifecycle. This supersedes
+the original API sketches below: do not copy their LAN87xx constructor, main/UI
+initialization, direct callbacks, association-only readiness or 1Gbps claims.
 
 ### P4.3.1: Ethernet Support
 
@@ -1365,15 +1402,19 @@ crystal_network_set_callback([](CrystalNetworkType type, bool connected) {
 ```
 
 **Settings UI:**
-- Add "Network" section with tabs: WiFi | Ethernet
-- Ethernet tab shows: Link Status, IP Address, Speed (auto/100M/1G)
+- Keep the existing Network section, adding Active Connection and Ethernet rows
+- Ethernet details show link/DHCP state, IPv4, mask, gateway, DNS, MAC and negotiated 10/100 Mbps duplex
 - No password needed for ethernet (just plug in cable)
 
 **Rationale:** P4 has ethernet PHY onboard. Professional setups prefer wired.
 
 ### P4.3.2: EthernetInfo App (Factory Pattern)
 
-The **P4 factory firmware** includes a production-ready `EthernetInfo` app that displays real-time ethernet stats. Use this as a reference implementation to validate your ethernet driver and show network status.
+The factory EthernetInfo source is a useful layout/driver reference; its presence
+does not qualify Ethernet on Crystal. The implemented P4-only Ethernet card is
+in components/ethernet_app and uses HAL snapshots. It displays supported link,
+address and speed values. Packet counters and IPv6 remain outside this phase;
+the original placeholder example below is not the implemented diagnostic API.
 
 **Reference:** Factory firmware `/components/HardwareApps/EthernetInfo.cpp` and `.hpp`.
 
@@ -1533,9 +1574,9 @@ crystal_registry_install_app(eth_app, "EthernetInfo", CRYSTAL_ORIGIN_BUILTIN);
 
 **Why:**
 - **Reference implementation:** Proves ethernet driver is working
-- **Real-time monitoring:** Shows MAC, IP, link status, packet counts
+- **Live monitoring:** Shows MAC, IPv4, link status and negotiated speed; packet counters are not implemented
 - **Reusable pattern:** `addInfoRow()` helper applies to any settings/info screen
-- **Zero dependencies:** Uses only standard esp_netif APIs
+- **Layered access:** UI reads HAL snapshots; PHY/netif work runs outside LVGL
 
 **Estimated effort:** 1 day (implement + test on hardware)
 
@@ -2272,13 +2313,28 @@ Implementation/build/flash and measured limitations are recorded in
 closed for the accepted scope. The earlier 60fps item is transferred to P4.4,
 not marked achieved; current telemetry measures redraw cost, not panel scanout FPS.
 
-### Phase P4.3: Network Expansion (Week 2-3)
-- [ ] Implement ethernet driver (`crystal_ethernet.cpp`)
-- [ ] Add ethernet to main.cpp init sequence
-- [ ] Implement network failover policy
-- [ ] Update status bar for ethernet icon
-- [ ] Add ethernet tab to Settings overlay
-- [ ] Test WiFi ↔ Ethernet failover
+### Phase P4.3: Network Expansion (closed 2026-11-15)
+- [x] Implement HAL Ethernet driver with factory-matched IP101 wiring
+- [x] Start Ethernet from the existing core background service
+- [x] Implement lease-gated Ethernet preference, Wi-Fi fallback and per-interface DNS
+- [x] Add Ethernet status-bar icon; physical visual acceptance passes (user-confirmed)
+- [x] Add coherent Network/Ethernet Settings rows and Ethernet diagnostic card
+- [x] Verify 100 Mbps link, DHCP and Ethernet-routed SNTP/Weather/HTTPS
+- [x] User confirms cable removal switches Settings to WiFi with Ethernet disconnected
+- [x] User confirms reconnect restores Ethernet preference and an assigned address
+- [x] Verify fresh Ethernet-only Weather traffic, SNTP and HTTPS
+- [x] User confirms Ethernet-only local panel serves the browser pairing page
+- [x] User accepts enlarged P4 pairing dialog text and spacing without clipping or overlap
+- [x] User confirms Ethernet-only browser pairing and authenticated installed-app list
+- [x] User accepts Ethernet Settings/app details, scrolling and return navigation
+- [x] User confirms fresh Wi-Fi-only Weather refresh after Ethernet removal
+- [x] Complete status-bar indicator visual acceptance (user-confirmed)
+- [x] Accept 2px status-bar offset, rounded pressed launcher icons and full rounded switcher artwork (user-confirmed)
+
+Phase P4.3 is closed for the accepted scope; the user confirmation and evidence
+limits are recorded in the [validation record](ESP32_P4_PHASE3_VALIDATION.md).
+Sustained radio/traffic stability and soak remain unmeasured and are carried to
+P4.4, including investigation of the earlier intermittent Weather timeout.
 
 ### Phase P4.4: Validation (Week 3-4)
 - [ ] Run full feature validation checklist

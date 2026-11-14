@@ -19,11 +19,16 @@ bool crystal_crypto_init(void)
     // The bundled libsodium defaults to a Unix random device, which ESP-IDF
     // does not provide. Register before sodium_init (which requests randomness).
     if (randombytes_set_implementation(&kRandom) != 0) return false;
-    // Wi-Fi is not running during early boot. Temporarily supply hardware
-    // entropy for libsodium's initialization, then release ADC/RF resources.
+    // Supply local hardware entropy before libsodium requests randomness.
+    // S3 releases ADC/RF resources after initialization; P4 retains its source.
     bootloader_random_enable();
     const int result = sodium_init();
+#if !CONFIG_IDF_TARGET_ESP32P4
     bootloader_random_disable();
+#endif
+    // P4 has no local Wi-Fi RF entropy: the C6 radio cannot feed its RNG.
+    // Keep the SDK's ADC entropy source enabled for TLS/session randomness,
+    // including Ethernet-only operation. ADC1 is reserved for this purpose.
     s_ready = result >= 0;
     return s_ready;
 }

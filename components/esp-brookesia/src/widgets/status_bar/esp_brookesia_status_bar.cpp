@@ -119,7 +119,8 @@ bool ESP_Brookesia_StatusBar::setVisualMode(ESP_Brookesia_StatusBarVisualMode_t 
     return true;
 }
 
-bool ESP_Brookesia_StatusBar::addIcon(const ESP_Brookesia_StatusBarIconData_t &data, uint8_t area_index, int id)
+bool ESP_Brookesia_StatusBar::addIcon(const ESP_Brookesia_StatusBarIconData_t &data, uint8_t area_index, int id,
+                                      int child_index)
 {
     ESP_BROOKESIA_LOGD("Add icon(%d) in area(%d)", id, area_index);
     ESP_BROOKESIA_CHECK_FALSE_RETURN(checkMainInitialized(), false, "Not initialized");
@@ -128,10 +129,21 @@ bool ESP_Brookesia_StatusBar::addIcon(const ESP_Brookesia_StatusBarIconData_t &d
     ESP_BROOKESIA_CHECK_NULL_RETURN(icon, false, "Alloc icon failed");
 
     ESP_BROOKESIA_CHECK_FALSE_RETURN(icon->begin(_core, _area_objs[area_index].get()), false, "Init icon failed");
+    if (child_index >= 0) {
+        ESP_BROOKESIA_CHECK_FALSE_RETURN(icon->moveToIndex(static_cast<uint32_t>(child_index)), false,
+                                         "Move icon failed");
+    }
 
     auto ret = _id_icon_map.insert(pair <int, shared_ptr<ESP_Brookesia_StatusBarIcon>> (id, icon));
     ESP_BROOKESIA_CHECK_FALSE_RETURN(ret.second, false, "Insert icon failed");
 
+    return true;
+}
+
+bool ESP_Brookesia_StatusBar::setVerticalOffset(lv_coord_t offset)
+{
+    ESP_BROOKESIA_CHECK_FALSE_RETURN(checkMainInitialized(), false, "Not initialized");
+    lv_obj_align(_main_obj.get(), LV_ALIGN_TOP_MID, 0, offset);
     return true;
 }
 

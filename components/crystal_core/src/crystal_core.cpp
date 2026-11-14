@@ -10,6 +10,9 @@
 #include <time.h>
 
 #include "crystal_hal.hpp"
+#include "crystal_network.h"
+#include "crystal_network_policy.hpp"
+#include "crystal_ethernet.hpp"
 #include "crystal_http.h"
 #include "crystal_core_http.hpp"
 #include "crystal_update_view.h"
@@ -28,6 +31,7 @@
 #include "lvgl.h"
 
 extern void crystal_shell_wifi_event(uint8_t event);
+extern void crystal_shell_network_event();
 extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 extern void crystal_shell_ota_event();
 extern void crystal_shell_update_failure_event(const char *message);
@@ -54,7 +58,13 @@ constexpr lv_coord_t kToastMinHeight = 52;
 constexpr lv_coord_t kToastVerticalPad = 14;
 constexpr const lv_font_t *kToastFont = nullptr;
 #endif
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr uint8_t kFullBrightness = 100;
+constexpr uint8_t kDimBrightnessMin = 1;
+#else
 constexpr uint8_t kFullBrightness = 95;
+constexpr uint8_t kDimBrightnessMin = 5;
+#endif
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
 constexpr uint32_t kHttpFrameworkOwner = 0x4652414D; // "FRAM"
@@ -296,7 +306,7 @@ void resolve_weather_location()
 
 bool weather_fetch(CrystalWeatherReading *out)
 {
-    if (out == nullptr || hal().wifi == nullptr || !hal().wifi->connected()) return false;
+    if (out == nullptr || !crystal_network_has_ip()) return false;
     double latitude = 0.0;
     double longitude = 0.0;
     char city[sizeof(s_weather_city)] = {};
@@ -530,6 +540,9 @@ void drain_event_queue(lv_timer_t *)
             else if (message.type == UI_EVT_WIFI_CONNECT_FAILED) show_toast("Failed to connect to WiFi network");
             crystal_shell_wifi_event(static_cast<uint8_t>(message.type));
             update_connectivity(nullptr);
+        } else if (message.type == UI_EVT_NETWORK_CHANGED) {
+            crystal_shell_network_event();
+            update_connectivity(nullptr);
         } else if (message.type == UI_EVT_TOAST) {
             char text[kEventDataMax + 1] = {};
             memcpy(text, message.data, message.length);
@@ -587,33 +600,35 @@ void update_clock(lv_timer_t *)
 
 void update_connectivity(lv_timer_t *)
 {
-    if (s_connectivity_update != nullptr && hal().wifi != nullptr) {
-        s_connectivity_update(s_status_context, hal().wifi->connected());
-    }
+    if (s_connectivity_update != nullptr)
+        s_connectivity_update(s_status_context, hal().wifi && hal().wifi->connected());
+#if CONFIG_IDF_TARGET_ESP32P4
+    crystal_shell_network_event();
+#endif
 }
 
-void wifi_event(IWifi::Event event, void *)
+void network_route_changed(CrystalNetworkType previous, CrystalNetworkType active, void *)
 {
-    if (event == IWifi::GotIp) {
-        // The lease just landed, so any backoff accumulated while offline is
-        // stale -- it was measuring a missing network, not an unwell server.
-        // Clear it so the first fetch happens now instead of minutes from now.
+    const bool online = active != CrystalNetworkType::None;
+    if (online) {
         s_weather_retry_ms.store(kWeatherRetryMinMs);
         s_weather_next_try.store(0);
         s_weather_locate_ms.store(kWeatherRetryMinMs);
         s_weather_next_locate.store(0);
-        ESP_LOGI(TAG, "publishing network connected signal");
-        const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
-                                             nullptr, 0, 0);
-        if (err != ESP_OK) ESP_LOGW(TAG, "network connected signal dropped: %s", esp_err_to_name(err));
-    } else if (event == IWifi::Disconnected || event == IWifi::ConnectFailed) {
-        s_sntp_sync_started = false;
-        ESP_LOGI(TAG, "publishing network disconnected signal (%s)",
-                 event == IWifi::ConnectFailed ? "connect failed" : "disconnected");
-        const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_DISCONNECTED,
-                                             nullptr, 0, 0);
-        if (err != ESP_OK) ESP_LOGW(TAG, "network disconnected signal dropped: %s", esp_err_to_name(err));
     }
+    // Publish aggregate connectivity, including route switches. One interface
+    // dropping must not claim the device is offline while the other is ready.
+    s_sntp_sync_started = false;
+    const esp_err_t err = esp_event_post(CRYSTAL_NETWORK_EVENT,
+        online ? CRYSTAL_NETWORK_CONNECTED : CRYSTAL_NETWORK_DISCONNECTED, nullptr, 0, 0);
+    if (err != ESP_OK) ESP_LOGW(TAG, "Network signal dropped: %s", esp_err_to_name(err));
+    (void)previous;
+    (void)crystal_ui_post(UI_EVT_NETWORK_CHANGED);
+}
+
+void wifi_event(IWifi::Event event, void *)
+{
+    crystal_network_policy_refresh();
     crystal_evt_t ui_event = UI_EVT_WIFI_DISCONNECTED;
     if (event == IWifi::GotIp) ui_event = UI_EVT_WIFI_GOT_IP;
     else if (event == IWifi::ScanDone) ui_event = UI_EVT_WIFI_SCAN_DONE;
@@ -805,14 +820,20 @@ void service_task(void *)
     (void)crystal_ui_post(UI_EVT_TOAST, kReadyMessage, sizeof(kReadyMessage) - 1);
     if (ota_confirmed) (void)crystal_ui_post(UI_EVT_OTA_SUCCEEDED);
 
+    (void)esp_netif_init();
+    (void)esp_event_loop_create_default();
+    crystal_network_set_callback(network_route_changed, nullptr);
+    (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
+                                              network_signal_handler, nullptr, &s_network_handler);
     if (hal().wifi != nullptr) {
         hal().wifi->set_event_callback(wifi_event, nullptr);
-        (void)esp_netif_init();
-        (void)esp_event_loop_create_default();
-        (void)esp_event_handler_instance_register(CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED,
-                                                  network_signal_handler, nullptr, &s_network_handler);
         hal().wifi->start();
     }
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (crystal_ethernet_init() && !crystal_ethernet_start())
+        ESP_LOGW(TAG, "Ethernet start failed; continuing with WiFi");
+#endif
+    crystal_network_policy_refresh();
     power_saving_apply(energy_saving_enabled());
 
     TickType_t last_battery_poll = 0;
@@ -836,7 +857,8 @@ void service_task(void *)
         // finishes, and a fetch in that window dies in getaddrinfo() with
         // EAI_FAIL -- which then burned a backoff step on a failure that was
         // only ever a race with the DHCP lease.
-        const bool online = hal().wifi != nullptr && hal().wifi->has_ip();
+        crystal_network_policy_refresh();
+        const bool online = crystal_network_has_ip();
 
         // Automatic refresh. The retry gate is what makes a failure survivable:
         // last_fetch is only stored on success, so without it a failed fetch left
@@ -1012,7 +1034,7 @@ void crystal_time_set_auto(bool enabled)
         esp_netif_sntp_deinit();
         s_sntp_initialized.store(false);
         s_sntp_sync_started.store(false);
-    } else if (enabled && hal().wifi != nullptr && hal().wifi->has_ip()) {
+    } else if (enabled && crystal_network_has_ip()) {
         network_signal_handler(nullptr, CRYSTAL_NETWORK_EVENT, CRYSTAL_NETWORK_CONNECTED, nullptr);
     }
 }
@@ -1033,7 +1055,7 @@ uint16_t crystal_power_off_seconds()
 uint8_t crystal_power_dim_level()
 {
     const uint8_t value = stored_value<uint8_t>("power.dim_level", 20);
-    return value >= 5 && value <= 50 ? value : 20;
+    return value >= kDimBrightnessMin && value <= 50 ? value : 20;
 }
 bool crystal_power_saving_enabled() { return energy_saving_enabled(); }
 bool crystal_power_auto_dim_enabled()
@@ -1062,7 +1084,7 @@ void crystal_power_set_off_seconds(uint16_t seconds)
 }
 void crystal_power_set_dim_level(uint8_t level)
 {
-    if (level >= 5 && level <= 50) store_value("power.dim_level", level);
+    if (level >= kDimBrightnessMin && level <= 50) store_value("power.dim_level", level);
 }
 void crystal_power_set_saving(bool enabled)
 {

@@ -15,6 +15,9 @@
 #include "driver/ledc.h"
 
 static const char *TAG = "crystal_board_p4";
+static const uint32_t kBacklightMinDuty = 480;
+static const uint32_t kBacklightMaxDuty = 1023;
+static const uint32_t kBrightnessScaleMax = 100;
 static dev_display_lcd_handles_t *s_display_handles;
 static dev_lcd_touch_handles_t *s_touch_handles;
 static periph_ledc_handle_t *s_brightness_handle;
@@ -167,14 +170,23 @@ esp_err_t bsp_display_brightness_set(int brightness_percent)
 {
     if (brightness_percent < 0) {
         brightness_percent = 0;
-    } else if (brightness_percent > 100) {
-        brightness_percent = 100;
+    } else if (brightness_percent > (int)kBrightnessScaleMax) {
+        brightness_percent = (int)kBrightnessScaleMax;
     }
     esp_err_t err = ensure_brightness_device();
     if (err != ESP_OK) {
         return err;
     }
-    const uint32_t duty = (1023U * (uint32_t)brightness_percent) / 100U;
+    // The panel does not emit visible light below duty 480. Preserve zero as
+    // the explicit off state and stretch the usable range across 1..100.
+    const uint32_t duty = brightness_percent == 0
+                              ? 0
+                              : kBacklightMinDuty +
+                                    ((kBacklightMaxDuty - kBacklightMinDuty) *
+                                     (uint32_t)(brightness_percent - 1)) /
+                                        (kBrightnessScaleMax - 1);
+    ESP_LOGI(TAG, "Backlight PWM: %d/100 -> duty %u/1023", brightness_percent,
+             (unsigned)duty);
     err = ledc_set_duty(s_brightness_handle->speed_mode, s_brightness_handle->channel, duty);
     if (err == ESP_OK) {
         err = ledc_update_duty(s_brightness_handle->speed_mode, s_brightness_handle->channel);

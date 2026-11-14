@@ -29,6 +29,7 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_OTA_SUCCEEDED,
     UI_EVT_CONTROL_START,
     UI_EVT_CONTROL_ACTION,
+    UI_EVT_NETWORK_CHANGED,
 };
 
 enum crystal_control_action_kind_t : uint8_t {

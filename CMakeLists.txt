@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Resolve IDF_TARGET from the saved sdkconfig before choosing board defaults.
+# Plain idf.py commands do not pass IDF_TARGET explicitly.
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
 if(IDF_TARGET STREQUAL "esp32p4")
     set(SDKCONFIG_DEFAULTS
         "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults.common;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults.esp32p4")
@@ -10,5 +14,4 @@ if(IDF_TARGET STREQUAL "esp32p4")
     endif()
 endif()
 
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(crystal_os VERSION 0.15.0)

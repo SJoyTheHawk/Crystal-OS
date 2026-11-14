@@ -5,7 +5,9 @@
 **Tested factory reference:** `/Users/szemy/Downloads/ESP32-P4-WIFI6-Touch-LCD-4B-main/examples/factory`  
 **Status:** Crystal Phase 1 builds, flashes and boots under IDF v6.1 on rev1.3;
 Phase 1.5 and P4.2 visual/interaction work are accepted and closed (2026-11-15).
-Wi-Fi/HTTPS pass using the preserved C6; sustained FPS qualification remains open.
+Phase P4.3 Network Expansion and final status-bar/icon UI are also accepted and
+closed (2026-11-15). Continue with v2 P4.4 validation and optimization; sustained
+network stability, FPS and soak remain unqualified.
 
 ## Baseline reconciliation — 2026-11-14
 
@@ -46,9 +48,9 @@ performance remains unqualified. The tested P4 uses a
 360 MHz CPU and HEX PSRAM; 400 MHz/OCT and automatic PPA enablement below are
 superseded assumptions. Hardware AES stays disabled.
 
-**Next validation after P4.2 closure:** the 720px layouts, typography, visual
-polish and revised Settings/Wi-Fi interactions have user acceptance. Continue
-controlled radio reconnect/timing, state persistence, packages, control panel,
+**Next validation after P4.3 closure:** the 720px UI, network expansion and final
+status-bar/rounded-icon fixes have user acceptance. Continue controlled radio
+reconnect/timing, state persistence, packages, remaining control-panel operations,
 OTA and sustained performance/soak qualification. A full current-factory P4 flash backup was captured before
 Crystal was flashed; the older original-firmware backup limitation in the factory
 record remains true. Keep that reference workspace separate and preserve the
@@ -366,7 +368,40 @@ preserve the already working Wi-Fi baseline and existing C6 firmware.
 ---
 
 ### **Phase 3: WiFi & Networking** (Week 2)
-**Goal:** Restore WiFi connectivity.
+**Current scope — 2026-11-15:** Wi-Fi restoration already passed in Phase 1,
+and its Settings/scanning UX passed in P4.2. The v2 plan's P4.3 Network Expansion
+is now closed for its accepted scope. Continue with P4.4 validation and
+optimization, preserving the working C6 firmware. See
+[the Phase P4.3 validation record](ESP32_P4_PHASE3_VALIDATION.md).
+
+The implementation adds HAL-owned IP101 Ethernet (IDF v6.1, espressif/ip101
+1.1.0), explicit Ethernet-first IPv4 routing, per-interface DHCP DNS, Wi-Fi
+fallback, coherent Network/Ethernet Settings and a P4 Ethernet diagnostic card.
+Weather/SNTP/HTTPS and opt-in control-panel readiness accept either interface.
+P4 retains its SDK ADC1 entropy source for Ethernet-only crypto; C6 Wi-Fi is
+not a local P4 entropy source.
+
+Verified: 100 Mbps link, DHCP 192.168.1.233 / 255.255.255.0, gateway
+192.168.1.1; Ethernet selected as default while Wi-Fi also obtains an address;
+SNTP synchronization, live Weather and HTTPS 200. The user confirms cable
+removal switches Settings to WiFi and shows Ethernet disconnected; reconnecting
+restores Ethernet as active with an assigned address. The updated build passes
+Wi-Fi-off Weather, SNTP and HTTPS, followed by three user-confirmed manual Weather
+refreshes. An earlier Weather timeout and its unresolved precise cause are
+retained in the validation record. The Ethernet-only local panel serves its
+browser pairing page, pairs successfully and loads the authenticated installed-app
+list (user-confirmed, Wi-Fi off). The user accepts Ethernet Settings/app details,
+scrolling and return navigation. A fresh Weather refresh succeeds after enabling
+Wi-Fi and unplugging Ethernet (user-confirmed). The user confirms the final
+Ethernet/Wi-Fi indicator, 2px downward status-bar offset, rounded launcher icons
+while pressed and uncropped rounded switcher artwork all pass on device.
+This closes P4.3 acceptance on 2026-11-15; no new flash-verification or serial
+evidence is implied by this user confirmation. The device pairing dialog has
+P4-specific typography and proportional sizing, with passing P4/S3 host layout checks. The user confirms
+readable dialog text with no clipping or overlap; readability acceptance passes.
+This is not full network qualification or a sustained radio/traffic test.
+
+**Original Wi-Fi checklist (historical scope):**
 
 1. Implement `esp_wifi_remote` initialization
 2. Port WiFi credential storage (NVS remains same)
@@ -375,7 +410,8 @@ preserve the already working Wi-Fi baseline and existing C6 firmware.
 5. Test control panel (HTTP server + mDNS)
 6. **Checkpoint:** Weather app fetches live data
 
-**Deliverable:** Full network stack operational
+**Deliverable:** P4.3 Ethernet/Wi-Fi network expansion accepted; sustained
+network qualification continues in v2 P4.4.
 
 ---
 
@@ -460,7 +496,7 @@ preserve the already working Wi-Fi baseline and existing C6 firmware.
 ### **Boot & Display**
 - [ ] Firmware boots to Brookesia loading screen
 - [ ] Touch input works (calibration if needed)
-- [ ] Status bar shows time/battery/WiFi icons
+- [x] Status bar shows time/battery/network icons; Ethernet/Wi-Fi indicator and 2px offset accepted in P4.3
 - [ ] Home screen gesture (swipe from bottom) works
 - [ ] App launcher grid appears
 

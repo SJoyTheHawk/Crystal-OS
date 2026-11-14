@@ -1,7 +1,7 @@
 # ESP-IDF command guide
 
 This guide covers the preserved S3 target. For P4, use the
-[isolated Phase 1 build and validation guide](ESP32_P4_PHASE1_VALIDATION.md).
+[P4 everyday commands and validation guide](ESP32_P4_PHASE1_VALIDATION.md#everyday-p4-commands-local-setup-updated-2026-11-14).
 Do not use the S3 partition/provisioning commands for P4.
 
 Commands in this guide assume the shell is in the Crystal OS repository root:

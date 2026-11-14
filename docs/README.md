@@ -2,12 +2,24 @@
 
 ## Current work
 
-Main is the P4 migration branch. The completed S3 baseline is preserved on
-ESP32-S3-Touch-LCD-4B at commit 4c532a0. **Migrate to P4 first, then resume
-Phase 17.** Phases 14–16 have completed development acceptance. Firmware is
-configured for S3 by default. An isolated P4 Phase 1 profile now builds, flashes
-and boots with Wi-Fi/HTTPS smoke tests passing; physical UI acceptance remains
-open. See the [Phase 1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md).
+Current development targets the Waveshare ESP32-P4-WIFI6-Touch-LCD-4B.
+As of November 15, 2026, board bring-up, P4.2 visual/interaction acceptance,
+and P4.3 network expansion pass for their documented scopes. P4.4 performance,
+soak, package/OTA, and remaining feature qualification are still open.
+**Complete P4 migration/qualification before resuming Phase 17 (Lua).**
+
+- [P4.1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md): tested
+  rev1.3 board, 720 × 720 display, signed builds, flash layout, and startup.
+- [P4.2 visual/interaction acceptance](ESP32_P4_PHASE2_VALIDATION.md): boot,
+  cards, Quick Settings, immediate Settings navigation, Wi-Fi UI, and keyboard.
+- [P4.3 network acceptance](ESP32_P4_PHASE3_VALIDATION.md): Ethernet, Wi-Fi
+  fallback, Weather/SNTP/HTTPS, pairing, and status indicators.
+
+The established local root configuration is P4. Fresh checkouts must explicitly
+select `esp32p4`; `sdkconfig` is ignored and the root `sdkconfig.defaults` still
+preserves S3 defaults. The completed S3 baseline remains on branch
+`ESP32-S3-Touch-LCD-4B` at commit `4c532a0`. Phases 14–16 have completed
+development acceptance; this does not imply full P4 feature qualification.
 
 Both user-supplied migration plans are retained:
 

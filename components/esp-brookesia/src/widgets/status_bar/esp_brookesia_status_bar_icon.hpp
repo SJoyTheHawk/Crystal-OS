@@ -20,6 +20,7 @@ public:
     bool begin(const ESP_Brookesia_Core &core, lv_obj_t *parent);
     bool del(void);
     bool setCurrentState(int state);
+    bool moveToIndex(uint32_t index);
 
     bool checkInitialized(void) const { return (_main_obj != nullptr); }
 

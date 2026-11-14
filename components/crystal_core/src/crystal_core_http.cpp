@@ -13,7 +13,13 @@
 
 namespace {
 constexpr uint32_t kWeatherOwner = 0x57454154; // "WEAT"
+#if CONFIG_IDF_TARGET_ESP32P4
+// Match the framework HTTPS probe while keeping completion/UI waits bounded.
+// Device validation must distinguish a slow handshake from a broken route.
+constexpr uint32_t kTransportTimeoutMs = 15000;
+#else
 constexpr uint32_t kTransportTimeoutMs = 8000;
+#endif
 // Includes queue time. A timeout cancels the request without leaving a
 // callback pointing into the caller's stack or reusable weather buffer.
 constexpr uint32_t kCompletionTimeoutMs = 30000;

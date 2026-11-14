@@ -9,16 +9,18 @@
 #include "clock_app.hpp"
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
+#include "ethernet_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_stylesheet.hpp"
 
 extern "C" time_t crystal_capture_time(time_t *);
 extern "C" bool crystal_capture_quick_settings(ESP_Brookesia_Phone *phone);
-static lv_color_t frame[480 * 480];
+static lv_color_t frame[720 * 720];
 static void flush(lv_disp_drv_t *driver, const lv_area_t *area, lv_color_t *pixels)
 {
     for (int y = area->y1; y <= area->y2; ++y) {
         for (int x = area->x1; x <= area->x2; ++x) {
-            if (x >= 0 && x < 480 && y >= 0 && y < 480) frame[y * 480 + x] = *pixels;
+            if (x >= 0 && x < 720 && y >= 0 && y < 720) frame[y * 720 + x] = *pixels;
             ++pixels;
         }
     }
@@ -42,7 +44,7 @@ static void capture(lv_disp_t *display, const char *path)
     lv_refr_now(display);
     FILE *file = std::fopen(path, "wb");
     assert(file);
-    std::fprintf(file, "P6\n480 480\n255\n");
+    std::fprintf(file, "P6\n720 720\n255\n");
     for (lv_color_t pixel : frame) {
         lv_color32_t rgb;
         rgb.full = lv_color_to32(pixel);
@@ -76,12 +78,12 @@ int main()
     tzset();
     crystal_hal_init();
     lv_init();
-    static lv_color_t buffer[480 * 40];
+    static lv_color_t buffer[720 * 40];
     static lv_disp_draw_buf_t draw;
-    lv_disp_draw_buf_init(&draw, buffer, nullptr, 480 * 40);
+    lv_disp_draw_buf_init(&draw, buffer, nullptr, 720 * 40);
     static lv_disp_drv_t driver;
     lv_disp_drv_init(&driver);
-    driver.hor_res = driver.ver_res = 480;
+    driver.hor_res = driver.ver_res = 720;
     driver.draw_buf = &draw;
     driver.flush_cb = flush;
     lv_disp_t *display = lv_disp_drv_register(&driver);
@@ -95,24 +97,37 @@ int main()
     ClockApp clock;
     WeatherApp weather;
     CalculatorApp calculator;
-    ESP_Brookesia_PhoneStylesheet_t sheet = ESP_BROOKESIA_PHONE_480_480_DARK_STYLESHEET();
-    sheet.core.manager.app.max_running_num = 1;
-    sheet.home.flags.enable_recents_screen = 0;
-    sheet.manager.gesture_mask_indicator_trigger_time_ms = UINT32_MAX;
-    sheet.manager.gesture.flags.enable_indicator_bars[ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_BOTTOM] = 0;
+    EthernetInfoApp ethernet;
+    auto *sheet = crystal_stylesheet_create_dark();
+    assert(sheet && sheet->core.screen_size.width == 720);
     assert(phone.setTouchDevice(pointer));
     assert(phone.addStylesheet(sheet));
     assert(phone.activateStylesheet(sheet));
+    delete sheet;
     assert(phone.begin());
     assert(phone.installApp(clock) >= 0);
     assert(phone.installApp(weather) >= 0);
     assert(phone.installApp(calculator) >= 0);
+    assert(phone.installApp(ethernet) >= 0);
     auto *bar = phone.getHome().getStatusBar();
     assert(bar);
+    assert(bar->setVerticalOffset(2));
     assert(bar->setClockFormat(ESP_Brookesia_StatusBar::ClockFormat::FORMAT_24H));
     assert(bar->setClock(10, 9, false));
     assert(bar->setBatteryPercent(false, 85));
     assert(bar->setWifiIconState(ESP_Brookesia_StatusBar::WifiState::SIGNAL_3));
+    // Match main.cpp's P4 network indicator; the fixture selects Ethernet.
+    ESP_Brookesia_StatusBarIconData_t ethernet_icon{};
+    ethernet_icon.size.width = ethernet_icon.size.height = 28;
+    ethernet_icon.icon.image_num = 1;
+    ethernet_icon.icon.images[0].resource = &crystal_ethernet_status_icon;
+    ethernet_icon.icon.images[0].recolor.color = 0xf2f4f7;
+    ethernet_icon.icon.images[0].recolor.opacity = 255;
+    ethernet_icon.icon.images[0].flags.enable_recolor = 1;
+    constexpr int ethernet_id = 0x435259;
+    assert(bar->addIcon(ethernet_icon, phone.getHome().getData().status_bar.data.wifi.area_index, ethernet_id, 0));
+    assert(bar->setIconState(ethernet_id, 0));
+    assert(bar->setWifiIconState(-1));
     auto start = [&](CrystalApp &app) {
         ESP_Brookesia_CoreAppEventData_t event{};
         event.id = app.getId();
@@ -149,6 +164,11 @@ int main()
     assert(has_label(lv_scr_act(), "= 448"));
     capture(display, "calculator.ppm");
 
+    start(ethernet);
+    assert(has_label(lv_scr_act(), "Connected"));
+    assert(has_label(lv_scr_act(), "192.0.2.42"));
+    capture(display, "ethernet.ppm");
+
     assert(phone.sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME));
     settle();
     capture(display, "launcher.ppm");
@@ -160,6 +180,7 @@ int main()
     assert(phone.uninstallApp(clock));
     assert(phone.uninstallApp(weather));
     assert(phone.uninstallApp(calculator));
+    assert(phone.uninstallApp(ethernet));
     assert(phone.del());
     std::puts("PASS: production app, launcher and Quick Settings captures");
 }

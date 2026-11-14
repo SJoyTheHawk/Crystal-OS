@@ -27,6 +27,7 @@ public:
     bool updateByNewData(void);
 
 private:
+    void updateImageRounding();
     static void onIconTouchEventCallback(lv_event_t *event);
 
     ESP_Brookesia_Core &_core;

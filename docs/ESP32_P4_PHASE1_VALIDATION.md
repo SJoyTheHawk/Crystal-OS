@@ -82,6 +82,44 @@ locally in `/private/tmp/crystal-os-p4-phase1-tested/`.
 
 ## Build from the repository root
 
+### Everyday P4 commands (local setup updated 2026-11-14)
+
+The local root `sdkconfig` now contains the working P4 configuration copied
+from `build/p4-idf61-brightness/sdkconfig`. CMake resolves the saved target
+before choosing its defaults, so the standard `build/` directory can be used:
+
+```bash
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
+idf.py flash
+# For subsequent application-only updates:
+idf.py app-flash monitor
+```
+
+Run either full `flash` or `app-flash` as appropriate; both commands build
+automatically. The monitor baud is saved as 1000000. Add `-p <port>` when
+multiple serial devices are connected. No repeated `set-target`, `-B`,
+`-D SDKCONFIG`, or preflight bypass is needed for this root P4 configuration.
+ESP-IDF activation is per shell session; sourcing its `export.sh` does not
+reconfigure the project.
+
+The root `sdkconfig` is ignored by Git, so this local selection is not
+automatically transferred to another checkout. Keep the tracked S3 defaults
+for S3 builds and the common/P4 defaults for P4 builds. The incomplete former
+root build was archived as `build-before-p4-default-20261114-195027/`; the
+isolated builds retain their original paths.
+
+Validation: a full `idf.py build` and a second incremental `idf.py build`
+both passed without target/configuration flags or a preflight bypass. Generated
+`build/project_description.json` confirms target `esp32p4`, root `sdkconfig`,
+and monitor baud `1000000`. This setup change was build-tested; it did not
+flash the device.
+
+### Original isolated Phase 1 build
+
+The commands below describe the original setup with an S3 root configuration.
+The preflight exception applies to that isolated setup only.
+
 ```bash
 source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
 ESP_BMGR_ASSIST_PREFLIGHT=0 idf.py \

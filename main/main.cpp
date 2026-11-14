@@ -21,6 +21,10 @@
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_network_policy.hpp"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "ethernet_app.hpp"
+#endif
 #include "crystal_crash.h"
 #include "crystal_update.h"
 #include "crystal_core.hpp"
@@ -53,6 +57,9 @@ static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
 static CrystalApp *make_weather_app() { return new WeatherApp(); }
 static CrystalApp *make_calculator_app() { return new CalculatorApp(); }
+#if CONFIG_IDF_TARGET_ESP32P4
+static CrystalApp *make_ethernet_app() { return new EthernetInfoApp(); }
+#endif
 
 static CrystalApp *make_package_app(const CrystalPackageManifest &manifest)
 {
@@ -76,6 +83,9 @@ static const CrystalAppEntry kApps[] = {
     {"clock", make_clock_app, true, 2},
     {"weather", make_weather_app, true, 3},
     {"calculator", make_calculator_app, true, 4},
+#if CONFIG_IDF_TARGET_ESP32P4
+    {"ethernet", make_ethernet_app, true, 5},
+#endif
 };
 
 static void update_status_clock(void *context, int hour, int minute, bool is_pm, bool format24)
@@ -94,6 +104,25 @@ static void update_status_connectivity(void *context, bool connected)
     auto *phone = static_cast<ESP_Brookesia_Phone *>(context);
     auto *status_bar = phone->getHome().getStatusBar();
     if (status_bar != nullptr) {
+#if CONFIG_IDF_TARGET_ESP32P4
+        static ESP_Brookesia_StatusBarIconData_t ethernet_icon = {};
+        static bool icon_added = false;
+        constexpr int kEthernetStatusId = 0x435259;
+        if (!icon_added) {
+            ethernet_icon.size.width = ethernet_icon.size.height = 28;
+            ethernet_icon.icon.image_num = 1;
+            ethernet_icon.icon.images[0].resource = &crystal_ethernet_status_icon;
+            ethernet_icon.icon.images[0].recolor.color = 0xf2f4f7;
+            ethernet_icon.icon.images[0].recolor.opacity = 255;
+            ethernet_icon.icon.images[0].flags.enable_recolor = 1;
+            icon_added = status_bar->addIcon(ethernet_icon,
+                                             phone->getHome().getData().status_bar.data.wifi.area_index,
+                                             kEthernetStatusId, 0);
+        }
+        const bool wired = crystal_network_active_type() == CrystalNetworkType::Ethernet;
+        if (icon_added) (void)status_bar->setIconState(kEthernetStatusId, wired ? 0 : -1);
+        if (wired) { (void)status_bar->setWifiIconState(-1); return; }
+#endif
         (void)status_bar->setWifiIconState(connected
             ? ESP_Brookesia_StatusBar::WifiState::SIGNAL_3
             : ESP_Brookesia_StatusBar::WifiState::DISCONNECTED);
@@ -254,6 +283,11 @@ extern "C" void app_main(void)
         reinterpret_cast<ESP_Brookesia_LvUnlockCallback_t>(bsp_display_unlock)
     );
     require_boot_step(phone->begin(), "Failed to start Brookesia phone");
+#if CONFIG_IDF_TARGET_ESP32P4
+    auto *status_bar = phone->getHome().getStatusBar();
+    require_boot_step(status_bar != nullptr && status_bar->setVerticalOffset(2),
+                      "Failed to align status bar");
+#endif
     crystal_boot_screen_update("Starting system services...", 70);
     require_boot_step(
         crystal_core_init(display, update_status_clock, update_status_connectivity,

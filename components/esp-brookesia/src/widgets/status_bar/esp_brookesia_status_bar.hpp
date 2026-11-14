@@ -34,9 +34,10 @@ public:
     bool begin(lv_obj_t *parent);
     bool del(void);
     bool setVisualMode(ESP_Brookesia_StatusBarVisualMode_t mode) const;
-    bool addIcon(const ESP_Brookesia_StatusBarIconData_t &data, uint8_t area_index, int id);
+    bool addIcon(const ESP_Brookesia_StatusBarIconData_t &data, uint8_t area_index, int id, int child_index = -1);
     bool removeIcon(int id);
     bool setIconState(int id, int state) const;
+    bool setVerticalOffset(lv_coord_t offset);
 
     // Battery
     bool setBatteryPercent(bool charge_flag, int percent) const;

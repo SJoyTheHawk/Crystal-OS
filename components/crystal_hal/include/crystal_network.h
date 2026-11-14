@@ -6,8 +6,8 @@
 extern "C" {
 #endif
 
-// Returns true only after the station has acquired an IP address. Network
-// clients must use this gate before starting DNS/TLS work during boot.
+// True only while Wi-Fi or Ethernet holds an IPv4 address. Link/association
+// alone is insufficient; this does not promise Internet reachability.
 bool crystal_network_has_ip(void);
 
 #ifdef __cplusplus

@@ -18,7 +18,14 @@ __pycache__/
 /sdkconfig
 /sdkconfig.old
 /dependencies.lock
+
+# Host simulator builds, capture caches, and intermediate PPM frames.
+# Keep published PNG/JPG assets in docs/images/ under version control.
+# Use .cache/ for local --output-dir previews.
 /.cache/
+/*.ppm
+/sim/**/*.ppm
+/docs/images/**/*.ppm
 
 # Generated firmware, application packages and diagnostic output.
 *.elf

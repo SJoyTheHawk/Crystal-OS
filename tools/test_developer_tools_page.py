@@ -45,6 +45,12 @@ struct Hal { IWifi *wifi; };
 static IWifi wifi;
 static Hal services{&wifi};
 Hal &hal() { return services; }
+struct EthernetInfo { bool has_ip=false; unsigned ip=2; };
+static EthernetInfo ethernet;
+enum class CrystalNetworkType { None, WiFi, Ethernet };
+CrystalNetworkType crystal_network_active_type(){return ethernet.has_ip?CrystalNetworkType::Ethernet:wifi.has_ip()?CrystalNetworkType::WiFi:CrystalNetworkType::None;}
+EthernetInfo crystal_ethernet_info(){return ethernet;}
+bool crystal_network_has_ip(){return wifi.has_ip()||ethernet.has_ip;}
 struct ip4_addr_t { unsigned addr; };
 void ip4addr_ntoa_r(const ip4_addr_t *, char *out, size_t n) { std::snprintf(out, n, "192.168.1.158"); }
 bool crystal_control_enabled() { return server_enabled; }
@@ -97,7 +103,7 @@ static void page_close() {
 }
 static void reset(bool enabled = false) {
     page_close(); server_enabled = enabled; s_control_start_pending = false;
-    fail_task = fail_page = false; starts = stops = dialogs = 0;
+    fail_task = fail_page = false; starts = stops = dialogs = 0; ethernet.has_ip=false;
     pairing_visible = false; shown_url.clear(); services.wifi = &wifi; wifi.connected = true;
     settings_push_developer_tools(); lv_obj_update_layout(lv_scr_act());
 }
@@ -188,6 +194,11 @@ int main() {
     lv_obj_update_layout(lv_scr_act()); state(true, true);
     server_enabled = true; crystal_shell_control_start_event("123456");
     state(true, false); assert(dialogs == 1);
+    reset(); wifi.connected=false; ethernet.has_ip=true;
+    toggle(true);state(true,true);assert(starts==1);
+    server_enabled=true;crystal_shell_control_start_event("123456");state(true,false);
+    assert(dialogs==1 && shown_url=="http://192.168.1.158/");
+    toggle(false);assert(!server_enabled);
     page_close(); fail_page = true; settings_push_developer_tools(); assert(!s_developer_tools_page);
     puts("PASS: real LVGL panel toggle layout, initial state, startup lock, pairing, disable, no-Wi-Fi rollback, task/server failures, retry, and page exit/reopen");
 }

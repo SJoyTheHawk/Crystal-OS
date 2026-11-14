@@ -26,6 +26,9 @@ FIXTURE = r'''
 #include <vector>
 #include "lvgl.h"
 #include "crystal_shell.hpp"
+#include "crystal_ethernet.hpp"
+#include "crystal_network_policy.hpp"
+#include <arpa/inet.h>
 struct CrystalVisualStyle { unsigned background=0x11151b, surface=0x1b2028, elevated=0x252a30, text=0xf2f4f7, secondary=0xcbd5e1, muted=0x94a3b8, accent=0x3b82f6, success=0x53c8b6; };
 const CrystalVisualStyle &crystal_visual_style() { static CrystalVisualStyle s; return s; }
 struct IWifi {
@@ -76,6 +79,27 @@ constexpr auto *kSettingsStatusFont=&lv_font_montserrat_20;
 constexpr auto *kWifiTitleFont=&lv_font_montserrat_28;
 constexpr auto *kWifiBodyFont=&lv_font_montserrat_20;
 constexpr auto *kQuickTileFont=&lv_font_montserrat_20;
+constexpr int kSettingsRowHeight=84,kSettingsRowPad=20,kSettingsTitleTop=10,kSettingsSummaryTop=48,kSettingsSummaryHeight=24;
+constexpr auto *kSettingsTitleFont=&lv_font_montserrat_22;
+constexpr auto *kSettingsSummaryFont=&lv_font_montserrat_20;
+static lv_obj_t *s_ethernet_page,*s_ethernet_rows[8];
+static lv_timer_t *s_ethernet_timer;
+static lv_obj_t *s_manage_apps_page, *s_root_settings_page, *s_root_network_row;
+static lv_obj_t *s_network_page, *s_network_wifi_row, *s_network_details_row;
+static lv_obj_t *s_network_ethernet_row, *s_network_active_row, *s_connection_details_content;
+static lv_obj_t *s_developer_tools_page, *s_control_api_row, *s_control_api_switch, *s_control_status_label;
+static lv_obj_t *s_root_power_row, *s_root_sound_row, *s_root_region_row, *s_power_auto_dim_row;
+static lv_obj_t *s_sound_alerts_row, *s_region_auto_time_row, *s_region_timezone_row;
+static lv_obj_t *s_region_format_row, *s_region_manual_time_row, *s_region_location_row;
+static lv_obj_t *s_ip_fields[3], *s_ip_apply_status;
+struct TestForm {lv_obj_t *page=nullptr;};
+static TestForm s_location_form,s_manual_time_form;
+static CrystalEthernetInfo ethernet_info;
+static CrystalNetworkType active_type;
+CrystalEthernetInfo crystal_ethernet_info(){return ethernet_info;}
+CrystalNetworkType crystal_network_active_type(){return active_type;}
+using ip4_addr_t=uint32_t;
+char *ip4addr_ntoa_r(const ip4_addr_t *ip,char *out,int size){return const_cast<char *>(inet_ntop(AF_INET,ip,out,size));}
 lv_obj_t *system_page_push(const char *) {
     auto *p=lv_obj_create(lv_layer_top()); lv_obj_set_size(p,720,680); lv_obj_set_pos(p,0,40);
     lv_obj_set_style_pad_all(p,0,0);lv_obj_set_style_border_width(p,0,0);
@@ -148,12 +172,52 @@ static void check_quick_wifi_tile() {
     lv_obj_del(tile);radio.connection_queries=0;
     std::puts("PASS: Quick WiFi states fit one status line; long SSIDs stay within the tile");
 }
+static void check_network_page_cleanup() {
+    auto *page=s_network_page=lv_obj_create(lv_layer_top());
+    s_network_active_row=lv_obj_create(page);s_network_ethernet_row=lv_obj_create(page);
+    s_network_wifi_row=lv_obj_create(page);s_network_details_row=lv_obj_create(page);
+    s_system_page_depth=1;clear_page_cache(page);
+    assert(!s_network_page && !s_network_active_row && !s_network_ethernet_row);
+    assert(!s_network_wifi_row && !s_network_details_row);
+    lv_obj_del(page);s_system_page_depth=0;clear_page_cache(lv_layer_top());
+    std::puts("PASS: closing Network clears cached rows before subsequent connectivity updates");
+}
+static void check_ethernet_details() {
+    ethernet_info.supported=true;settings_push_ethernet();advance(40);
+    assert(s_ethernet_page && s_ethernet_timer && s_system_page_depth==1);
+    auto text=[](size_t i){return lv_label_get_text(static_cast<lv_obj_t *>(lv_obj_get_user_data(s_ethernet_rows[i])));};
+    assert(!std::strcmp(text(0),"Starting..."));
+    ethernet_info.initialized=ethernet_info.started=true;ethernet_details_refresh(nullptr);
+    assert(!std::strcmp(text(0),"Cable disconnected"));
+    ethernet_info.link=true;ethernet_details_refresh(nullptr);assert(!std::strcmp(text(0),"Getting an IP address..."));
+    ethernet_info.has_ip=true;ethernet_info.ip=inet_addr("192.0.2.42");ethernet_info.dns=inet_addr("192.0.2.1");
+    ethernet_info.speed_mbps=100;ethernet_info.full_duplex=true;active_type=CrystalNetworkType::Ethernet;
+    ethernet_details_refresh(nullptr);advance(40);
+    assert(!std::strcmp(text(0),"Connected") && !std::strcmp(text(1),"Active connection"));
+    assert(!std::strcmp(text(2),"192.0.2.42") && !std::strcmp(text(5),"192.0.2.1"));
+    assert(!std::strcmp(text(7),"100 Mbps - Full duplex"));
+    for(size_t i=0;i<8;++i){
+        auto *row=s_ethernet_rows[i];assert(!lv_obj_has_flag(row,LV_OBJ_FLAG_CLICKABLE));
+        lv_area_t r{},a{},b{};lv_obj_get_coords(row,&r);lv_obj_get_coords(lv_obj_get_child(row,0),&a);lv_obj_get_coords(lv_obj_get_child(row,1),&b);
+        assert(a.y2<b.y1 && b.y2<=r.y2 && b.x1>=r.x1+20 && b.x2<=r.x2-20);
+    }
+    const char *label_pointer=text(2);ethernet_details_refresh(nullptr);assert(text(2)==label_pointer);
+    ethernet_info.link=ethernet_info.has_ip=false;ethernet_details_refresh(nullptr);
+    assert(!std::strcmp(text(0),"Cable disconnected") && !std::strcmp(text(2),"Not assigned"));
+    ethernet_info.error=-1;ethernet_details_refresh(nullptr);assert(!std::strcmp(text(0),"Unavailable - WiFi still works"));
+    lv_obj_del(s_ethernet_page);assert(!s_ethernet_page && !s_ethernet_timer);
+    for(auto *row:s_ethernet_rows)assert(!row);
+    s_system_page_depth=0;advance(2000);settings_push_ethernet();advance(40);lv_obj_del(s_ethernet_page);s_system_page_depth=0;
+    std::puts("PASS: real LVGL Ethernet status/address changes, readable rows, no idle rebuild and timer cleanup/reopen");
+}
 int main() {
     lv_init(); static lv_color_t px[720*20]; static lv_disp_draw_buf_t buf;
     lv_disp_draw_buf_init(&buf,px,nullptr,720*20); static lv_disp_drv_t drv;
     lv_disp_drv_init(&drv);drv.hor_res=drv.ver_res=720;drv.draw_buf=&buf;drv.flush_cb=flush;
     auto *display=lv_disp_drv_register(&drv);
     check_quick_wifi_tile();
+    check_ethernet_details();
+    check_network_page_cleanup();
     wifi_page_open();advance(40);
     assert(s_wifi_scanning && radio.scans==1 && lv_obj_has_state(s_wifi_refresh,LV_STATE_DISABLED));
     wifi_scan_start();assert(radio.scans==1);
@@ -232,6 +296,97 @@ int main() {
 }
 '''
 
+ETHERNET_BASE = r'''
+#pragma once
+#include <vector>
+#include "lvgl.h"
+class CrystalApp {
+public:
+    CrystalApp(const char *,const void *) {}
+    virtual ~CrystalApp()=default;
+    virtual bool onCreate(){return true;}
+    virtual bool onPause(){return true;}
+    virtual bool onResume(){return true;}
+    virtual bool onDestroy(){return true;}
+    lv_area_t getVisualArea(){return {0,0,719,679};}
+    bool trackObject(lv_obj_t *object){objects.push_back(object);return true;}
+    void cleanup(){for(auto *object:objects)lv_obj_del(object);objects.clear();}
+    std::vector<lv_obj_t *> objects;
+};
+'''
+
+ETHERNET_CHECK = r'''
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <arpa/inet.h>
+#include "ethernet_app.hpp"
+#include "crystal_ethernet.hpp"
+#include "crystal_network_policy.hpp"
+static CrystalEthernetInfo info;
+static CrystalNetworkType active;
+CrystalEthernetInfo crystal_ethernet_info(){return info;}
+CrystalNetworkType crystal_network_active_type(){return active;}
+const char *crystal_network_type_name(CrystalNetworkType type){return type==CrystalNetworkType::Ethernet?"Ethernet":type==CrystalNetworkType::WiFi?"WiFi":"Offline";}
+static void flush(lv_disp_drv_t *display,const lv_area_t *,lv_color_t *){lv_disp_flush_ready(display);}
+static void advance(int ms){for(int i=0;i<ms;i+=10){lv_tick_inc(10);lv_timer_handler();}}
+static unsigned timers(void *owner){unsigned count=0;for(auto *t=lv_timer_get_next(nullptr);t;t=lv_timer_get_next(t))if(t->user_data==owner)++count;return count;}
+static void snapshot(lv_obj_t *root){
+    auto *shot=lv_snapshot_take(root,LV_IMG_CF_TRUE_COLOR);assert(shot);
+    auto *file=std::fopen("ethernet-app.ppm","wb");assert(file);
+    std::fprintf(file,"P6\n%u %u\n255\n",shot->header.w,shot->header.h);
+    auto *pixels=reinterpret_cast<const lv_color_t *>(shot->data);
+    for(unsigned i=0;i<shot->header.w*shot->header.h;++i){
+        lv_color32_t c;c.full=lv_color_to32(pixels[i]);
+        const unsigned char rgb[]={c.ch.red,c.ch.green,c.ch.blue};
+        std::fwrite(rgb,1,3,file);
+    }
+    std::fclose(file);lv_snapshot_free(shot);
+}
+int main(){
+    lv_init();static lv_color_t pixels[720*20];static lv_disp_draw_buf_t buffer;
+    lv_disp_draw_buf_init(&buffer,pixels,nullptr,720*20);static lv_disp_drv_t driver;
+    lv_disp_drv_init(&driver);driver.hor_res=driver.ver_res=720;driver.draw_buf=&buffer;driver.flush_cb=flush;
+    auto *display=lv_disp_drv_register(&driver);EthernetInfoApp app;
+    info.supported=true;assert(app.onCreate());assert(timers(&app)==1);advance(40);
+    auto *root=app.objects.at(0);assert(lv_obj_get_child_cnt(root)==9);
+    auto *row=lv_obj_get_child(root,1);
+    auto value=[&](unsigned index){return lv_obj_get_child(lv_obj_get_child(root,index+1),1);};
+    assert(!std::strcmp(lv_label_get_text(value(0)),"Starting..."));
+    info.initialized=info.started=info.link=info.has_ip=true;
+    info.ip=inet_addr("192.168.1.233");info.mask=inet_addr("255.255.255.0");
+    info.gateway=info.dns=inet_addr("192.168.1.1");
+    info.mac[0]=0x02;info.mac[5]=0xAB;info.speed_mbps=100;info.full_duplex=true;
+    active=CrystalNetworkType::Ethernet;advance(1100);
+    assert(!std::strcmp(lv_label_get_text(value(0)),"Connected"));
+    assert(!std::strcmp(lv_label_get_text(value(2)),"192.168.1.233"));
+    assert(!std::strcmp(lv_label_get_text(value(6)),"02:00:00:00:00:AB"));
+    assert(!std::strcmp(lv_label_get_text(value(7)),"100 Mbps - Full duplex"));
+    for(unsigned i=0;i<8;++i){
+        auto *r=lv_obj_get_child(root,i+1);auto *title=lv_obj_get_child(r,0);
+        assert(!lv_obj_has_flag(r,LV_OBJ_FLAG_CLICKABLE));
+        lv_area_t rbox{},tbox{},vbox{};lv_obj_get_coords(r,&rbox);
+        lv_obj_get_coords(title,&tbox);lv_obj_get_coords(value(i),&vbox);
+        assert(tbox.y2<vbox.y1 && vbox.y2<rbox.y2);
+        assert(vbox.x1-rbox.x1>=24 && rbox.x2-vbox.x2>=24);
+        lv_point_t size;lv_txt_get_size(&size,lv_label_get_text(value(i)),&lv_font_montserrat_20,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        assert(size.x<=lv_obj_get_width(value(i)));
+    }
+    const char *stable=lv_label_get_text(value(2));advance(2100);
+    assert(stable==lv_label_get_text(value(2)));snapshot(root);
+    assert(app.onPause() && timers(&app)==0);info.has_ip=info.link=false;advance(2100);
+    assert(!std::strcmp(lv_label_get_text(value(0)),"Connected"));
+    active=CrystalNetworkType::WiFi;assert(app.onResume());assert(app.onResume());
+    assert(timers(&app)==1 && !std::strcmp(lv_label_get_text(value(0)),"Cable disconnected"));
+    assert(!std::strcmp(lv_label_get_text(value(2)),"Not assigned"));
+    assert(!std::strcmp(lv_label_get_text(value(7)),"No link"));
+    assert(app.onDestroy() && timers(&app)==0);app.cleanup();advance(2100);
+    assert(app.onCreate());assert(timers(&app)==1);
+    assert(app.onDestroy());app.cleanup();advance(1100);lv_disp_remove(display);
+    (void)row;std::puts("PASS: production Ethernet app states, readable rows, idle refresh, pause/resume timer uniqueness and destroy/relaunch cleanup");
+}
+'''
+
 GEOMETRY = r'''
 #include <cassert>
 #include <cstdlib>
@@ -294,6 +449,12 @@ def main():
                   'void quick_tile_set_text(lv_obj_t *tile, const char *text)',
                   'void wifi_tile_text(char *out, size_t size)',
                   'void settings_button_feedback(lv_obj_t *button)',
+                  'lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)',
+                  'const char *ethernet_status(const CrystalEthernetInfo &info)',
+                  'void ethernet_details_refresh(lv_timer_t *)',
+                  'void ethernet_details_deleted(lv_event_t *event)',
+                  'void settings_push_ethernet()',
+                  'void clear_page_cache(lv_obj_t *page)',
                   'static void wifi_dialog_place(bool keyboard_open)', 'static void wifi_close_credentials()',
                   'static void wifi_open_credentials(const char *ssid)',
                   'static void wifi_scan_busy(bool busy)', 'static void wifi_scan_worker(void *)',
@@ -304,8 +465,15 @@ def main():
     code = FIXTURE + constants + '\n'.join(function(source, name) for name in signatures) + CHECK
     with tempfile.TemporaryDirectory(prefix='crystal-wifi-view-') as directory:
         temp = Path(directory)
+        (temp / 'crystal_ethernet.hpp').write_text((ROOT/'components/crystal_hal/include/crystal_ethernet.hpp').read_text())
+        (temp / 'crystal_network_policy.hpp').write_text((ROOT/'components/crystal_hal/include/crystal_network_policy.hpp').read_text())
+        (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0;\n')
         (temp / 'lv_conf.h').write_text(CONF + '\n#define LV_FONT_MONTSERRAT_24 1\n#define LV_FONT_MONTSERRAT_28 1\n#define LV_COLOR_SCREEN_TRANSP 1\n')
         (temp / 'check.cpp').write_text(code)
+        (temp / 'ethernet_check.cpp').write_text(ETHERNET_CHECK)
+        (temp / 'crystal_app.hpp').write_text(ETHERNET_BASE)
+        (temp / 'lwip').mkdir()
+        (temp / 'lwip/ip4_addr.h').write_text('#pragma once\n#include <arpa/inet.h>\nusing ip4_addr_t=uint32_t;\ninline char *ip4addr_ntoa_r(const ip4_addr_t *ip,char *out,int size){return const_cast<char *>(inet_ntop(AF_INET,ip,out,size));}\n')
         (temp / 'geometry.cpp').write_text(GEOMETRY)
         (temp / 'crystal_shell.hpp').write_text('''#pragma once
 #include "lvgl.h"
@@ -330,6 +498,13 @@ target_link_options(check PRIVATE -fsanitize=address)
 target_link_libraries(check PRIVATE lvgl)
 ''')
         with (temp/'CMakeLists.txt').open('a') as cmake:
+            cmake.write(f'''
+add_executable(ethernet_check ethernet_check.cpp "{ROOT}/components/ethernet_app/src/ethernet_app.cpp" "{ROOT}/components/ethernet_app/src/ethernet_icon.c")
+target_include_directories(ethernet_check PRIVATE "{temp}" "{ROOT}/components/ethernet_app/include")
+target_compile_options(ethernet_check PRIVATE -g -fsanitize=address,undefined)
+target_link_options(ethernet_check PRIVATE -fsanitize=address,undefined)
+target_link_libraries(ethernet_check PRIVATE lvgl)
+''')
             for target,value in [('s3',0),('p4',1)]:
                 cmake.write(f'''
 add_executable(geometry_{target} geometry.cpp "{ROOT}/components/crystal_shell/src/crystal_keyboard.cpp")
@@ -340,8 +515,9 @@ target_link_options(geometry_{target} PRIVATE -fsanitize=address)
 target_link_libraries(geometry_{target} PRIVATE lvgl)
 ''')
         subprocess.run(['cmake', '-S', str(temp), '-B', str(temp/'build')], check=True)
-        subprocess.run(['cmake','--build',str(temp/'build'),'--target','check','geometry_s3','geometry_p4','-j','8'], check=True)
+        subprocess.run(['cmake','--build',str(temp/'build'),'--target','check','geometry_s3','geometry_p4','ethernet_check','-j','8'], check=True)
         subprocess.run([str(temp/'build/check')], check=True, cwd=temp)
+        subprocess.run([str(temp/'build/ethernet_check')],check=True,cwd=temp)
         geometry={target:json.loads(subprocess.check_output([str(temp/f'build/geometry_{target}')],text=True))
                   for target in ('s3','p4')}
         for dimension in ('width','height'):

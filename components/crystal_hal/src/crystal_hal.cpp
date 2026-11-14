@@ -4,6 +4,7 @@
 
 #include "crystal_hal.hpp"
 #include "crystal_network.h"
+#include "crystal_ethernet.hpp"
 
 #include <string.h>
 #include <stdio.h>
@@ -40,7 +41,12 @@
 
 namespace {
 
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr uint8_t kBrightnessMax = 100;
+constexpr uint8_t kBrightnessScaleVersion = 1;
+#else
 constexpr uint8_t kBrightnessMax = 95;
+#endif
 constexpr int kVolumeMax = 100;
 constexpr const char *kStorageNamespace = "crystal";
 constexpr const char *kWifiEnabledKey = "wifi_enabled";
@@ -75,7 +81,11 @@ public:
         if (pct > kBrightnessMax) {
             pct = kBrightnessMax;
         }
-        (void)bsp_display_brightness_set(pct);
+        ESP_LOGI(TAG, "Brightness HAL value: %u%%", static_cast<unsigned>(pct));
+        const esp_err_t err = bsp_display_brightness_set(pct);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Brightness HAL update failed: %s", esp_err_to_name(err));
+        }
         pct_ = pct;
     }
 
@@ -1106,7 +1116,7 @@ CrystalHal &hal()
 
 extern "C" bool crystal_network_has_ip(void)
 {
-    return s_wifi.has_ip();
+    return s_wifi.has_ip() || crystal_ethernet_is_connected();
 }
 
 bool crystal_hal_set_volume(int volume)
@@ -1140,6 +1150,29 @@ void crystal_hal_init()
     } else {
         s_brightness.restore_cached(s_brightness.get());
     }
+#if CONFIG_IDF_TARGET_ESP32P4
+    // The previous P4 UI used 0..95, where 95 was full duty and 0 could leave
+    // the user with a black panel. Migrate that persisted scale once; values
+    // selected after this firmware update are left untouched.
+    uint8_t brightness_scale_version = 0;
+    size_t brightness_scale_version_len = sizeof(brightness_scale_version);
+    const bool has_brightness_scale_version =
+        s_storage.get("brightness.scale", &brightness_scale_version, &brightness_scale_version_len) &&
+        brightness_scale_version_len == sizeof(brightness_scale_version);
+    if (!has_brightness_scale_version || brightness_scale_version < kBrightnessScaleVersion) {
+        const uint8_t migrated_brightness = brightness == 0 ? 1 : brightness == 95 ? 100 : brightness;
+        if (migrated_brightness != brightness) {
+            brightness = migrated_brightness;
+            (void)s_storage.set("brightness", &brightness, sizeof(brightness));
+            ESP_LOGI(TAG, "Migrated stored brightness to P4 1..100 scale: %u%%",
+                     static_cast<unsigned>(brightness));
+        }
+        brightness_scale_version = kBrightnessScaleVersion;
+        (void)s_storage.set("brightness.scale", &brightness_scale_version,
+                            sizeof(brightness_scale_version));
+    }
+    s_brightness.restore_cached(brightness);
+#endif
 
     // The codec is initialized lazily by the volume adapter. Apply the saved
     // value here so audio uses the user's setting before the quick panel opens.
