@@ -388,6 +388,8 @@ constexpr lv_coord_t kQuickPad = 18;
 constexpr lv_coord_t kQuickMargin = 16;
 constexpr lv_coord_t kQuickGapTop = 12;
 constexpr lv_coord_t kQuickCornerWidth = 180;
+constexpr lv_coord_t kQuickNativeIconSize = 28;
+constexpr const lv_font_t *kQuickIconFont = &lv_font_montserrat_28;
 constexpr lv_coord_t kSettingsHeaderHeight = 72;
 constexpr lv_coord_t kSettingsContentInset = 16;
 constexpr lv_coord_t kSettingsRowHeight = 84;
@@ -454,6 +456,7 @@ constexpr lv_coord_t kQuickPad = 14;
 constexpr lv_coord_t kQuickMargin = 12;
 constexpr lv_coord_t kQuickGapTop = 8;
 constexpr lv_coord_t kQuickCornerWidth = 120;
+constexpr lv_coord_t kQuickNativeIconSize = 16;
 constexpr lv_coord_t kSettingsHeaderHeight = 52;
 constexpr lv_coord_t kSettingsContentInset = 10;
 constexpr lv_coord_t kSettingsRowHeight = 60;
@@ -510,6 +513,13 @@ constexpr const lv_font_t *kWifiTitleFont = &lv_font_montserrat_20;
 constexpr const lv_font_t *kWifiBodyFont = &lv_font_montserrat_16;
 constexpr const lv_font_t *kQuickTileFont = nullptr;
 #endif
+// Scale the existing native icon artwork, with its original 16px coordinates.
+// The target picks the size at compile time; S3 coordinates remain unchanged.
+constexpr lv_coord_t quick_icon_px(lv_coord_t pixels)
+{
+    return static_cast<lv_coord_t>((pixels * kQuickNativeIconSize + 8) / 16);
+}
+
 constexpr lv_coord_t kHomePillHitWidth = kHomePillWidth + 2 * kHomePillHitMargin;
 constexpr lv_coord_t kHomePillMaxLift = 8;
 constexpr uint32_t kHomePillSettleMs = 120;
@@ -744,6 +754,25 @@ void close_quick_settings(void (*then)())
     lv_anim_set_ready_cb(&a, quick_anim_ready); s_quick_settling = true; s_quick_closing = true; lv_anim_start(&a);
 }
 
+void quick_tile_set_text(lv_obj_t *tile, const char *text)
+{
+    if (tile == nullptr || text == nullptr) return;
+    lv_obj_t *icon = lv_obj_get_child(tile, 0);
+    if (icon == nullptr) return;
+#if CONFIG_IDF_TARGET_ESP32P4
+    const char *separator = strchr(text, '\n');
+    if (separator != nullptr) {
+        lv_obj_t *caption = lv_obj_get_child(tile, 1);
+        if (caption != nullptr) {
+            lv_label_set_text_fmt(icon, "%.*s", static_cast<int>(separator - text), text);
+            lv_label_set_text(caption, separator + 1);
+            return;
+        }
+    }
+#endif
+    lv_label_set_text(icon, text);
+}
+
 bool create_quick_settings()
 {
     if (s_quick_root != nullptr) return true;
@@ -792,11 +821,27 @@ bool create_quick_settings()
         lv_obj_set_style_bg_color(obj, lv_color_hex(0x3b82f6), LV_STATE_CHECKED);
         lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_STATE_CHECKED);
         lv_obj_set_style_transform_zoom(obj, 248, LV_STATE_PRESSED);
-        lv_obj_t *label = lv_label_create(obj); lv_label_set_text(label, text); lv_obj_center(label);
+        lv_obj_t *label = lv_label_create(obj);
+        lv_obj_center(label);
 #if CONFIG_IDF_TARGET_ESP32P4
-        lv_obj_set_style_text_font(label, kQuickTileFont, 0);
+        lv_obj_set_style_text_font(label, kQuickIconFont, 0);
+        if (strchr(text, '\n') != nullptr) {
+            // Keep the symbol prominent without enlarging the Wi-Fi state/SSID
+            // or Bluetooth captions. Flex layout recentres changing captions.
+            lv_obj_set_flex_flow(obj, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(obj, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_row(obj, 8, 0);
+            lv_obj_t *caption = lv_label_create(obj);
+            lv_obj_set_width(caption, LV_PCT(100));
+            lv_label_set_long_mode(caption, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_font(caption, kQuickTileFont, 0);
+            lv_obj_set_style_text_color(caption, lv_color_hex(0xf2f4f7), 0);
+            lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+        }
 #endif
         lv_obj_set_style_text_color(label, lv_color_hex(0xf2f4f7), 0);
+        quick_tile_set_text(obj, text);
         return obj;
     };
     char wifi_text[64] = {};
@@ -817,20 +862,26 @@ bool create_quick_settings()
         else lv_obj_clear_state(tile, LV_STATE_CHECKED);
     }, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_t *bt = tile(LV_SYMBOL_BLUETOOTH "\nBluetooth\nUnavailable", LV_GRID_ALIGN_STRETCH, 2, 2, 0, 2); lv_obj_set_style_bg_opa(bt, 15, 0); lv_obj_set_style_text_opa(lv_obj_get_child(bt, 0), LV_OPA_40, 0); lv_obj_add_state(bt, LV_STATE_DISABLED);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_opa(lv_obj_get_child(bt, 1), LV_OPA_40, 0);
+#endif
     s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, crystal_brightness_level(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
-    // The bundled font has no sun glyph, so draw a small flat icon without
+    // The bundled font has no sun glyph, so draw a native icon without
     // theme styles. Its bottom alignment matches the volume symbol exactly.
-    lv_obj_t *brightness_icon = lv_obj_create(s_quick_brightness); lv_obj_remove_style_all(brightness_icon); lv_obj_set_size(brightness_icon, 16, 16); lv_obj_align(brightness_icon, LV_ALIGN_BOTTOM_MID, 0, -8); lv_obj_clear_flag(brightness_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *sun_core = lv_obj_create(brightness_icon); lv_obj_remove_style_all(sun_core); lv_obj_set_size(sun_core, 8, 8); lv_obj_center(sun_core); lv_obj_set_style_bg_color(sun_core, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(sun_core, LV_OPA_COVER, 0); lv_obj_set_style_radius(sun_core, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(sun_core, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    const lv_coord_t ray_pos[][2] = {{7, 0}, {7, 14}, {0, 7}, {14, 7}, {2, 2}, {12, 2}, {2, 12}, {12, 12}}; for (const auto &pos : ray_pos) { lv_obj_t *ray = lv_obj_create(brightness_icon); lv_obj_remove_style_all(ray); lv_obj_set_size(ray, 2, 2); lv_obj_set_pos(ray, pos[0], pos[1]); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
+    lv_obj_t *brightness_icon = lv_obj_create(s_quick_brightness); lv_obj_remove_style_all(brightness_icon); lv_obj_set_size(brightness_icon, kQuickNativeIconSize, kQuickNativeIconSize); lv_obj_align(brightness_icon, LV_ALIGN_BOTTOM_MID, 0, -quick_icon_px(8)); lv_obj_clear_flag(brightness_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *sun_core = lv_obj_create(brightness_icon); lv_obj_remove_style_all(sun_core); lv_obj_set_size(sun_core, quick_icon_px(8), quick_icon_px(8)); lv_obj_center(sun_core); lv_obj_set_style_bg_color(sun_core, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(sun_core, LV_OPA_COVER, 0); lv_obj_set_style_radius(sun_core, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(sun_core, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    const lv_coord_t ray_pos[][2] = {{7, 0}, {7, 14}, {0, 7}, {14, 7}, {2, 2}, {12, 2}, {2, 12}, {12, 12}}; for (const auto &pos : ray_pos) { lv_obj_t *ray = lv_obj_create(brightness_icon); lv_obj_remove_style_all(ray); lv_obj_set_size(ray, quick_icon_px(2), quick_icon_px(2)); lv_obj_set_pos(ray, quick_icon_px(pos[0]), quick_icon_px(pos[1])); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
     s_quick_volume = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_volume, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_volume, 18, 0); lv_obj_set_style_bg_color(s_quick_volume, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_volume, 31, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_volume, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_volume, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_volume, 0, 100); lv_bar_set_value(s_quick_volume, crystal_hal_get_volume(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_volume, quick_bar_event, LV_EVENT_ALL, nullptr);
-    lv_obj_t *volume_icon = lv_label_create(s_quick_volume); lv_label_set_text(volume_icon, LV_SYMBOL_VOLUME_MID); lv_obj_align(volume_icon, LV_ALIGN_BOTTOM_MID, 0, -8); lv_obj_set_style_text_color(volume_icon, lv_color_hex(0xf2f4f7), 0); lv_obj_clear_flag(volume_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *volume_icon = lv_label_create(s_quick_volume); lv_label_set_text(volume_icon, LV_SYMBOL_VOLUME_MID); lv_obj_align(volume_icon, LV_ALIGN_BOTTOM_MID, 0, -quick_icon_px(8)); lv_obj_set_style_text_color(volume_icon, lv_color_hex(0xf2f4f7), 0); lv_obj_clear_flag(volume_icon, LV_OBJ_FLAG_CLICKABLE);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(volume_icon, kQuickIconFont, 0);
+#endif
     lv_obj_t *energy = tile(LV_SYMBOL_BATTERY_FULL, LV_GRID_ALIGN_STRETCH, 2, 1, 2, 1);
     // Draw the leaf natively; the board font does not reliably provide the
     // Font Awesome leaf glyph used by some LVGL symbol builds.
-    lv_obj_t *energy_leaf = lv_obj_create(energy); lv_obj_remove_style_all(energy_leaf); lv_obj_set_size(energy_leaf, 20, 18); lv_obj_align(energy_leaf, LV_ALIGN_CENTER, 10, 2); lv_obj_clear_flag(energy_leaf, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *leaf_left = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_left); lv_obj_set_size(leaf_left, 7, 12); lv_obj_set_pos(leaf_left, 3, 2); lv_obj_set_style_bg_color(leaf_left, lv_color_hex(0x9be15b), 0); lv_obj_set_style_bg_opa(leaf_left, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_left, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_left, 350, 0); lv_obj_clear_flag(leaf_left, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *leaf_right = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_right); lv_obj_set_size(leaf_right, 7, 12); lv_obj_set_pos(leaf_right, 9, 2); lv_obj_set_style_bg_color(leaf_right, lv_color_hex(0x70bd43), 0); lv_obj_set_style_bg_opa(leaf_right, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_right, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_right, 550, 0); lv_obj_clear_flag(leaf_right, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *energy_leaf = lv_obj_create(energy); lv_obj_remove_style_all(energy_leaf); lv_obj_set_size(energy_leaf, quick_icon_px(20), quick_icon_px(18)); lv_obj_align(energy_leaf, LV_ALIGN_CENTER, quick_icon_px(10), quick_icon_px(2)); lv_obj_clear_flag(energy_leaf, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *leaf_left = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_left); lv_obj_set_size(leaf_left, quick_icon_px(7), quick_icon_px(12)); lv_obj_set_pos(leaf_left, quick_icon_px(3), quick_icon_px(2)); lv_obj_set_style_bg_color(leaf_left, lv_color_hex(0x9be15b), 0); lv_obj_set_style_bg_opa(leaf_left, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_left, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_left, 350, 0); lv_obj_clear_flag(leaf_left, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *leaf_right = lv_obj_create(energy_leaf); lv_obj_remove_style_all(leaf_right); lv_obj_set_size(leaf_right, quick_icon_px(7), quick_icon_px(12)); lv_obj_set_pos(leaf_right, quick_icon_px(9), quick_icon_px(2)); lv_obj_set_style_bg_color(leaf_right, lv_color_hex(0x70bd43), 0); lv_obj_set_style_bg_opa(leaf_right, LV_OPA_COVER, 0); lv_obj_set_style_radius(leaf_right, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_transform_angle(leaf_right, 550, 0); lv_obj_clear_flag(leaf_right, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     if (crystal_power_saving_enabled()) lv_obj_add_state(energy, LV_STATE_CHECKED);
     lv_obj_add_event_cb(energy, [](lv_event_t *e) { lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e)); const bool on = !lv_obj_has_state(obj, LV_STATE_CHECKED); if (on) lv_obj_add_state(obj, LV_STATE_CHECKED); else lv_obj_clear_state(obj, LV_STATE_CHECKED); crystal_power_set_saving(on); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *gear = tile(LV_SYMBOL_SETTINGS, LV_GRID_ALIGN_STRETCH, 3, 1, 2, 1);
@@ -840,17 +891,19 @@ bool create_quick_settings()
     // sun glyph. Monochrome to match the other tiles; the leaf is deliberately
     // the only coloured element on the panel.
     lv_obj_t *auto_dim = tile("", LV_GRID_ALIGN_STRETCH, 2, 1, 3, 1);
-    // 16x16 to match the brightness sun and the 14px symbol glyphs on the other
-    // tiles. Sized against those, not against the source artwork.
-    lv_obj_t *dim_icon = lv_obj_create(auto_dim); lv_obj_remove_style_all(dim_icon); lv_obj_set_size(dim_icon, 16, 16); lv_obj_align(dim_icon, LV_ALIGN_CENTER, -6, 0); lv_obj_clear_flag(dim_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *dim_disc = lv_obj_create(dim_icon); lv_obj_remove_style_all(dim_disc); lv_obj_set_size(dim_disc, 9, 9); lv_obj_center(dim_disc); lv_obj_set_style_bg_opa(dim_disc, LV_OPA_TRANSP, 0); lv_obj_set_style_border_width(dim_disc, 2, 0); lv_obj_set_style_border_color(dim_disc, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_border_opa(dim_disc, LV_OPA_COVER, 0); lv_obj_set_style_radius(dim_disc, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(dim_disc, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    // Match the brightness sun at the target's native icon size.
+    lv_obj_t *dim_icon = lv_obj_create(auto_dim); lv_obj_remove_style_all(dim_icon); lv_obj_set_size(dim_icon, kQuickNativeIconSize, kQuickNativeIconSize); lv_obj_align(dim_icon, LV_ALIGN_CENTER, -quick_icon_px(6), 0); lv_obj_clear_flag(dim_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *dim_disc = lv_obj_create(dim_icon); lv_obj_remove_style_all(dim_disc); lv_obj_set_size(dim_disc, quick_icon_px(9), quick_icon_px(9)); lv_obj_center(dim_disc); lv_obj_set_style_bg_opa(dim_disc, LV_OPA_TRANSP, 0); lv_obj_set_style_border_width(dim_disc, quick_icon_px(2), 0); lv_obj_set_style_border_color(dim_disc, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_border_opa(dim_disc, LV_OPA_COVER, 0); lv_obj_set_style_radius(dim_disc, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(dim_disc, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     // Cardinal rays as 2x3 / 3x2 bars, diagonals as 2x2 dots. Same ray geometry
     // as the brightness sun so the two read as a family.
     const lv_coord_t dim_bars[][4] = {{7, 0, 2, 3}, {7, 13, 2, 3}, {0, 7, 3, 2}, {13, 7, 3, 2}};
-    for (const auto &bar : dim_bars) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, bar[0], bar[1]); lv_obj_set_size(ray, bar[2], bar[3]); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, 1, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
+    for (const auto &bar : dim_bars) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, quick_icon_px(bar[0]), quick_icon_px(bar[1])); lv_obj_set_size(ray, quick_icon_px(bar[2]), quick_icon_px(bar[3])); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, 1, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
     const lv_coord_t dim_dots[][2] = {{2, 2}, {12, 2}, {2, 12}, {12, 12}};
-    for (const auto &dot : dim_dots) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, dot[0], dot[1]); lv_obj_set_size(ray, 2, 2); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
-    lv_obj_t *dim_a = lv_label_create(auto_dim); lv_label_set_text(dim_a, "A"); lv_obj_set_style_text_color(dim_a, lv_color_hex(0xf2f4f7), 0); lv_obj_align(dim_a, LV_ALIGN_CENTER, 6, 4); lv_obj_clear_flag(dim_a, LV_OBJ_FLAG_CLICKABLE);
+    for (const auto &dot : dim_dots) { lv_obj_t *ray = lv_obj_create(dim_icon); lv_obj_remove_style_all(ray); lv_obj_set_pos(ray, quick_icon_px(dot[0]), quick_icon_px(dot[1])); lv_obj_set_size(ray, quick_icon_px(2), quick_icon_px(2)); lv_obj_set_style_bg_color(ray, lv_color_hex(0xf2f4f7), 0); lv_obj_set_style_bg_opa(ray, LV_OPA_COVER, 0); lv_obj_set_style_radius(ray, LV_RADIUS_CIRCLE, 0); lv_obj_clear_flag(ray, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); }
+    lv_obj_t *dim_a = lv_label_create(auto_dim); lv_label_set_text(dim_a, "A"); lv_obj_set_style_text_color(dim_a, lv_color_hex(0xf2f4f7), 0); lv_obj_align(dim_a, LV_ALIGN_CENTER, quick_icon_px(6), quick_icon_px(4)); lv_obj_clear_flag(dim_a, LV_OBJ_FLAG_CLICKABLE);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(dim_a, kQuickTileFont, 0);
+#endif
     if (crystal_power_auto_dim_enabled()) lv_obj_add_state(auto_dim, LV_STATE_CHECKED);
     lv_obj_add_event_cb(auto_dim, [](lv_event_t *e) {
         lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e));
@@ -3630,8 +3683,7 @@ void crystal_shell_wifi_event(uint8_t event)
         if (s_quick_wifi != nullptr) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         wifi_page_close();
         if (s_quick_wifi == nullptr) return;
-        lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0);
-        if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); }
+        char text[64]; wifi_tile_text(text, sizeof(text)); quick_tile_set_text(s_quick_wifi, text);
     } else if (event == UI_EVT_WIFI_CONNECTING) {
         if (s_quick_wifi != nullptr) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         const char *ssid = hal().wifi != nullptr ? hal().wifi->last_ssid() : "";
@@ -3640,7 +3692,7 @@ void crystal_shell_wifi_event(uint8_t event)
         if (s_network_wifi_row != nullptr) settings_row_set_summary(s_network_wifi_row, "Connecting...");
         if (s_network_details_row != nullptr) settings_row_set_summary(s_network_details_row, "Connecting...");
         if (s_root_network_row != nullptr) settings_row_set_summary(s_root_network_row, "Connecting...");
-        if (s_quick_wifi != nullptr) { lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0); if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); } }
+        if (s_quick_wifi != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); quick_tile_set_text(s_quick_wifi, text); }
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) { char text[64]; snprintf(text, sizeof(text), "Connecting to %.32s...", ssid); lv_label_set_text(s_wifi_page_status, text); }
         wifi_page_fill_list();
     } else if (event == UI_EVT_WIFI_DISCONNECTED) {
@@ -3657,8 +3709,7 @@ void crystal_shell_wifi_event(uint8_t event)
         if (s_quick_wifi == nullptr) return;
         if (hal().wifi != nullptr && hal().wifi->enabled()) lv_obj_add_state(s_quick_wifi, LV_STATE_CHECKED);
         else lv_obj_clear_state(s_quick_wifi, LV_STATE_CHECKED);
-        lv_obj_t *label = lv_obj_get_child(s_quick_wifi, 0);
-        if (label != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); lv_label_set_text(label, text); }
+        char text[64]; wifi_tile_text(text, sizeof(text)); quick_tile_set_text(s_quick_wifi, text);
     } else if (event == UI_EVT_WIFI_CONNECT_FAILED) {
         s_wifi_connecting[0] = '\0';
         refresh_connection_details();

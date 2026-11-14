@@ -610,6 +610,17 @@ After updating all apps:
 - The existing C6 firmware is preserved. No coprocessor update or factory
   workspace changes were part of this phase.
 
+#### Quick Settings Follow-up — 2026-11-14
+
+- P4 quick-settings symbols use 28px glyphs, with matching scaled native
+  brightness, energy-saving and auto-dim artwork. Wi-Fi and Bluetooth captions
+  retain 20px text; tile geometry, touch targets and animations are unchanged.
+- The ESP-IDF v6.1 P4 build passed. The app-only flash at `0x30000` passed
+  esptool hash verification, and the user confirmed the larger icons look good
+  on the device. The existing C6 firmware is preserved.
+- S3 retains its original icon sizing; this follow-up has not had a fresh
+  full S3 build or S3 hardware validation.
+
 This closes the Phase 1.5 resolution/layout and typography scope. Phase P4.2
 visual enhancements, animation performance qualification and the remaining
 [Phase 1 acceptance items](ESP32_P4_PHASE1_VALIDATION.md#remaining-acceptance-and-limitations)
