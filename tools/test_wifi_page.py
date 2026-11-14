@@ -75,6 +75,7 @@ constexpr int kWifiNetworkRowInset=24;
 constexpr auto *kSettingsStatusFont=&lv_font_montserrat_20;
 constexpr auto *kWifiTitleFont=&lv_font_montserrat_28;
 constexpr auto *kWifiBodyFont=&lv_font_montserrat_20;
+constexpr auto *kQuickTileFont=&lv_font_montserrat_20;
 lv_obj_t *system_page_push(const char *) {
     auto *p=lv_obj_create(lv_layer_top()); lv_obj_set_size(p,720,680); lv_obj_set_pos(p,0,40);
     lv_obj_set_style_pad_all(p,0,0);lv_obj_set_style_border_width(p,0,0);
@@ -108,11 +109,51 @@ static void close_page() {
     s_wifi_page=s_wifi_page_list=s_wifi_page_status=s_wifi_scan_spinner=s_wifi_refresh=nullptr;
     s_system_page_depth=0;
 }
+static void check_quick_wifi_tile() {
+    auto *tile=lv_btn_create(lv_layer_top());
+    lv_obj_set_size(tile,186,186);
+    auto *icon=lv_label_create(tile);lv_obj_center(icon);
+    lv_obj_set_style_text_font(icon,&lv_font_montserrat_28,0);
+    quick_tile_add_captions(tile);
+    auto *title=lv_obj_get_child(tile,1);
+    auto *status=lv_obj_get_child(tile,2);
+    auto show=[&](const char *expected) {
+        char text[64];wifi_tile_text(text,sizeof(text));quick_tile_set_text(tile,text);
+        lv_obj_update_layout(tile);
+        assert(!std::strcmp(lv_label_get_text(title),"WiFi"));
+        assert(!std::strcmp(lv_label_get_text(status),expected));
+        lv_point_t measured{};
+        lv_txt_get_size(&measured,expected,kQuickTileFont,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        assert(measured.x<=lv_obj_get_width(status));
+        assert(lv_obj_get_height(status)==lv_font_get_line_height(kQuickTileFont));
+        lv_area_t b{},i{},t{},s{};
+        lv_obj_get_coords(tile,&b);lv_obj_get_coords(icon,&i);
+        lv_obj_get_coords(title,&t);lv_obj_get_coords(status,&s);
+        assert(i.y1>=b.y1 && i.y2<t.y1 && t.y2<s.y1 && s.y2<=b.y2);
+        assert(s.x1-b.x1>=8 && b.x2-s.x2>=8);
+    };
+    services.wifi=nullptr;show("Off");services.wifi=&radio;
+    radio.radio=false;show("Off");
+    radio.radio=true;show("Not connected");
+    std::snprintf(s_wifi_connecting,sizeof(s_wifi_connecting),"Test network");show("Connecting...");
+    radio.online=true;std::snprintf(radio.saved,sizeof(radio.saved),"Home");show("Home");
+    std::snprintf(radio.saved,sizeof(radio.saved),"ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+    char text[64];wifi_tile_text(text,sizeof(text));
+    assert(std::strstr(text,radio.saved)); // Full name is retained until presentation.
+    quick_tile_set_text(tile,text);advance(40);
+    assert(lv_label_get_long_mode(status)==LV_LABEL_LONG_DOT);
+    assert(lv_obj_get_height(status)==lv_font_get_line_height(kQuickTileFont));
+    assert(lv_obj_get_scroll_bottom(tile)<=0 && lv_obj_get_scroll_right(tile)<=0);
+    radio.online=false;s_wifi_connecting[0]='\0';radio.saved[0]='\0';show("Not connected");
+    lv_obj_del(tile);radio.connection_queries=0;
+    std::puts("PASS: Quick WiFi states fit one status line; long SSIDs stay within the tile");
+}
 int main() {
     lv_init(); static lv_color_t px[720*20]; static lv_disp_draw_buf_t buf;
     lv_disp_draw_buf_init(&buf,px,nullptr,720*20); static lv_disp_drv_t drv;
     lv_disp_drv_init(&drv);drv.hor_res=drv.ver_res=720;drv.draw_buf=&buf;drv.flush_cb=flush;
     auto *display=lv_disp_drv_register(&drv);
+    check_quick_wifi_tile();
     wifi_page_open();advance(40);
     assert(s_wifi_scanning && radio.scans==1 && lv_obj_has_state(s_wifi_refresh,LV_STATE_DISABLED));
     wifi_scan_start();assert(radio.scans==1);
@@ -249,7 +290,10 @@ def main():
     parser.add_argument('--output-dir',type=Path)
     args=parser.parse_args()
     source = SOURCE.read_text()
-    signatures = ['void settings_button_feedback(lv_obj_t *button)',
+    signatures = ['void quick_tile_add_captions(lv_obj_t *tile)',
+                  'void quick_tile_set_text(lv_obj_t *tile, const char *text)',
+                  'void wifi_tile_text(char *out, size_t size)',
+                  'void settings_button_feedback(lv_obj_t *button)',
                   'static void wifi_dialog_place(bool keyboard_open)', 'static void wifi_close_credentials()',
                   'static void wifi_open_credentials(const char *ssid)',
                   'static void wifi_scan_busy(bool busy)', 'static void wifi_scan_worker(void *)',

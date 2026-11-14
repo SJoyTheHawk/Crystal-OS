@@ -69,8 +69,13 @@ int main() {
     assert(!sheet->home.flags.enable_recents_screen);
     assert(!sheet->manager.gesture.flags.enable_indicator_bars[ESP_BROOKESIA_GESTURE_INDICATOR_BAR_TYPE_BOTTOM]);
     delete sheet;
-    // A root Settings transition must reveal the outgoing app, never the
-    // launcher that Brookesia loads when pausing that app for the overlay.
+    assert(crystal_visual_style().page_transition_ms == 0);
+#if CONFIG_IDF_TARGET_ESP32P4
+    assert(crystal_visual_style().boot_ready_hold_ms == 300);
+    assert(crystal_visual_style().boot_fade_ms == 240);
+#endif
+    // Backdrop helpers remain supported, but immediate Settings callers skip
+    // capturing an image. Verify explicit backdrop ownership independently.
     auto *app = lv_obj_create(lv_scr_act());
     lv_obj_set_size(app, driver.hor_res, driver.ver_res);
     lv_obj_set_style_bg_color(app, lv_color_hex(0x284860), 0);
@@ -93,9 +98,7 @@ int main() {
     advance(40);
     assert(lv_obj_is_valid(backdrop));
     crystal_page_transition_retire(settings);
-#if CONFIG_IDF_TARGET_ESP32P4
-    assert(lv_obj_is_valid(backdrop)); // it survives the outgoing fade too
-#endif
+    assert(lv_obj_get_child_cnt(lv_layer_top()) == overlay_count);
     advance(400);
     assert(lv_obj_get_child_cnt(lv_layer_top()) == overlay_count);
     // Display teardown deletes older top-layer siblings before the page.
@@ -144,22 +147,22 @@ int main() {
     auto *child = lv_obj_create(lv_layer_top());
     lv_obj_set_pos(child, 0, 40);
     lv_obj_set_size(child, driver.hor_res, driver.ver_res - 40);
+    const auto animations_before_enter = lv_anim_count_running();
     crystal_page_transition_enter(child, settings);
-#if CONFIG_IDF_TARGET_ESP32P4
-    for (int frame = 0; frame < 10; ++frame) {
-        advance(10);
-        assert(!lv_obj_has_flag(settings, LV_OBJ_FLAG_HIDDEN));
-        assert(lv_obj_get_style_opa(settings, 0) == LV_OPA_COVER);
-        assert(lv_obj_get_style_translate_x(child, 0) == 0);
-    }
-#endif
+    assert(lv_anim_count_running() == animations_before_enter);
+    assert(lv_obj_has_flag(settings, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_get_style_opa(child, 0) == LV_OPA_COVER);
+    assert(lv_obj_get_style_translate_x(child, 0) == 0);
+    assert(lv_obj_get_style_translate_y(child, 0) == 0);
     advance(400);
     assert(lv_obj_has_flag(settings, LV_OBJ_FLAG_HIDDEN));
     assert(lv_obj_get_style_opa(child, 0) == LV_OPA_COVER);
     lv_obj_clear_flag(settings, LV_OBJ_FLAG_HIDDEN);
+    const auto children_before_retire = lv_obj_get_child_cnt(lv_layer_top());
     crystal_page_transition_retire(child);
+    assert(lv_obj_get_child_cnt(lv_layer_top()) == children_before_retire - 1);
     advance(400);
-    // A second push while entry is in flight must finish its parent first.
+    // Rapid navigation remains synchronous; settling is safe and idempotent.
     child = lv_obj_create(lv_layer_top());
     crystal_page_transition_enter(child, settings);
     advance(30);
@@ -229,16 +232,13 @@ int main() {
     for (int i = 0; i < 40; ++i) {
         auto *page = lv_obj_create(lv_scr_act());
         lv_obj_set_size(page, 400, 400);
-        auto *button = lv_btn_create(page);
+        (void)lv_btn_create(page);
+        const auto animations_before = lv_anim_count_running();
         crystal_page_transition_enter(page);
-        advance(i % 2 ? 30 : 400);
+        assert(lv_anim_count_running() == animations_before);
+        assert(lv_obj_get_style_opa(page, 0) == LV_OPA_COVER);
         crystal_page_transition_retire(page);
-#if CONFIG_IDF_TARGET_ESP32P4
-        assert(!lv_obj_has_flag(button, LV_OBJ_FLAG_CLICKABLE));
-        assert(lv_obj_has_state(button, LV_STATE_DISABLED));
-#else
-        (void)button;
-#endif
+        assert(lv_obj_get_child_cnt(lv_scr_act()) == 0);
         if (i % 3) crystal_page_transition_settle();
         advance(400);
         assert(lv_obj_get_child_cnt(lv_scr_act()) == 0);
@@ -254,7 +254,7 @@ int main() {
     assert(crystal_boot_screen_active());
 #endif
     lv_disp_remove(display);
-    std::puts("PASS: production theme, copied cross-task boot updates, Ready/failure, fade ownership, repeated/interrupted Settings navigation, S3 fallback");
+    std::puts("PASS: production theme, copied cross-task boot updates, Ready/failure, backdrop ownership, immediate Settings enter/Back without animations, repeated navigation, S3 fallback");
 }
 '''
 QUEUE = r'''

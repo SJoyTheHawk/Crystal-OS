@@ -4,7 +4,8 @@
 **Target Hardware:** ESP32-P4-WIFI6-Touch-LCD-4B  
 **Tested factory reference:** `/Users/szemy/Downloads/ESP32-P4-WIFI6-Touch-LCD-4B-main/examples/factory`  
 **Status:** Crystal Phase 1 builds, flashes and boots under IDF v6.1 on rev1.3;
-Wi-Fi/HTTPS pass, and the user confirms card display, app taps and swipes
+Phase 1.5 and P4.2 visual/interaction work are accepted and closed (2026-11-15).
+Wi-Fi/HTTPS pass using the preserved C6; sustained FPS qualification remains open.
 
 ## Baseline reconciliation — 2026-11-14
 
@@ -40,14 +41,15 @@ retries were observed before success; controlled reconnect is still unqualified.
 The root S3 `sdkconfig` remains S3/16 MB, and a separate S3 IDF v6.1 build passes.
 Crystal retains Brookesia 0.4.2, LVGL 8.4.0 and its card animations/gesture logic.
 The user confirms the card interface displays and app taps/card swipes respond.
-Detailed visual polish and animation quality remain open. The tested P4 uses a
+Phase 1.5 and P4.2 visual/interaction acceptance is complete; sustained animation
+performance remains unqualified. The tested P4 uses a
 360 MHz CPU and HEX PSRAM; 400 MHz/OCT and automatic PPA enablement below are
 superseded assumptions. Hardware AES stays disabled.
 
-**Next acceptance:** inspect the 720px screen for clipping and visual polish,
-exercise every bundled app and edge/interrupted gestures, and assess animation
-continuity. Then validate Crystal scan/reconnect, state persistence, packages,
-control panel and OTA. A full current-factory P4 flash backup was captured before
+**Next validation after P4.2 closure:** the 720px layouts, typography, visual
+polish and revised Settings/Wi-Fi interactions have user acceptance. Continue
+controlled radio reconnect/timing, state persistence, packages, control panel,
+OTA and sustained performance/soak qualification. A full current-factory P4 flash backup was captured before
 Crystal was flashed; the older original-firmware backup limitation in the factory
 record remains true. Keep that reference workspace separate and preserve the
 existing C6 firmware.
@@ -63,7 +65,7 @@ The ESP32-P4 represents a generational leap over the S3:
 - **MIPI-DSI display interface** with DPI support (vs RGB parallel only)
 - **WiFi 6** via companion ESP32-C6 (vs WiFi 4 on S3)
 - **ESP-IDF v6.1** Crystal build/flash/boot and HTTPS smoke tests verified
-- **Brookesia/LVGL:** Crystal retains 0.4.2 / 8.4.0; basic card/tap/swipe UX confirmed, visual polish pending
+- **Brookesia/LVGL:** Crystal retains 0.4.2 / 8.4.0; Phase 1.5/P4.2 visual and interaction checks pass; sustained FPS qualification remains open
 
 **Migration approach:** preserve the Crystal app platform and audit its compatibility with IDF v6.1 and the tested P4 stack. Factory success establishes a hardware baseline, not a direct-port guarantee.
 
@@ -320,6 +322,16 @@ repeating or replacing the working board/network implementation.
 ### **Phase 2: Display & Bootloader** (Week 1-2)
 **Goal:** See Brookesia loading screen on P4 hardware.
 
+**Closure reconciliation — 2026-11-15:** Phase 1 already met the display and
+bootloader foundation. The corresponding Phase P4.2 visual work is now closed
+after device acceptance of the Crystal logo/theme/pill, immediate Settings,
+Wi-Fi scan/password layouts, enlarged keyboard and compact Wi-Fi status. Final
+host regressions pass. See the
+[closure checkpoint](ESP32_P4_PHASE2_VALIDATION.md#closure-checkpoint--2026-11-15).
+Sustained FPS and memory/soak qualification continue under v2 Phase P4.4 and this
+plan's performance/stability checklist. No 60fps achievement is claimed; preserve
+the existing C6 firmware and separate tested factory workspace.
+
 **Reconciled checkpoint — 2026-11-14:** Phase 1 already establishes display,
 touch, the card shell and working C6 Wi-Fi; Phase 1.5 layouts/typography have
 user acceptance. Continue with **Phase P4.2 Visual Enhancements** in the v2 plan,
@@ -327,16 +339,25 @@ rather than replacing the existing board path or deferring working networking.
 The staged Crystal boot UI, reusable dark stylesheet, Settings transitions,
 thin home pill and Wi-Fi view polish now build and flash under IDF v6.1, and
 startup/SNTP/Weather/HTTPS plus host regressions pass. See
-[Phase P4.2 validation](ESP32_P4_PHASE2_VALIDATION.md). Physical acceptance and
-sustained animation profiling remain open; 60fps is not established with the
-current 30ms redraw period. No C6 firmware update is part of this work.
+[Phase P4.2 validation](ESP32_P4_PHASE2_VALIDATION.md). Physical acceptance was
+open at that checkpoint and is now complete. Sustained profiling continues in
+P4.4; 60fps is not established with the current 30ms redraw period. No C6
+firmware update is part of this work.
+
+**Settings design update — 2026-11-15:** The user replaces the slow Settings fade
+with immediate entry/category/Back transitions, as on S3, and skips the Settings
+app backdrop snapshot to avoid extra image RAM. This supersedes animated Settings
+proposals while retaining the boot and existing shell animations. The user
+confirms immediate Settings entry, categories, repeated Back and app return
+work correctly (2026-11-15), without launcher flashes or stuck controls. This
+acceptance is not a claim of 60fps animation performance.
 
 1. Port `main.cpp` initialization:
    - Update BSP display config for DPI interface
    - Adapt Brookesia Phone initialization after dependency/API audit
 2. Flash & verify boot sequence
 3. Confirm LVGL renders (loading animation, status bar)
-4. Benchmark LVGL performance (should see ~60fps easily)
+4. Qualify LVGL performance in P4.4; 60fps remains an unverified target, not an assumption
 5. **Checkpoint:** Brookesia home screen appears, touch works
 
 **Deliverable:** Interactive Crystal UI with staged loading and coherent motion;

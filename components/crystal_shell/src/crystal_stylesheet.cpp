@@ -9,7 +9,8 @@ const CrystalVisualStyle &crystal_visual_style()
         0x11151b, 0x1b2028, 0x252a30, 0xf2f4f7, 0xcbd5e1, 0x94a3b8,
         0x3b82f6, 0x53c8b6, 0xf06a6a,
 #if CONFIG_IDF_TARGET_ESP32P4
-        300, 300, 240,
+        // Settings switches immediately; boot timing stays independent.
+        0, 300, 240,
 #else
         0, 0, 0,
 #endif

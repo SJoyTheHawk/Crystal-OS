@@ -779,6 +779,28 @@ void close_quick_settings(void (*then)())
     lv_anim_set_ready_cb(&a, quick_anim_ready); s_quick_settling = true; s_quick_closing = true; lv_anim_start(&a);
 }
 
+#if CONFIG_IDF_TARGET_ESP32P4
+void quick_tile_add_captions(lv_obj_t *tile)
+{
+    lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_left(tile, 8, 0);
+    lv_obj_set_style_pad_right(tile, 8, 0);
+    lv_obj_set_style_pad_row(tile, 8, 0);
+    // Give title and status their own lines. Long SSIDs use an ellipsis rather
+    // than wrapping and moving the icon or the rest of the tile's contents.
+    for (unsigned line = 0; line < 2; ++line) {
+        lv_obj_t *caption = lv_label_create(tile);
+        lv_obj_set_size(caption, LV_PCT(100), lv_font_get_line_height(kQuickTileFont));
+        lv_label_set_long_mode(caption, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(caption, kQuickTileFont, 0);
+        lv_obj_set_style_text_color(caption, lv_color_hex(0xf2f4f7), 0);
+    }
+    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+}
+#endif
+
 void quick_tile_set_text(lv_obj_t *tile, const char *text)
 {
     if (tile == nullptr || text == nullptr) return;
@@ -788,9 +810,17 @@ void quick_tile_set_text(lv_obj_t *tile, const char *text)
     const char *separator = strchr(text, '\n');
     if (separator != nullptr) {
         lv_obj_t *caption = lv_obj_get_child(tile, 1);
-        if (caption != nullptr) {
+        lv_obj_t *status = lv_obj_get_child(tile, 2);
+        if (caption != nullptr && status != nullptr) {
             lv_label_set_text_fmt(icon, "%.*s", static_cast<int>(separator - text), text);
-            lv_label_set_text(caption, separator + 1);
+            const char *status_separator = strchr(separator + 1, '\n');
+            if (status_separator != nullptr) {
+                lv_label_set_text_fmt(caption, "%.*s", static_cast<int>(status_separator - separator - 1), separator + 1);
+                lv_label_set_text(status, status_separator + 1);
+            } else {
+                lv_label_set_text(caption, separator + 1);
+                lv_label_set_text(status, "");
+            }
             return;
         }
     }
@@ -851,18 +881,7 @@ bool create_quick_settings()
 #if CONFIG_IDF_TARGET_ESP32P4
         lv_obj_set_style_text_font(label, kQuickIconFont, 0);
         if (strchr(text, '\n') != nullptr) {
-            // Keep the symbol prominent without enlarging the Wi-Fi state/SSID
-            // or Bluetooth captions. Flex layout recentres changing captions.
-            lv_obj_set_flex_flow(obj, LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_flex_align(obj, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-            lv_obj_set_style_pad_row(obj, 8, 0);
-            lv_obj_t *caption = lv_label_create(obj);
-            lv_obj_set_width(caption, LV_PCT(100));
-            lv_label_set_long_mode(caption, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_style_text_font(caption, kQuickTileFont, 0);
-            lv_obj_set_style_text_color(caption, lv_color_hex(0xf2f4f7), 0);
-            lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+            quick_tile_add_captions(obj);
         }
 #endif
         lv_obj_set_style_text_color(label, lv_color_hex(0xf2f4f7), 0);
@@ -889,6 +908,7 @@ bool create_quick_settings()
     lv_obj_t *bt = tile(LV_SYMBOL_BLUETOOTH "\nBluetooth\nUnavailable", LV_GRID_ALIGN_STRETCH, 2, 2, 0, 2); lv_obj_set_style_bg_opa(bt, 15, 0); lv_obj_set_style_text_opa(lv_obj_get_child(bt, 0), LV_OPA_40, 0); lv_obj_add_state(bt, LV_STATE_DISABLED);
 #if CONFIG_IDF_TARGET_ESP32P4
     lv_obj_set_style_text_opa(lv_obj_get_child(bt, 1), LV_OPA_40, 0);
+    lv_obj_set_style_text_opa(lv_obj_get_child(bt, 2), LV_OPA_40, 0);
 #endif
     s_quick_brightness = lv_bar_create(s_quick_panel); lv_obj_set_grid_cell(s_quick_brightness, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 2, 2); lv_obj_set_style_radius(s_quick_brightness, 18, 0); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0xffffff), LV_PART_MAIN); lv_obj_set_style_bg_opa(s_quick_brightness, 31, LV_PART_MAIN); lv_obj_set_style_bg_color(s_quick_brightness, lv_color_hex(0x3b82f6), LV_PART_INDICATOR); lv_obj_set_style_bg_opa(s_quick_brightness, LV_OPA_COVER, LV_PART_INDICATOR); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_MAIN); lv_obj_set_style_radius(s_quick_brightness, 18, LV_PART_INDICATOR); lv_bar_set_range(s_quick_brightness, 0, 95); lv_bar_set_value(s_quick_brightness, crystal_brightness_level(), LV_ANIM_OFF); lv_obj_add_event_cb(s_quick_brightness, quick_bar_event, LV_EVENT_ALL, nullptr);
     // The bundled font has no sun glyph, so draw a native icon without
@@ -2243,8 +2263,10 @@ void wifi_tile_text(char *out, size_t size)
         strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nOff", size);
     } else if (wifi->connected()) {
         snprintf(out, size, LV_SYMBOL_WIFI "\nWiFi\n%.32s", wifi->last_ssid());
+    } else if (s_wifi_connecting[0] != '\0') {
+        strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nConnecting...", size);
     } else {
-        strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nOn\nNot Connected", size);
+        strlcpy(out, LV_SYMBOL_WIFI "\nWiFi\nNot connected", size);
     }
 }
 
@@ -2361,8 +2383,8 @@ lv_obj_t *system_page_push(const char *title)
         lv_obj_move_foreground(s_home_pill);
         ESP_LOGD(TAG, "Moved pill to foreground after creating Settings page");
     }
-    // The child fades over its actual parent. Hide the parent only after the
-    // child is opaque, otherwise the root app backdrop shows through instead.
+    // Immediate mode covers the parent in this same LVGL dispatch. The helper
+    // also keeps ownership correct if an animated transition is used later.
     crystal_page_transition_enter(page, covered_page);
     return content;
 }
@@ -3588,17 +3610,19 @@ void settings_open()
     if (s_phone != nullptr && s_phone->getManager().getActiveApp() != nullptr) {
         s_last_app_before_settings = static_cast<int>(s_current_index);
 #if CONFIG_IDF_TARGET_ESP32P4
-        // Capture before HOME: Settings fades over the app the user was using,
-        // while Brookesia can pause it behind the overlay as before.
-        backdrop = crystal_page_transition_capture_backdrop(active_app_area());
-        if (backdrop == nullptr) {
-            ESP_LOGW(TAG, "Cannot create Settings backdrop; keeping the app visible");
-            s_last_app_before_settings = -1;
-            return;
+        // Only a translucent transition needs an app snapshot. Immediate
+        // Settings covers HOME in this LVGL dispatch without allocating one.
+        if (crystal_visual_style().page_transition_ms != 0) {
+            backdrop = crystal_page_transition_capture_backdrop(active_app_area());
+            if (backdrop == nullptr) {
+                ESP_LOGW(TAG, "Cannot create Settings backdrop; keeping the app visible");
+                s_last_app_before_settings = -1;
+                return;
+            }
         }
 #endif
         ESP_LOGI(TAG, "Opening Settings from app index %d, pausing app", s_last_app_before_settings);
-        // Pause the app without exposing Brookesia's launcher during the fade.
+        // Preserve app pause/restore; the Settings page covers the next frame.
         (void)s_phone->sendNavigateEvent(ESP_BROOKESIA_CORE_NAVIGATE_TYPE_HOME);
     } else {
         s_last_app_before_settings = -1;  // Opened from launcher
@@ -3959,6 +3983,7 @@ void crystal_shell_wifi_event(uint8_t event)
         }
         wifi_page_fill_list();
         if (s_wifi_page != nullptr && s_wifi_page_status != nullptr) lv_label_set_text(s_wifi_page_status, "Failed to connect");
+        if (s_quick_wifi != nullptr) { char text[64]; wifi_tile_text(text, sizeof(text)); quick_tile_set_text(s_quick_wifi, text); }
     } else if (event == UI_EVT_WIFI_SCAN_DONE) {
         wifi_scan_busy(false);
         wifi_page_fill_list();

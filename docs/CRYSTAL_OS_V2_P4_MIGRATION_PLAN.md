@@ -41,9 +41,10 @@ success; this is not a controlled reconnect qualification. The C6 was not flashe
 The root S3 configuration remains S3/16 MB, and an isolated S3 IDF v6.1 regression
 build also passes. Crystal's existing card transitions and gesture logic are
 retained, with a square 720px dark stylesheet. The user confirms the card
-interface is visible and app taps and between-card swipes work. Detailed visual
-polish and animation quality still need device acceptance. The host launcher/swipe
-regression also passes.
+interface is visible and app taps and between-card swipes work. Phase P4.1.5
+layout/typography and Phase P4.2 visual/interaction acceptance are complete as of
+2026-11-15; sustained animation performance remains a P4.4 qualification task.
+The host launcher/swipe regression also passes.
 
 **Remaining content is proposed guidance where not explicitly checked off.**
 The tested profile uses 360 MHz CPU and HEX PSRAM, not the generic 400 MHz/OCT
@@ -52,10 +53,10 @@ Use the isolated build guide instead of the old root `set-target` instructions
 or proposed API snippets. Preserve Crystal OTA/security and persistence
 requirements; package/OTA regressions, soak and performance claims remain open.
 
-**Next Phase P4.1 validation:** physically verify the Crystal card interface,
-touch/edge gestures, app open/return and animation continuity; repeat a Crystal
-Wi-Fi scan and controlled reconnect. Then validate state persistence, packages,
-control panel and OTA incrementally. The factory evidence above remains a
+**Next validation after P4.2 closure:** card/touch/edge gestures, app open/return,
+visual continuity and Wi-Fi scan UI have user acceptance. Continue controlled
+radio reconnect/timing, state persistence, packages, control panel, OTA and
+performance/soak qualification in their later phases. The factory evidence remains a
 separate historical baseline. A complete 32 MB backup of the current factory P4
 flash was made before the Crystal flash; it is not the missing original-factory
 backup described in that record.
@@ -98,7 +99,8 @@ backup described in that record.
 Bootstrap Crystal OS on P4 hardware.
 
 ### **Phase P4.2: Visual Enhancements** (Week 2, 5-7 days)
-Add loading screen, animations, home pill redesign.
+Closed 2026-11-15: Crystal boot logo/theme, home pill, immediate Settings and
+Wi-Fi/keyboard polish accepted. Sustained FPS qualification continues in P4.4.
 
 ### **Phase P4.3: Network Expansion** (Week 2-3, 3-5 days)
 Add ethernet, upgrade WiFi patterns.
@@ -630,15 +632,35 @@ remain separate work.
 
 ## Phase P4.2: Visual Enhancements
 
-**Goal:** Add loading screen, smooth animations, new home pill design.
+**Goal:** Add the Crystal boot screen, reusable theme, home pill and coherent
+Settings/Wi-Fi interactions, retaining accepted shell motion.
+
+**Closed — 2026-11-15:** All agreed visual and interaction checks pass on the
+device, including the final compact Quick Settings Wi-Fi status. The final host
+visual, Wi-Fi page/keyboard, HAL Wi-Fi, shell lifecycle and launcher suites pass.
+See the [closure checkpoint](ESP32_P4_PHASE2_VALIDATION.md#closure-checkpoint--2026-11-15)
+for the accepted firmware digest and evidence. Immediate Settings is the selected
+design; sustained FPS/memory/soak qualification continues in P4.4. This closure
+does not certify 60fps or overall release readiness. Preserve the working C6.
 
 **Implementation checkpoint — 2026-11-14:** Theme extraction, staged P4 boot UI,
 300ms Settings transitions, thinner Crystal-owned home pill, P4 motion timings,
 Wi-Fi scan/signal/password polish and redraw telemetry are implemented. IDF v6.1
 build, app-only flash hash verification, startup/network smoke checks and host
-lifecycle/interaction regressions pass. Physical visual acceptance and sustained
-animation qualification remain open. See
+lifecycle/interaction regressions pass. At this historical checkpoint, physical
+acceptance and sustained animation qualification were open. Physical acceptance
+is now complete; performance continues in P4.4 as recorded above. See
 [Phase P4.2 design and validation](ESP32_P4_PHASE2_VALIDATION.md).
+
+**Design update — 2026-11-15:** The user selects immediate Settings entry,
+category changes and Back, matching S3. This supersedes the 300ms Settings
+fade/slide after the user observes about 7fps. Settings skips its app backdrop
+snapshot; no additional cached page image is introduced. Boot, card and Quick
+Settings animations remain. The user accepts immediate Settings entry,
+categories, repeated Back and app return without launcher flashes or stuck
+controls (2026-11-15). The user also accepts the enlarged keyboard's key size,
+dialog clearance and restored layout after dismissal (2026-11-15). These checks
+do not establish 60fps elsewhere.
 
 The following API snippets are illustrative, not the final implementation.
 Crystal retains Brookesia 0.4.2/LVGL 8.4 and its existing app lifecycle and shell
@@ -1059,7 +1081,7 @@ extern "C" void app_main(void) {
 
 **Why this pattern:**
 - **Atomic updates:** `std::atomic` allows task-safe progress updates from any FreeRTOS task
-- **Responsive:** 30ms timer ensures smooth animation (60fps at LVGL refresh rate)
+- **Responsive proposal:** a 30ms progress-poll timer does not establish animation FPS; measure the active LVGL/display path in P4.4
 - **Error handling:** `showError()` for graceful startup failures
 - **Professional polish:** Fade-out animation, color-coded phases (yellow loading, red error)
 - **Porting reference:** compare tested source and Crystal APIs before adapting; this is not a verified drop-in implementation
@@ -1089,9 +1111,13 @@ phone->activateStylesheet(stylesheet->phone_stylesheet);
 
 **Rationale:** Free upgrade from Brookesia 0.4.x stylesheet system.
 
-### P4.2.4: Smooth Page Transitions
+### P4.2.4: Settings Navigation and Existing Shell Motion
 
-P4's GPU and CPU enable richer animations. Increase transition budgets.
+**Accepted design — 2026-11-15:** Settings entry, categories and Back switch
+immediately, without an additional cached page image. Boot, card and Quick
+Settings retain their accepted motion. The animation sketch below is historical
+and is not the implementation or a lifecycle-safe replacement for the existing
+shell. Do not reintroduce it as part of closing this phase.
 
 **Modify:** `components/crystal_shell/src/crystal_shell.cpp`
 
@@ -1145,7 +1171,9 @@ void crystal_shell_switch_app(CrystalApp *next_app)
 }
 ```
 
-**Rationale:** P4's 400MHz CPU handles 300ms slide animations at 60fps. Feels premium.
+**Superseded assumption:** Automatic 60fps from a 400MHz CPU/GPU was not verified.
+The tested profile is 360MHz with PPA disabled and a 30ms redraw period. A slow
+Settings fade was removed by user choice; performance measurements belong in P4.4.
 
 ### P4.2.5: Settings App WiFi UI (Cherry-pick)
 
@@ -2229,19 +2257,20 @@ If any fail, root cause before declaring port complete.
 - [x] Verify touch input: user confirms app taps and card swipes work
 - [x] Verify Crystal card/home interface appears: user confirms it is visible
 
-### Phase P4.2: Visual Enhancements (Week 2)
+### Phase P4.2: Visual Enhancements (closed 2026-11-15)
 - [x] Implement stylesheet system (`crystal_stylesheet.cpp`)
 - [x] Apply dark theme to Brookesia, retaining accepted P4 sizing
 - [x] Implement staged boot screen (`crystal_boot_screen.cpp`)
 - [x] Integrate boot screen into main.cpp
-- [x] Add interruptible Settings page transitions and target-specific shell motion
+- [x] Apply immediate Settings navigation per user decision; retain target-specific shell motion
 - [x] Adapt factory WiFi scan/password patterns to Crystal Settings/HAL
-- [ ] Complete physical visual and interaction acceptance
-- [ ] Test all animations at 60fps
+- [x] Complete physical visual and interaction acceptance, including enlarged keyboard and compact Wi-Fi status
+- [x] Record immediate Settings as the accepted design and carry sustained animation/FPS qualification to P4.4
 
 Implementation/build/flash and measured limitations are recorded in
-[the Phase P4.2 validation guide](ESP32_P4_PHASE2_VALIDATION.md). The 60fps item
-remains open; current telemetry measures redraw cost, not panel scanout FPS.
+[the Phase P4.2 validation guide](ESP32_P4_PHASE2_VALIDATION.md). Phase P4.2 is
+closed for the accepted scope. The earlier 60fps item is transferred to P4.4,
+not marked achieved; current telemetry measures redraw cost, not panel scanout FPS.
 
 ### Phase P4.3: Network Expansion (Week 2-3)
 - [ ] Implement ethernet driver (`crystal_ethernet.cpp`)
@@ -2254,6 +2283,8 @@ remains open; current telemetry measures redraw cost, not panel scanout FPS.
 ### Phase P4.4: Validation (Week 3-4)
 - [ ] Run full feature validation checklist
 - [ ] Run LVGL performance benchmark
+- [ ] Qualify sustained boot/card/Quick Settings animation and panel FPS; the former P4.2 60fps target is unverified (360MHz, PPA off, 30ms redraw)
+- [ ] Complete fresh full S3 firmware/device regression, controlled scan timing and available open-network coverage
 - [ ] Test hardware AES stability
 - [ ] Profile memory usage (24h soak test)
 - [ ] Run all regression tests
@@ -2301,7 +2332,7 @@ remains open; current telemetry measures redraw cost, not panel scanout FPS.
 Crystal OS v2 on P4 is **ready for release** when:
 
 1. ✅ All Phase 14-16 features work (lifecycle, packages, declarative, control panel)
-2. ✅ Boot screen and animations are smooth (60fps confirmed)
+2. Boot screen and animation performance pass measured P4.4 qualification (60fps remains unverified; P4.2 visual acceptance alone does not satisfy this)
 3. ✅ Both WiFi and Ethernet work with automatic failover
 4. ✅ All regression tests pass
 5. ✅ 24-hour soak test shows no crashes or memory leaks

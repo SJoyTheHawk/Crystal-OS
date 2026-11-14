@@ -1,8 +1,40 @@
 # ESP32-P4 Phase P4.2 validation
 
-Date: 2026-11-14 (Asia/Hong_Kong). Starting checkpoint: `bc55dc2`.
-Status: implemented, P4 build/flash/startup smoke checks pass; physical visual
-acceptance and sustained animation performance qualification remain open.
+Started: 2026-11-14 (Asia/Hong_Kong). Starting checkpoint: `bc55dc2`.
+**Status: closed for the accepted visual/interaction scope on 2026-11-15.**
+The user confirms immediate Settings navigation, enlarged keyboard and the final
+compact Quick Settings Wi-Fi status. Sustained animation/FPS qualification is
+explicitly carried into Phase P4.4; this closure does not claim 60fps or release
+readiness.
+
+## Closure checkpoint — 2026-11-15
+
+- Accepted on the P4: 256x256 Crystal boot logo and boot completion; stationary
+  app behind immediate Settings entry, categories, rapid Back and app return;
+  thin home pill, cards and Quick Settings; Wi-Fi spinner without a teal blink,
+  signal rows with internal margins, password controls and restored keyboard
+  layout; enlarged keys; compact disconnected Wi-Fi status on one line.
+- Final regression rerun: production-LVGL P4/S3 visual suite, Wi-Fi page and
+  keyboard suite, HAL Wi-Fi scan/reconnect suite, shell launch/clear/return suite
+  and launcher/swipe suite all pass. Sanitizer-enabled suites report no failures.
+- The final ESP-IDF v6.1 build passes and its application digest is identical to
+  the already flashed, user-accepted image; no further hardware flash is needed.
+- Accepted firmware: ESP-IDF v6.1, signed app 0x491000 bytes, 43% of the 8MiB app
+  slot free. SHA-256:
+  02ced3ba6a988ecb91903a82b7d9b122bcae828b13d45374c05e792e4035aadd.
+  Its app-only flash at 0x30000 was hash-verified. The 18-second startup capture
+  has no panic, assertion, watchdog timeout or brownout; Wi-Fi and SNTP work.
+- Preserve the existing C6 firmware and separate factory reference workspace.
+  Immediate Settings avoids an extra full-screen cached transition image.
+- Carried to P4.4: sustained animation/panel-FPS and memory/soak measurements,
+  fresh full S3 firmware/device qualification, controlled radio scan timing and
+  open-network coverage when available. Current 360MHz/PPA-off/30ms settings do
+  not establish 60fps. Existing diagnostics, including the separate brightness
+  NVS-key issue, remain listed below rather than being marked fixed.
+
+Final check logs use /private/tmp/crystal-phase2-close-*. Earlier build/flash/boot
+evidence for the accepted binary uses /private/tmp/crystal-phase2-quick-wifi-*.
+The detailed revision history below records superseded animation experiments.
 
 ## Scope and design
 
@@ -17,8 +49,9 @@ foundation; no board driver or bootloader replacement is necessary for this UI w
   Shared visual tokens use Crystal's existing dark surfaces, blue accent,
   teal success and red failure states. No unfinished light-theme API is exposed.
 - **Boot:** a P4 top-layer overlay renders after display/HAL initialization and
-  before signature/package initialization. It shows Crystal OS, an 84px spinner,
-  real initialization milestones and a progress bar. Text is 48px/20px. A bounded
+  before signature/package initialization. It shows the accepted 256x256 Crystal
+  logo, Crystal OS title, real initialization milestones and a progress bar.
+  Text is 48px/20px. A bounded
   FreeRTOS mailbox copies each update, so callers never mutate LVGL from another
   task or leave pointers to temporary text. NVS/display operations before the
   first drawable frame are not presented as already visible progress.
@@ -28,13 +61,11 @@ foundation; no board driver or bootloader replacement is necessary for this UI w
   during the fade. Wi-Fi association is not a boot prerequisite. Fatal failures
   after display setup show an explicit failure state before the existing abort/
   recovery path; package-storage failure retains the existing degraded behavior.
-- **Navigation:** P4 Settings pages now enter with an in-place 300ms opacity fade;
-  exit retains its existing 36px motion plus fade, using ease-in-out. The parent
-  remains visible and opaque until its child fully covers it, then is hidden.
-  Outgoing page input is disabled
-  recursively; deletion happens only on completion. At most one retiring page is
-  retained, and another navigation settles it first. Crystal's existing card
-  lifecycle/snapshots and gesture arbitration remain authoritative. P4 card
+- **Navigation:** Settings entry, categories and Back now switch immediately on
+  P4 as on S3: pages stay opaque, covered parents hide synchronously, and popped
+  pages are deleted immediately. Settings opening skips the former app backdrop
+  snapshot; no extra image cache is introduced. Existing app pause/restore and
+  gesture arbitration remain authoritative. P4 card
   settle/fade is 300ms, Quick Settings settling is 350ms, and the centered white
   home pill is 216x6px with 180ms release feedback. S3 keeps its prior motion and
   pill dimensions and has no new boot overlay or Settings transition.
@@ -52,7 +83,10 @@ The factory reference was inspected for staged loading, bounded status updates,
 scan feedback and password presentation. Its LVGL 9 APIs were adapted to Crystal's
 LVGL 8 APIs; its separate workspace and the existing C6 firmware are unchanged.
 
-## Verified checks
+## Initial verified checks — 2026-11-14
+
+This table describes the first Phase P4.2 image. The closure checkpoint above and
+dated revision history supersede its binary size, digest and Settings behavior.
 
 | Check | Result / scope |
 | --- | --- |
@@ -109,14 +143,14 @@ network details and are not committed verbatim.
   corrected before that brightness work is closed. Do not update the working C6
   in response to version discovery messages alone.
 
-## Device acceptance still required
+## Device acceptance completed
 
 Current review checkpoint: 2026-11-15. The user accepted the boot logo's size and
 placement; stationary Settings entry and parent-to-child coverage; smooth Wi-Fi
 scan feedback without the teal blink; password-dialog spacing and button colors;
 and the corrected internal network-row padding. The user subsequently confirmed
-the four functional groups below pass; Settings animation performance remains
-open, with an observed drop to approximately 7fps during the fade.
+the four functional groups below pass. The approximately 7fps Settings fade is
+subsequently removed by user decision, and immediate navigation is accepted.
 
 - [x] Keyboard: outside-tap and Done dismiss it, the dialog re-centers without a
       blank band, tapping the field reopens it, Show/Hide retains typing focus,
@@ -131,17 +165,31 @@ open, with an observed drop to approximately 7fps during the fade.
 - [x] Boot completion and shell: boot fades cleanly to the restored card; the thin
       pill, swipe-up, card switches and Quick Settings remain coherent without
       duplicate indicators. Logo size/placement is already accepted.
-- [ ] Animation performance: investigate the previously reported uneven Settings
-      fade and measure repeated physical navigation separately. The current 30ms
-      redraw period does not establish the plan's 60fps target; qualification
-      remains open until frame timings support it or the user explicitly defers
-      that target with the limitation documented.
+- [x] Immediate Settings revision: the user confirms root entry, categories,
+      repeated Back and app return work correctly without a launcher flash or
+      stuck controls (2026-11-15). The user
+      explicitly replaces the approximately 7fps Settings fade with immediate
+      navigation rather than a RAM-backed transition image.
+- [x] Enlarged keyboard: the user accepts key size and layout, including physical
+      typing accuracy, password-dialog clearance and restoration after dismissal
+      (2026-11-15).
+- [x] Compact Quick Settings Wi-Fi: the user confirms Not connected fits on one
+      line beneath WiFi with comfortable spacing (2026-11-15).
 
-After these checks, reconcile the migration-plan status and final regression
-evidence before closing the phase. A fresh full S3 build/flash remains a separately
-disclosed validation gap; host fallback tests are not equivalent to that build.
+Boot, card and Quick Settings timing remains unchanged. Their visual/interaction
+acceptance is complete; sustained performance qualification is an open P4.4 task.
+The current 30ms redraw period and immediate Settings do not establish 60fps.
 
-Do not mark Phase P4.2 complete solely on a successful build or startup capture.
+Both migration plans now record the accepted scope and final regression evidence.
+A fresh full S3 build/flash remains a separately disclosed P4.4 validation gap;
+host fallback tests are not equivalent to that build. Closure includes the user's
+device checks and is not based solely on a build or startup capture.
+
+## Historical review and tuning log
+
+The dated entries below preserve the sequence of experiments and reviews. Pending
+items or transition designs in an earlier entry are superseded by the current
+closure checkpoint and completed acceptance list above.
 
 ## First device review and focused tuning
 
@@ -342,7 +390,8 @@ touch areas are 45x38px on S3 and 68x57px on P4 (within one pixel after scaling)
 All four keyboard planes, character entry, Done, reopening and viewport height
 restoration pass, along with password dialog clearance and existing Wi-Fi tests.
 Host renders were reviewed. IDF v6.1 P4 build passes; app size is 0x491000 bytes,
-with 43% of the 8MiB slot free. The enlarged keyboard needs physical acceptance.
+with 43% of the 8MiB slot free. The user accepts the enlarged keyboard's key size
+and layout, including dialog clearance and dismissal restoration (2026-11-15).
 App-only flash at 0x30000 passes esptool hash verification and hard reset;
 firmware SHA-256:
 cd5ff68aa2b2def9077c9a2725620858c96baf86c2aee7420458293d428c5943.
@@ -362,3 +411,68 @@ snapshot uses 1,036,800 bytes, plus any other retained snapshots and buffers.
 No transition method, fade duration, refresh period or display configuration is
 changed in this keyboard revision. The reported 7fps is user-observed, not a
 transition-specific instrumented measurement. Phase P4.2 remains open.
+
+### Immediate Settings navigation — 2026-11-15
+
+After discussing CPU and snapshot-RAM trade-offs, the user explicitly requests
+immediate Settings transitions, matching S3 behavior. P4 page_transition_ms is
+zero; existing helpers execute synchronous full-opacity entry, parent hiding and
+page deletion. They do not start opacity/translation animations or retain an
+outgoing Settings page. The optional animated path remains available in source,
+but is not selected by either target.
+
+Settings opening now skips capture_backdrop when the duration is zero. This
+removes the old retained full-size app image from the immediate Settings path
+instead of adding a cached fade/slide image. Brookesia HOME and Settings creation
+run in the same locked LVGL dispatch; the app still pauses and restores via the
+existing lifecycle. Failure to create Settings restores the previous app as
+before. No new memory-backed page cache, global refresh-rate change, PPA change,
+or boot/card/Quick Settings animation change is part of this revision.
+
+The P4/S3 production-LVGL/AddressSanitizer visual suite checks zero Settings
+duration, immediate opacity/parent hiding, no animation-count increase, immediate
+page/backdrop deletion and repeated navigation. P4 boot hold/fade timing remains
+300/240ms. The earlier measured fade issue is resolved by design removal, not by
+an unmeasured speedup claim. The user accepts the flashed immediate behavior on
+2026-11-15: Settings entry from an app, categories, repeated Back and app return
+all work correctly without a launcher flash or stuck controls.
+
+For this revision, the P4/S3 visual suite, shell launch/clear/return tests and
+Wi-Fi/password/keyboard geometry tests pass. IDF v6.1 P4 build passes with a
+0x491000-byte application (43% of the 8MiB slot free). Local build/test/flash
+logs use /private/tmp/crystal-phase2-settings-immediate-*. The enlarged keyboard
+is retained, and S3 navigation remains immediate. Firmware SHA-256:
+defbfe1ab8dcc61d2966a5f7db07631ece35bab005c91e8152c79b0f49c60aff.
+The app-only flash at 0x30000 passes esptool hash verification and hard reset;
+the existing C6 firmware and stored data are preserved. An 18-second startup
+capture shows no panic/assertion or watchdog fault, and the existing network
+connected event and SNTP messages are observed. The watchdog text in this
+capture is normal LVGL-task subscription, not a timeout. Boot first-frame
+milestone is 666ms and shell baseline is 1,064ms after app_main; these are not
+Settings latency measurements. The unrelated brightness.scale NVS key-length
+warning persists. Serial capture is closed after validation.
+
+### Compact Quick Settings Wi-Fi status — 2026-11-15
+
+The user approves removing the redundant On line when Wi-Fi is enabled but not
+connected. The tile now shows its icon, WiFi title and a single status line:
+Off, Not connected, Connecting..., or the connected SSID. P4 keeps the accepted
+28px icon and 20px captions. Dedicated title/status labels, 8px horizontal padding
+and single-line ellipsis prevent long SSIDs from wrapping or displacing the icon.
+The adjacent Bluetooth tile uses the same caption layout and retains its disabled
+appearance. Connection failure refreshes the tile so Connecting... is cleared.
+No additional page snapshot, animation or C6 firmware change is introduced.
+
+The production-LVGL/AddressSanitizer Wi-Fi suite passes text-width and tile-bound
+checks for each short status and overflow checks for a 32-character SSID. Existing
+scan, signal-row, password and keyboard regressions pass, including S3/P4 keyboard
+geometry. The IDF v6.1 build passes with a 0x491000-byte application. Firmware
+SHA-256: 02ced3ba6a988ecb91903a82b7d9b122bcae828b13d45374c05e792e4035aadd.
+Build/test/flash logs use /private/tmp/crystal-phase2-quick-wifi-*.
+The app-only flash at 0x30000 passes esptool hash verification. An 18-second
+startup capture shows no panic/assertion, watchdog timeout or brownout; Wi-Fi
+connects and SNTP synchronizes using the existing C6 firmware. The serial port
+is closed after the check.
+The user accepts the flashed disconnected state on 2026-11-15:
+"Fits and looks good." Not connected stays on one line with comfortable spacing
+below the WiFi title and icon.
