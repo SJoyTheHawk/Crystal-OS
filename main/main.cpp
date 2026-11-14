@@ -220,9 +220,10 @@ extern "C" void app_main(void)
     stylesheet->core.home.background.wallpaper_image_resource.resource =
         &esp_brookesia_image_large_wallpaper_dark_720_720;
     auto &launcher = stylesheet->home.app_launcher.data;
-    launcher.table.size.height = 480;
-    launcher.icon.main.size.width = 210;
-    launcher.icon.main.size.height = 210;
+    stylesheet->home.status_bar.data.main.text_font.size_px = 24;
+    launcher.table.size.height = 660;
+    launcher.icon.main.size.width = 216;
+    launcher.icon.main.size.height = 216;
     launcher.icon.image.default_size.width_percent = 63;
     launcher.icon.image.default_size.height_percent = 63;
     launcher.icon.image.default_size.flags.enable_width_percent = 1;

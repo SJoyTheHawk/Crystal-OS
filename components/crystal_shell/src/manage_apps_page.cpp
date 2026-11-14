@@ -8,6 +8,30 @@
 #include "crystal_registry.hpp"
 #include "esp_log.h"
 
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kManageDialogWidth = 480;
+constexpr lv_coord_t kManageDialogHeight = 300;
+constexpr lv_coord_t kManageDialogPad = 24;
+constexpr lv_coord_t kManageButtonHeight = 52;
+constexpr lv_coord_t kManageDialogButtonWidth = 168;
+constexpr lv_coord_t kManageRowHeight = 80;
+constexpr lv_coord_t kManageRowPad = 18;
+constexpr lv_coord_t kManageRowGap = 12;
+constexpr lv_coord_t kManageHandleWidth = 32;
+constexpr lv_coord_t kManageHandleClick = 20;
+#else
+constexpr lv_coord_t kManageDialogWidth = 380;
+constexpr lv_coord_t kManageDialogHeight = 250;
+constexpr lv_coord_t kManageDialogPad = 20;
+constexpr lv_coord_t kManageButtonHeight = 44;
+constexpr lv_coord_t kManageDialogButtonWidth = 140;
+constexpr lv_coord_t kManageRowHeight = 64;
+constexpr lv_coord_t kManageRowPad = 10;
+constexpr lv_coord_t kManageRowGap = 8;
+constexpr lv_coord_t kManageHandleWidth = 24;
+constexpr lv_coord_t kManageHandleClick = 12;
+#endif
+
 namespace {
 struct AppRow {
     const CrystalAppEntry *entry;
@@ -98,16 +122,22 @@ void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry, bo
     lv_obj_clear_flag(s_clear_dialog, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *card = lv_obj_create(s_clear_dialog);
-    lv_obj_set_size(card, 380, 250);
+    lv_obj_set_size(card, kManageDialogWidth, kManageDialogHeight);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_set_style_radius(card, 12, 0);
-    lv_obj_set_style_pad_all(card, 20, 0);
+    lv_obj_set_style_pad_all(card, kManageDialogPad, 0);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1b2028), 0);
     lv_obj_center(card);
     lv_obj_t *title = lv_label_create(card);
     lv_label_set_text(title, uninstall ? "Uninstall App" : "Clear App Data");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title,
+#if CONFIG_IDF_TARGET_ESP32P4
+                               &lv_font_montserrat_28,
+#else
+                               &lv_font_montserrat_20,
+#endif
+                               0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_pos(title, 0, 0);
     lv_obj_t *message = lv_label_create(card);
@@ -116,15 +146,21 @@ void show_clear_confirmation(lv_obj_t *content, const CrystalAppEntry *entry, bo
         "Clear saved data for %s?\nThe app will close and reset.\n\nThis cannot be undone.",
         entry->display_name ? entry->display_name : entry->id);
     lv_label_set_text(message, text);
-    lv_obj_set_width(message, 340);
+    lv_obj_set_width(message, kManageDialogWidth - 48);
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(message, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(message,
+#if CONFIG_IDF_TARGET_ESP32P4
+                               &lv_font_montserrat_20,
+#else
+                               &lv_font_montserrat_16,
+#endif
+                               0);
     lv_obj_set_style_text_color(message, lv_color_hex(0xcbd5e1), 0);
     lv_obj_set_pos(message, 0, 38);
-    lv_obj_t *cancel = app_button(card, "Cancel", 140, false);
+    lv_obj_t *cancel = app_button(card, "Cancel", kManageDialogButtonWidth, false);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     lv_obj_add_event_cb(cancel, clear_data_cancelled, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *confirm = app_button(card, uninstall ? "Uninstall" : "Clear Data", 140, false);
+    lv_obj_t *confirm = app_button(card, uninstall ? "Uninstall" : "Clear Data", kManageDialogButtonWidth, false);
     lv_obj_align(confirm, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(confirm, lv_color_hex(0xb42318), 0);
     lv_obj_set_style_bg_color(confirm, lv_color_hex(0x8f1c13), LV_STATE_PRESSED);
@@ -157,7 +193,7 @@ lv_obj_t *app_button(lv_obj_t *row, const char *text, lv_coord_t width, bool dis
 {
     lv_obj_t *button = lv_btn_create(row);
     lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, width, 44);
+    lv_obj_set_size(button, width, kManageButtonHeight);
     lv_obj_set_style_radius(button, 8, 0);
     lv_obj_set_style_shadow_width(button, 0, 0);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x1769aa), 0);
@@ -172,7 +208,13 @@ lv_obj_t *app_button(lv_obj_t *row, const char *text, lv_coord_t width, bool dis
     lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(label,
+#if CONFIG_IDF_TARGET_ESP32P4
+                               &lv_font_montserrat_20,
+#else
+                               &lv_font_montserrat_16,
+#endif
+                               0);
     lv_obj_center(label);
     return button;
 }
@@ -445,13 +487,19 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
     lv_obj_remove_event_cb(content, content_deleted);
     lv_obj_add_event_cb(content, content_deleted, LV_EVENT_DELETE, nullptr);
     lv_obj_clean(content);
-    lv_obj_set_style_pad_row(content, 8, 0);
+    lv_obj_set_style_pad_row(content, kManageRowGap, 0);
 
     lv_obj_t *note = lv_label_create(content);
     lv_label_set_text(note, "Drag to reorder. Enable applies now.\nDisable needs restart; Clear resets data.");
     lv_obj_set_width(note, LV_PCT(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(note, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(note,
+#if CONFIG_IDF_TARGET_ESP32P4
+                               &lv_font_montserrat_20,
+#else
+                               &lv_font_montserrat_16,
+#endif
+                               0);
     lv_obj_set_style_text_color(note, lv_color_hex(0x91a0b3), 0);
 
     std::vector<AppRow> apps;
@@ -470,13 +518,13 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
     for (const auto &app : apps) {
         const bool enabled = crystal_registry_enabled(app.entry->id, app.entry->default_enabled);
         lv_obj_t *row = lv_obj_create(content);
-        lv_obj_set_size(row, LV_PCT(100), 64);
+        lv_obj_set_size(row, LV_PCT(100), kManageRowHeight);
         lv_obj_set_style_bg_color(row, lv_color_hex(0x1b2028), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_radius(row, 8, 0);
-        lv_obj_set_style_pad_all(row, 10, 0);
-        lv_obj_set_style_pad_column(row, 8, 0);
+        lv_obj_set_style_pad_all(row, kManageRowPad, 0);
+        lv_obj_set_style_pad_column(row, kManageRowGap, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -488,9 +536,15 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
         lv_label_set_text(handle, LV_SYMBOL_BARS);
         lv_obj_add_flag(handle, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
         lv_obj_clear_flag(handle, LV_OBJ_FLAG_SCROLL_CHAIN | LV_OBJ_FLAG_GESTURE_BUBBLE);
-        lv_obj_set_ext_click_area(handle, 12);
-        lv_obj_set_width(handle, 24);
-        lv_obj_set_style_text_font(handle, &lv_font_montserrat_20, 0);
+        lv_obj_set_ext_click_area(handle, kManageHandleClick);
+        lv_obj_set_width(handle, kManageHandleWidth);
+        lv_obj_set_style_text_font(handle,
+#if CONFIG_IDF_TARGET_ESP32P4
+                                   &lv_font_montserrat_28,
+#else
+                                   &lv_font_montserrat_20,
+#endif
+                                   0);
         lv_obj_set_style_text_color(handle, lv_color_hex(0x91a0b3), 0);
         lv_obj_add_event_cb(handle, handle_drag_start, LV_EVENT_PRESSED, nullptr);
         lv_obj_add_event_cb(handle, handle_drag_move, LV_EVENT_PRESSING, nullptr);
@@ -504,7 +558,13 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
         lv_obj_set_width(name, 0);
         lv_obj_set_flex_grow(name, 1);
-        lv_obj_set_style_text_font(name, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(name,
+#if CONFIG_IDF_TARGET_ESP32P4
+                                   &lv_font_montserrat_20,
+#else
+                                   &lv_font_montserrat_16,
+#endif
+                                   0);
         lv_obj_set_style_text_color(name, lv_color_hex(0xf2f4f7), 0);
 
         auto *toggle = app_button(row, enabled ? "Disable" : "Enable", 100, false);

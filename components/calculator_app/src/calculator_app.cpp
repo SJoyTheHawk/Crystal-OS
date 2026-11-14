@@ -17,19 +17,41 @@
 namespace {
 constexpr const char *kFormulaKey = "formula";
 constexpr size_t kFormulaMax = 63;
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kPagePad = 24;
+constexpr lv_coord_t kGap = 16;
+constexpr lv_coord_t kTopPad = 16;
+constexpr lv_coord_t kDisplayHeight = 128;
+constexpr lv_coord_t kDisplayPadHor = 16;
+constexpr lv_coord_t kDisplayPadVer = 12;
+constexpr lv_coord_t kKeyGap = 12;
+constexpr const lv_font_t *kFontBody = &lv_font_montserrat_28;
+constexpr const lv_font_t *kFontSmall = &lv_font_montserrat_20;
+constexpr const lv_font_t *kKeyboardFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kFormulaLargeFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kFormulaMediumFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kFormulaSmallFont = &lv_font_montserrat_16;
+#else
 constexpr lv_coord_t kPagePad = 16;
 constexpr lv_coord_t kGap = 10;
 constexpr lv_coord_t kTopPad = 10;
+constexpr lv_coord_t kDisplayHeight = 96;
+constexpr lv_coord_t kDisplayPadHor = 14;
+constexpr lv_coord_t kDisplayPadVer = 8;
+constexpr lv_coord_t kKeyGap = 8;
+constexpr const lv_font_t *kFontBody = &lv_font_montserrat_20;
+constexpr const lv_font_t *kFontSmall = &lv_font_montserrat_14;
+constexpr const lv_font_t *kKeyboardFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kFormulaLargeFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kFormulaMediumFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kFormulaSmallFont = &lv_font_montserrat_16;
+#endif
 // The bottom 20 px of the app area is the vertical gesture edge band, with the
 // 10 px home indicator bar drawn on top of it. A bottom-aligned keyboard put the
 // lower half of the "0 . =" row inside that band, so those presses were taken as
 // the start of a swipe and never became a click. kBottomSafe lifts the whole row
 // clear of the band; the height it costs is taken back from the display panel.
 constexpr lv_coord_t kBottomSafe = 26;
-constexpr lv_coord_t kDisplayHeight = 96;
-constexpr lv_coord_t kDisplayPadHor = 14;
-constexpr lv_coord_t kDisplayPadVer = 8;
-constexpr lv_coord_t kKeyGap = 8;
 
 constexpr uint32_t kPage = 0x11181F;
 constexpr uint32_t kPanel = 0x1C2733;
@@ -97,7 +119,7 @@ bool CalculatorApp::onCreate()
     lv_obj_set_width(history_label_, label_width);
     lv_label_set_long_mode(history_label_, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(history_label_, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_font(history_label_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(history_label_, kFontSmall, 0);
     lv_obj_set_style_text_color(history_label_, lv_color_hex(kMuted), 0);
     lv_obj_align(history_label_, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_label_set_text(history_label_, "");
@@ -113,7 +135,7 @@ bool CalculatorApp::onCreate()
     lv_obj_set_width(result_label_, label_width);
     lv_label_set_long_mode(result_label_, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(result_label_, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_font(result_label_, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(result_label_, kFontBody, 0);
     lv_obj_set_style_text_color(result_label_, lv_color_hex(kAccent), 0);
     lv_obj_align(result_label_, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
@@ -131,7 +153,7 @@ bool CalculatorApp::onCreate()
     lv_obj_set_style_pad_all(keyboard_, 0, 0);
     lv_obj_set_style_pad_row(keyboard_, kKeyGap, 0);
     lv_obj_set_style_pad_column(keyboard_, kKeyGap, 0);
-    lv_obj_set_style_text_font(keyboard_, &lv_font_montserrat_28, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(keyboard_, kKeyboardFont, LV_PART_ITEMS);
     lv_obj_set_style_text_color(keyboard_, lv_color_hex(kText), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(keyboard_, lv_color_hex(kKey), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(keyboard_, lv_color_hex(kKeyPressed),
@@ -294,9 +316,9 @@ void CalculatorApp::updateFormulaFont()
     // Ceiling is 28, not 48: the display panel gave 16 px of its height to the
     // bottom safe area, and a 48 px line no longer clears the history line above
     // it or the result line below it.
-    const lv_font_t *font = formula_len_ <= 20 ? &lv_font_montserrat_28 :
-                            formula_len_ <= 32 ? &lv_font_montserrat_20 :
-                                                 &lv_font_montserrat_16;
+    const lv_font_t *font = formula_len_ <= 20 ? kFormulaLargeFont :
+                            formula_len_ <= 32 ? kFormulaMediumFont :
+                                                 kFormulaSmallFont;
     lv_obj_set_style_text_font(formula_label_, font, 0);
 }
 

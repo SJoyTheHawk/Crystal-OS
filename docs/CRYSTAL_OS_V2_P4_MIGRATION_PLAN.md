@@ -94,7 +94,7 @@ backup described in that record.
 
 ## Phase Breakdown
 
-### **Phase P4.1: Hardware Port Foundation** (Week 1, 5-7 days)
+### **Phase P4.1: Hardware Port Foundation** (Week 1-2, 7-9 days)
 Bootstrap Crystal OS on P4 hardware.
 
 ### **Phase P4.2: Visual Enhancements** (Week 2, 5-7 days)
@@ -117,7 +117,7 @@ Camera, video, advanced features.
 
 **Goal:** Get Crystal OS building and running on P4 hardware with existing features working.
 
-**Duration:** 5-7 days  
+**Duration:** 6-8 days (original 5-7 + 1 day for P4-native layout adaptation)
 **Risk:** Medium (WiFi remote driver is new)
 
 ### P4.1.1: Build System Updates
@@ -321,6 +321,299 @@ idf.py flash monitor
 - Home screen appears (even if WiFi doesn't work yet)
 
 **Estimated effort:** 3 days (config, build, initial debugging)
+
+### P4.1.5: App Layout Adaptation for 720x720 Resolution
+
+**Status:** Complete — 2026-11-14 (Asia/Hong_Kong). P4 layouts, controls and
+typography accepted on the connected device after the final app-only flash.
+
+**Goal:** Adapt app layouts from 480x480 (S3) to 720x720 (P4) using P4-native sizing optimized for the larger display.
+
+**Duration:** 1-2 days
+**Risk:** Low (S3 version already stable; P4 gets dedicated values)
+
+**Strategy Decision:** P4 apps will use **native 720x720 sizing**, not runtime-responsive helpers. The S3 version remains unchanged at 480x480. This is simpler, more maintainable, and performs better than trying to support both targets from shared source.
+
+#### Background: Current Layout Architecture
+
+Crystal OS apps already use **proportional layout** for root objects:
+
+```cpp
+// Example from calculator_app.cpp:63-65
+const lv_area_t area = getVisualArea();
+const lv_coord_t width = lv_area_get_width(&area);
+const lv_coord_t height = lv_area_get_height(&area);
+```
+
+Root objects fill the available area correctly. However, **individual UI elements** have values tuned for 480px:
+
+```cpp
+// clock_app.cpp:83,99
+lv_obj_set_size(timer_arc_, 92, 92);
+lv_obj_set_size(button, 96, 42);
+```
+
+The **launcher table** in `main.cpp:223` also hardcodes the S3 canvas height:
+```cpp
+launcher.table.size.height = 480;
+```
+
+#### Why NOT Simple 1.5× Scaling
+
+Blind proportional scaling (480 × 1.5 = 720) has problems:
+
+1. **Font mismatch:** `28px × 1.5 = 42px` — Montserrat ships in 14/16/20/28/48, not 42
+2. **Oversized touch targets:** `96px × 1.5 = 144px` buttons waste screen space
+3. **Wrong intent:** Some values should scale (paddings, arcs), others should jump to the next sensible font/size tier
+
+#### Approach: P4-Native Sizing (Compile-Time `#ifdef`)
+
+The S3 version is stable and won't change. Rather than runtime helpers that branch on resolution, the P4 build uses **target-conditional constants** at compile time. The app source stays single; the constants differ per target.
+
+**Sizing table (P4-native values):**
+
+| Element | S3 (480px) | P4 (720px) | Rationale |
+|---------|------------|------------|-----------|
+| Page padding | 16 | 24 | +50%, proportional |
+| Content gap | 10 | 16 | +60%, more breathing room |
+| Button size | 96×42 | 128×52 | +33% width, +24% height |
+| Timer arc | 92 | 140 | +52%, fills larger tab |
+| Display height (calc) | 96 | 128 | +33%, more formula room |
+| Font (body) | Montserrat 20 | Montserrat 28 | Next tier up |
+| Font (hero) | Montserrat 28 | Montserrat 48 | Two tiers up |
+| Font (small) | Montserrat 14 | Montserrat 16 | Next tier up |
+| Launcher table height | 480 | 660 | Full height minus nav (720−60) |
+| Launcher icon size | 210 | 216 | Slight bump; keeps 3-col grid alignment |
+
+**Core principle:** Pick the right value for each target by design intent, not by ratio.
+
+#### Implementation Pattern: Compile-Time Target Constants
+
+No runtime library needed. Use simple `#ifdef CONFIG_IDF_TARGET_ESP32P4` in each app's constants section.
+
+**Pattern example** (from `calculator_app.cpp`):
+
+```cpp
+namespace {
+constexpr const char *kFormulaKey = "formula";
+constexpr size_t kFormulaMax = 63;
+
+#ifdef CONFIG_IDF_TARGET_ESP32P4
+// P4 native 720x720
+constexpr lv_coord_t kPagePad = 24;
+constexpr lv_coord_t kGap = 16;
+constexpr lv_coord_t kTopPad = 16;
+constexpr lv_coord_t kDisplayHeight = 128;
+constexpr lv_coord_t kDisplayPadHor = 16;
+constexpr lv_coord_t kDisplayPadVer = 12;
+constexpr lv_coord_t kKeyGap = 12;
+#else
+// S3 480x480
+constexpr lv_coord_t kPagePad = 16;
+constexpr lv_coord_t kGap = 10;
+constexpr lv_coord_t kTopPad = 10;
+constexpr lv_coord_t kDisplayHeight = 96;
+constexpr lv_coord_t kDisplayPadHor = 14;
+constexpr lv_coord_t kDisplayPadVer = 8;
+constexpr lv_coord_t kKeyGap = 8;
+#endif
+
+// ... rest of constants
+}
+```
+
+For fonts, use a helper macro:
+
+```cpp
+#ifdef CONFIG_IDF_TARGET_ESP32P4
+#define FONT_HERO &lv_font_montserrat_48
+#define FONT_BODY &lv_font_montserrat_28
+#define FONT_LABEL &lv_font_montserrat_20
+#define FONT_SMALL &lv_font_montserrat_16
+#else
+#define FONT_HERO &lv_font_montserrat_28
+#define FONT_BODY &lv_font_montserrat_20
+#define FONT_LABEL &lv_font_montserrat_16
+#define FONT_SMALL &lv_font_montserrat_14
+#endif
+```
+
+Then in the code:
+
+```cpp
+lv_obj_set_style_text_font(result_label_, FONT_BODY, 0);
+lv_obj_set_style_text_font(keyboard_, FONT_HERO, LV_PART_ITEMS);
+```
+
+**Why this beats runtime helpers:**
+
+- **Zero overhead:** Compiler picks the right constant at build time
+- **Simpler code:** No library, no includes, no runtime checks
+- **Clearer intent:** Reading `kPagePad = 24` tells you exactly what P4 uses
+- **Easier debugging:** Values are visible in the source, not hidden in a helper function
+
+#### Files to Modify
+
+**1. Calculator App** (`components/calculator_app/src/calculator_app.cpp`)
+
+Update the constants block (lines 17-31):
+
+```diff
+ namespace {
+ constexpr const char *kFormulaKey = "formula";
+ constexpr size_t kFormulaMax = 63;
++#ifdef CONFIG_IDF_TARGET_ESP32P4
++constexpr lv_coord_t kPagePad = 24;
++constexpr lv_coord_t kGap = 16;
++constexpr lv_coord_t kTopPad = 16;
++constexpr lv_coord_t kDisplayHeight = 128;
++constexpr lv_coord_t kDisplayPadHor = 16;
++constexpr lv_coord_t kDisplayPadVer = 12;
++constexpr lv_coord_t kKeyGap = 12;
++#else
+ constexpr lv_coord_t kPagePad = 16;
+ constexpr lv_coord_t kGap = 10;
+ constexpr lv_coord_t kTopPad = 10;
+-constexpr lv_coord_t kBottomSafe = 26;
+ constexpr lv_coord_t kDisplayHeight = 96;
+ constexpr lv_coord_t kDisplayPadHor = 14;
+ constexpr lv_coord_t kDisplayPadVer = 8;
+ constexpr lv_coord_t kKeyGap = 8;
++#endif
++constexpr lv_coord_t kBottomSafe = 26;  // Same for both targets
+```
+
+Add font macros after the constants:
+
+```cpp
++#ifdef CONFIG_IDF_TARGET_ESP32P4
++#define FONT_BODY &lv_font_montserrat_28
++#define FONT_LABEL &lv_font_montserrat_20
++#define FONT_SMALL &lv_font_montserrat_16
++#else
++#define FONT_BODY &lv_font_montserrat_20
++#define FONT_LABEL &lv_font_montserrat_16
++#define FONT_SMALL &lv_font_montserrat_14
++#endif
+```
+
+Then replace hardcoded fonts:
+
+```diff
+-lv_obj_set_style_text_font(history_label_, &lv_font_montserrat_14, 0);
++lv_obj_set_style_text_font(history_label_, FONT_SMALL, 0);
+
+-lv_obj_set_style_text_font(result_label_, &lv_font_montserrat_20, 0);
++lv_obj_set_style_text_font(result_label_, FONT_BODY, 0);
+```
+
+**2. Clock App** (`components/clock_app/src/clock_app.cpp`)
+
+Add target-specific sizes after the `make_button()` function:
+
+```cpp
++#ifdef CONFIG_IDF_TARGET_ESP32P4
++constexpr lv_coord_t kArcSize = 140;
++constexpr lv_coord_t kButtonWidth = 128;
++constexpr lv_coord_t kButtonHeight = 52;
++constexpr lv_coord_t kLapLabelWidth = 480;
++#define FONT_HERO &lv_font_montserrat_48
++#define FONT_BODY &lv_font_montserrat_28
++#define FONT_LABEL &lv_font_montserrat_20
++#else
++constexpr lv_coord_t kArcSize = 92;
++constexpr lv_coord_t kButtonWidth = 96;
++constexpr lv_coord_t kButtonHeight = 42;
++constexpr lv_coord_t kLapLabelWidth = 360;
++#define FONT_HERO &lv_font_montserrat_28
++#define FONT_BODY &lv_font_montserrat_20
++#define FONT_LABEL &lv_font_montserrat_16
++#endif
+```
+
+Then replace hardcoded values:
+
+```diff
+-lv_obj_set_size(timer_arc_, 92, 92);
++lv_obj_set_size(timer_arc_, kArcSize, kArcSize);
+
+-lv_obj_set_size(button, 96, 42);
++lv_obj_set_size(button, kButtonWidth, kButtonHeight);
+
+-set_label_font(clock_label_, &lv_font_montserrat_28);
++set_label_font(clock_label_, FONT_HERO);
+
+-lv_obj_set_width(lap_label_, 360);
++lv_obj_set_width(lap_label_, kLapLabelWidth);
+```
+
+**3. Weather App** (`components/weather_app/src/weather_app.cpp`)
+
+Similar pattern — add target-specific constants for any hardcoded sizes/fonts.
+
+**4. Launcher Configuration** (`main/main.cpp`)
+
+The launcher table height is already conditional on P4 (lines 214-243). Just verify the height calculation:
+
+```cpp
+#if CONFIG_IDF_TARGET_ESP32P4
+// ... existing P4 stylesheet overrides ...
+launcher.table.size.height = 660;  // 720 - 60 (nav bar)
+```
+
+**5. Launcher Icon Sizing** (already done in `main.cpp:224-242`)
+
+The P4 block already sets icon sizes to 216×216. Verify this matches the 3-column grid.
+
+#### Validation Checklist
+
+After updating all apps:
+
+- [x] **Build S3 target:** Regression build passed; physical S3 validation was not performed
+- [x] **Build P4 target:** Verify no compiler warnings about font/size mismatches
+- [x] **Flash P4:** Verify Calculator keyboard fits without clipping
+- [x] **Flash P4:** Verify Clock timer arc and buttons are properly sized
+- [x] **Flash P4:** Verify launcher icons fit 3×2 grid with proper spacing
+- [x] **Touch test:** All buttons respond correctly (no dead zones from size changes)
+- [x] **Font test:** All text renders in appropriate sizes (no missing glyphs)
+
+**Estimated effort:** 1 day (update 3-4 apps, build/flash both targets, visual verification)
+
+**Success criteria:**
+- P4 build: all apps render correctly on 720x720, no clipping or excessive whitespace
+- S3 build: 480x480 layouts compile and behave identically to before
+- Touch targets on P4 ≥44×44px across all apps
+
+#### Phase 1.5 Closeout — 2026-11-14
+
+- P4-specific sizing covers Calculator, Clock (including Timer and Stopwatch),
+  Weather, Launcher, Settings, Wi-Fi Networks, Manage Apps and Dev Tester.
+  The user confirmed the requested app layouts and controls pass on hardware.
+- Final typography acceptance confirms the readable 24px status bar, preserved
+  Settings sizing, larger app labels, and readable toasts. The user also confirmed
+  the Stopwatch lap label no longer overlaps Resume, Weather's larger refresh
+  control passes, and the larger swipe-card icon and app name pass.
+- The implementation uses target-specific constants. Final hardware-tuned
+  values supersede the illustrative snippets above: Calculator history and
+  Weather captions/status use 20px, the Weather refresh control is 64×64 with
+  a 28px glyph, swipe-card icons use 1.5× zoom with 28px names, and toasts use
+  20px text. Long Calculator formulas retain adaptive sizing.
+- ESP-IDF v6.1 P4 build passed in `build/p4-idf61-phase1c`; signed application
+  size is `0x451000` (4,526,080 bytes), leaving 46% of the 8 MiB app slot free.
+  The final app-only flash at `0x30000` passed esptool hash verification.
+- `python3 tools/test_launcher_swipe.py` passed, covering swipes, interruption,
+  cancellation/reversal, click suppression, app return and teardown.
+- Earlier Phase 1.5 S3 regression builds passed in
+  `build/s3-idf61-phase1-regression`. A later rerun was blocked during CMake
+  dependency resolution by generated Board Manager target configuration;
+  the final typography revision has not had a fresh full S3 build or S3 flash.
+- The existing C6 firmware is preserved. No coprocessor update or factory
+  workspace changes were part of this phase.
+
+This closes the Phase 1.5 resolution/layout and typography scope. Phase P4.2
+visual enhancements, animation performance qualification and the remaining
+[Phase 1 acceptance items](ESP32_P4_PHASE1_VALIDATION.md#remaining-acceptance-and-limitations)
+remain separate work.
 
 ---
 

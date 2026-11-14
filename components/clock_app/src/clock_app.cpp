@@ -9,13 +9,56 @@
 #include "lvgl.h"
 
 namespace {
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kTabBarHeight = 56;
+constexpr lv_coord_t kTabBottomInset = 48;
+constexpr lv_coord_t kArcSize = 140;
+constexpr lv_coord_t kButtonWidth = 128;
+constexpr lv_coord_t kButtonHeight = 52;
+constexpr lv_coord_t kTimerButtonWidth = 128;
+constexpr lv_coord_t kTimerButtonHeight = 52;
+constexpr lv_coord_t kTimerResetHeight = 52;
+constexpr lv_coord_t kTimerGridLeft = 80;
+constexpr lv_coord_t kTimerGridTop = 204;
+constexpr lv_coord_t kTimerColumnStep = 144;
+constexpr lv_coord_t kTimerRowStep = 68;
+constexpr lv_coord_t kTimerResetWidth = 160;
+constexpr lv_coord_t kLapLabelWidth = 640;
+constexpr const lv_font_t *kClockFont = &lv_font_montserrat_48;
+constexpr const lv_font_t *kBodyFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kButtonFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kLabelFont = &lv_font_montserrat_20;
+#else
+constexpr lv_coord_t kTabBarHeight = 44;
+constexpr lv_coord_t kTabBottomInset = 40;
+constexpr lv_coord_t kArcSize = 92;
+constexpr lv_coord_t kButtonWidth = 120;
+constexpr lv_coord_t kButtonHeight = 46;
+constexpr lv_coord_t kTimerButtonWidth = 96;
+constexpr lv_coord_t kTimerButtonHeight = 42;
+constexpr lv_coord_t kTimerResetHeight = 42;
+constexpr lv_coord_t kTimerGridLeft = 8;
+constexpr lv_coord_t kTimerGridTop = 104;
+constexpr lv_coord_t kTimerColumnStep = 108;
+constexpr lv_coord_t kTimerRowStep = 48;
+constexpr lv_coord_t kTimerResetWidth = 150;
+constexpr lv_coord_t kLapLabelWidth = 360;
+constexpr const lv_font_t *kClockFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kBodyFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kButtonFont = nullptr;
+constexpr const lv_font_t *kLabelFont = nullptr;
+#endif
+
 lv_obj_t *make_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb, void *user)
 {
     lv_obj_t *button = lv_btn_create(parent);
-    lv_obj_set_size(button, 120, 46);
+    lv_obj_set_size(button, kButtonWidth, kButtonHeight);
     lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, user);
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(label, kButtonFont, 0);
+#endif
     lv_obj_center(label);
     return button;
 }
@@ -62,91 +105,171 @@ bool ClockApp::onCreate()
     lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
 
-    lv_obj_t *tabs = lv_tabview_create(root, LV_DIR_TOP, 44);
-    lv_obj_set_size(tabs, width, height - 40);
+    lv_obj_t *tabs = lv_tabview_create(root, LV_DIR_TOP, kTabBarHeight);
+    lv_obj_set_size(tabs, width, height - kTabBottomInset);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tabs), kButtonFont, 0);
+#endif
     lv_obj_t *clock_tab = lv_tabview_add_tab(tabs, "Clock");
     lv_obj_t *timer_tab = lv_tabview_add_tab(tabs, "Timer");
     lv_obj_t *stopwatch_tab = lv_tabview_add_tab(tabs, "Stopwatch");
     lv_obj_clear_flag(lv_tabview_get_content(tabs), LV_OBJ_FLAG_SCROLLABLE);
 
     clock_label_ = lv_label_create(clock_tab);
-    set_label_font(clock_label_, &lv_font_montserrat_28);
+#if CONFIG_IDF_TARGET_ESP32P4
+    set_label_font(clock_label_, kClockFont);
+#else
+    set_label_font(clock_label_, kClockFont);
+#endif
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_align(clock_label_, LV_ALIGN_CENTER, 0, -72);
+#else
     lv_obj_align(clock_label_, LV_ALIGN_CENTER, 0, -45);
+#endif
     date_label_ = lv_label_create(clock_tab);
-    set_label_font(date_label_, &lv_font_montserrat_20);
+    set_label_font(date_label_, kBodyFont);
     lv_obj_align(date_label_, LV_ALIGN_CENTER, 0, 5);
     timezone_label_ = lv_label_create(clock_tab);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(timezone_label_, kLabelFont, 0);
+#endif
     lv_obj_align(timezone_label_, LV_ALIGN_CENTER, 0, 38);
     lv_label_set_text(timezone_label_, "Hong Kong (UTC+08:00)");
 
     timer_arc_ = lv_arc_create(timer_tab);
-    lv_obj_set_size(timer_arc_, 92, 92);
+    lv_obj_set_size(timer_arc_, kArcSize, kArcSize);
     lv_obj_align(timer_arc_, LV_ALIGN_TOP_MID, 0, 2);
     lv_arc_set_range(timer_arc_, 0, 100);
     lv_arc_set_bg_angles(timer_arc_, 0, 360);
     lv_obj_remove_style(timer_arc_, nullptr, LV_PART_KNOB);
     lv_obj_clear_flag(timer_arc_, LV_OBJ_FLAG_CLICKABLE);
     timer_label_ = lv_label_create(timer_tab);
-    set_label_font(timer_label_, &lv_font_montserrat_28);
+#if CONFIG_IDF_TARGET_ESP32P4
+    set_label_font(timer_label_, kClockFont);
+    lv_obj_align(timer_label_, LV_ALIGN_TOP_MID, 0, 48);
+#else
+    set_label_font(timer_label_, kClockFont);
     lv_obj_align(timer_label_, LV_ALIGN_TOP_MID, 0, 29);
+#endif
     timer_status_ = lv_label_create(timer_tab);
+#if CONFIG_IDF_TARGET_ESP32P4
+    set_label_font(timer_status_, kBodyFont);
+    lv_obj_align(timer_status_, LV_ALIGN_TOP_MID, 0, 144);
+#else
     lv_obj_align(timer_status_, LV_ALIGN_TOP_MID, 0, 76);
+#endif
     lv_label_set_text(timer_status_, "Ready");
     const uint32_t presets[] = {30, 60, 180, 300, 600, 1200, 1800};
     const char *preset_names[] = {"30s", "1m", "3m", "5m", "10m", "20m", "30m"};
     for (size_t i = 0; i < 7; ++i) {
         lv_obj_t *button = make_button(timer_tab, preset_names[i], timer_preset_cb, this);
-        lv_obj_set_size(button, 96, 42);
-        lv_obj_set_pos(button, 8 + static_cast<lv_coord_t>((i % 4) * 108),
-                       104 + static_cast<lv_coord_t>((i / 4) * 48));
+        lv_obj_set_size(button, kTimerButtonWidth, kTimerButtonHeight);
+        lv_obj_set_pos(button, kTimerGridLeft + static_cast<lv_coord_t>((i % 4) * kTimerColumnStep),
+                       kTimerGridTop + static_cast<lv_coord_t>((i / 4) * kTimerRowStep));
         lv_obj_set_user_data(button, reinterpret_cast<void *>(static_cast<uintptr_t>(presets[i])));
     }
     lv_obj_t *minus = make_button(timer_tab, "-30s", timer_action_cb, this);
-    lv_obj_set_size(minus, 96, 42);
+    lv_obj_set_size(minus, kTimerButtonWidth, kTimerButtonHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(minus, kTimerGridLeft + 3 * kTimerColumnStep,
+                   kTimerGridTop + kTimerRowStep);
+#else
     lv_obj_set_pos(minus, 8 + 3 * 108, 152);
+#endif
     lv_obj_set_user_data(minus, reinterpret_cast<void *>(5));
     lv_obj_t *plus = make_button(timer_tab, "+30s", timer_action_cb, this);
-    lv_obj_set_size(plus, 96, 42);
+    lv_obj_set_size(plus, kTimerButtonWidth, kTimerButtonHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(plus, kTimerGridLeft, kTimerGridTop + 2 * kTimerRowStep);
+#else
     lv_obj_set_pos(plus, 8, 204);
+#endif
     lv_obj_set_user_data(plus, reinterpret_cast<void *>(6));
     lv_obj_t *start = make_button(timer_tab, "Start", timer_action_cb, this);
-    lv_obj_set_size(start, 96, 42);
+    lv_obj_set_size(start, kTimerButtonWidth, kTimerButtonHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(start, kTimerGridLeft + kTimerColumnStep, kTimerGridTop + 2 * kTimerRowStep);
+#else
     lv_obj_set_pos(start, 116, 204);
+#endif
     lv_obj_set_user_data(start, reinterpret_cast<void *>(1));
     lv_obj_t *pause = make_button(timer_tab, "Pause", timer_action_cb, this);
-    lv_obj_set_size(pause, 96, 42);
+    lv_obj_set_size(pause, kTimerButtonWidth, kTimerButtonHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(pause, kTimerGridLeft + 2 * kTimerColumnStep, kTimerGridTop + 2 * kTimerRowStep);
+#else
     lv_obj_set_pos(pause, 224, 204);
+#endif
     lv_obj_set_user_data(pause, reinterpret_cast<void *>(2));
     lv_obj_t *resume = make_button(timer_tab, "Resume", timer_action_cb, this);
-    lv_obj_set_size(resume, 96, 42);
+    lv_obj_set_size(resume, kTimerButtonWidth, kTimerButtonHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(resume, kTimerGridLeft + 3 * kTimerColumnStep, kTimerGridTop + 2 * kTimerRowStep);
+#else
     lv_obj_set_pos(resume, 332, 204);
+#endif
     lv_obj_set_user_data(resume, reinterpret_cast<void *>(3));
     lv_obj_t *reset = make_button(timer_tab, "Reset", timer_action_cb, this);
-    lv_obj_set_size(reset, 150, 42);
+    lv_obj_set_size(reset, kTimerResetWidth, kTimerResetHeight);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(reset, (720 - kTimerResetWidth) / 2, kTimerGridTop + 3 * kTimerRowStep);
+#else
     lv_obj_set_pos(reset, 149, 256);
+#endif
     lv_obj_set_user_data(reset, reinterpret_cast<void *>(4));
 
     stopwatch_label_ = lv_label_create(stopwatch_tab);
-    set_label_font(stopwatch_label_, &lv_font_montserrat_28);
+    set_label_font(stopwatch_label_, kClockFont);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_align(stopwatch_label_, LV_ALIGN_TOP_MID, 0, 56);
+#else
     lv_obj_align(stopwatch_label_, LV_ALIGN_TOP_MID, 0, 42);
+#endif
     stopwatch_status_ = lv_label_create(stopwatch_tab);
-    lv_obj_align(stopwatch_status_, LV_ALIGN_TOP_MID, 0, 86);
+    lv_obj_align(stopwatch_status_, LV_ALIGN_TOP_MID, 0,
+#if CONFIG_IDF_TARGET_ESP32P4
+                 116);
+    lv_obj_set_style_text_font(stopwatch_status_, kBodyFont, 0);
+#else
+                 86);
+#endif
     lv_obj_t *sw_start = make_button(stopwatch_tab, "Start/Pause", stopwatch_action_cb, this);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(sw_start, 120, 176);
+#else
     lv_obj_set_pos(sw_start, 14, 120);
+#endif
     lv_obj_set_user_data(sw_start, reinterpret_cast<void *>(1));
     lv_obj_t *sw_lap = make_button(stopwatch_tab, "Lap", stopwatch_action_cb, this);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(sw_lap, 296, 176);
+#else
     lv_obj_set_pos(sw_lap, 146, 120);
+#endif
     lv_obj_set_user_data(sw_lap, reinterpret_cast<void *>(2));
     lv_obj_t *sw_reset = make_button(stopwatch_tab, "Reset", stopwatch_action_cb, this);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(sw_reset, 472, 176);
+#else
     lv_obj_set_pos(sw_reset, 278, 120);
+#endif
     lv_obj_set_user_data(sw_reset, reinterpret_cast<void *>(3));
     lv_obj_t *sw_resume = make_button(stopwatch_tab, "Resume", stopwatch_action_cb, this);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_pos(sw_resume, 296, 244);
+#else
     lv_obj_set_pos(sw_resume, 146, 176);
+#endif
     lv_obj_set_user_data(sw_resume, reinterpret_cast<void *>(4));
     lap_label_ = lv_label_create(stopwatch_tab);
-    lv_obj_set_width(lap_label_, 360);
-    lv_obj_set_style_text_align(lap_label_, LV_TEXT_ALIGN_CENTER, 0);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(lap_label_, kLabelFont, 0);
+    lv_obj_align(lap_label_, LV_ALIGN_TOP_MID, 0, 320);
+#else
     lv_obj_align(lap_label_, LV_ALIGN_TOP_MID, 0, 235);
+#endif
+    lv_obj_set_width(lap_label_, kLapLabelWidth);
+    lv_obj_set_style_text_align(lap_label_, LV_TEXT_ALIGN_CENTER, 0);
 
     uint32_t timer_end = 0;
     uint32_t timer_pause = 0;

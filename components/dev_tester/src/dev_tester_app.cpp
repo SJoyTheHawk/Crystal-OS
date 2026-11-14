@@ -8,7 +8,41 @@
 #include "lvgl.h"
 
 namespace {
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kContentHeight = 720;
+constexpr lv_coord_t kContentInset = 24;
+constexpr lv_coord_t kFieldWidth = 672;
+constexpr lv_coord_t kPasswordFieldWidth = 520;
+constexpr lv_coord_t kRevealWidth = 128;
+constexpr lv_coord_t kFieldHeight = 62;
+constexpr lv_coord_t kFieldTopOffset = 32;
+constexpr lv_coord_t kTitleY = 24;
+constexpr lv_coord_t kTopFieldY = 92;
+constexpr lv_coord_t kPasswordFieldY = 220;
+constexpr lv_coord_t kDividerY = 356;
+constexpr lv_coord_t kBottomFieldY = 404;
+constexpr lv_coord_t kOutputY = 548;
+constexpr const lv_font_t *kCaptionFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kFieldFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kTitleFont = &lv_font_montserrat_28;
+#else
 constexpr lv_coord_t kContentHeight = 650;
+constexpr lv_coord_t kContentInset = 20;
+constexpr lv_coord_t kFieldWidth = 440;
+constexpr lv_coord_t kPasswordFieldWidth = 350;
+constexpr lv_coord_t kRevealWidth = 80;
+constexpr lv_coord_t kFieldHeight = 50;
+constexpr lv_coord_t kFieldTopOffset = 26;
+constexpr lv_coord_t kTitleY = 16;
+constexpr lv_coord_t kTopFieldY = 66;
+constexpr lv_coord_t kPasswordFieldY = 190;
+constexpr lv_coord_t kDividerY = 336;
+constexpr lv_coord_t kBottomFieldY = 470;
+constexpr lv_coord_t kOutputY = 578;
+constexpr const lv_font_t *kCaptionFont = &lv_font_montserrat_16;
+constexpr const lv_font_t *kFieldFont = nullptr;
+constexpr const lv_font_t *kTitleFont = &lv_font_montserrat_28;
+#endif
 constexpr uint32_t kPage = 0xf2f3f5;
 constexpr uint32_t kInk = 0x17191d;
 constexpr uint32_t kMuted = 0x666b73;
@@ -51,26 +85,26 @@ bool DevTesterApp::onCreate()
 
     lv_obj_t *title = lv_label_create(content_);
     lv_label_set_text(title, "Keyboard");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(title, kTitleFont, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(kInk), 0);
-    lv_obj_set_pos(title, 20, 16);
+    lv_obj_set_pos(title, kContentInset, kTitleY);
 
-    top_field_ = add_field("Always visible", "Type here", 66);
-    password_field_ = add_field("Password", "Enter a secret", 190, true);
+    top_field_ = add_field("Always visible", "Type here", kTopFieldY);
+    password_field_ = add_field("Password", "Enter a secret", kPasswordFieldY, true);
 
     lv_obj_t *divider = lv_obj_create(content_);
-    lv_obj_set_size(divider, 440, 1);
-    lv_obj_set_pos(divider, 20, 336);
+    lv_obj_set_size(divider, kFieldWidth, 1);
+    lv_obj_set_pos(divider, kContentInset, kDividerY);
     lv_obj_set_style_bg_color(divider, lv_color_hex(0xc7c9ce), 0);
     lv_obj_set_style_border_width(divider, 0, 0);
     lv_obj_clear_flag(divider, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    bottom_field_ = add_field("Covered field", "Viewport should reveal this", 470);
+    bottom_field_ = add_field("Covered field", "Viewport should reveal this", kBottomFieldY);
     output_ = lv_label_create(content_);
-    lv_obj_set_width(output_, 440);
-    lv_obj_set_style_text_font(output_, &lv_font_montserrat_16, 0);
+    lv_obj_set_width(output_, kFieldWidth);
+    lv_obj_set_style_text_font(output_, kCaptionFont, 0);
     lv_obj_set_style_text_color(output_, lv_color_hex(kMuted), 0);
-    lv_obj_set_pos(output_, 20, 578);
+    lv_obj_set_pos(output_, kContentInset, kOutputY);
     update_output();
     return true;
 }
@@ -81,12 +115,16 @@ lv_obj_t *DevTesterApp::add_field(const char *label, const char *placeholder,
     lv_obj_t *caption = lv_label_create(content_);
     lv_label_set_text(caption, label);
     lv_obj_set_style_text_color(caption, lv_color_hex(kMuted), 0);
-    lv_obj_set_style_text_font(caption, &lv_font_montserrat_16, 0);
-    lv_obj_set_pos(caption, 20, y);
+    lv_obj_set_style_text_font(caption, kCaptionFont, 0);
+    lv_obj_set_pos(caption, kContentInset, y);
 
     lv_obj_t *field = lv_textarea_create(content_);
-    lv_obj_set_size(field, password ? 350 : 440, 50);
-    lv_obj_set_pos(field, 20, y + 26);
+    const lv_coord_t field_width = password ? kPasswordFieldWidth : kFieldWidth;
+    lv_obj_set_size(field, field_width, kFieldHeight);
+    lv_obj_set_pos(field, kContentInset, y + kFieldTopOffset);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(field, kFieldFont, 0);
+#endif
     lv_textarea_set_one_line(field, true);
     lv_textarea_set_cursor_click_pos(field, true);
     lv_textarea_set_placeholder_text(field, placeholder);
@@ -101,12 +139,15 @@ lv_obj_t *DevTesterApp::add_field(const char *label, const char *placeholder,
 
     if (password) {
         lv_obj_t *reveal = lv_btn_create(content_);
-        lv_obj_set_size(reveal, 80, 50);
-        lv_obj_set_pos(reveal, 380, y + 26);
+        lv_obj_set_size(reveal, kRevealWidth, kFieldHeight);
+        lv_obj_set_pos(reveal, kContentInset + field_width + 16, y + kFieldTopOffset);
         lv_obj_set_style_bg_color(reveal, lv_color_hex(0xd7d9dd), 0);
         lv_obj_set_style_radius(reveal, 7, 0);
         lv_obj_t *text = lv_label_create(reveal);
         lv_label_set_text(text, "Show");
+#if CONFIG_IDF_TARGET_ESP32P4
+        lv_obj_set_style_text_font(text, kFieldFont, 0);
+#endif
         lv_obj_set_style_text_color(text, lv_color_hex(kInk), 0);
         lv_obj_center(text);
         lv_obj_add_event_cb(reveal, reveal_event, LV_EVENT_CLICKED, field);

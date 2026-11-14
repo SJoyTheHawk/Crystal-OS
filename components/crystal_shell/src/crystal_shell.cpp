@@ -377,10 +377,139 @@ constexpr int kBottomBand = 24;
 // instead -- 30% white, against app backgrounds that are all dark in this tree
 // (0x11181F, 0x101827), so its resting state reads without a shadow. The inset
 // puts it inside kBottomBand, so it marks the band it belongs to.
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kHomePillWidth = 216;
+constexpr lv_coord_t kHomePillHeight = 8;
+constexpr lv_coord_t kHomePillInset = 10;
+constexpr lv_coord_t kHomePillHitMargin = 12;
+constexpr lv_coord_t kQuickCell = 86;
+constexpr lv_coord_t kQuickGap = 14;
+constexpr lv_coord_t kQuickPad = 18;
+constexpr lv_coord_t kQuickMargin = 16;
+constexpr lv_coord_t kQuickGapTop = 12;
+constexpr lv_coord_t kQuickCornerWidth = 180;
+constexpr lv_coord_t kSettingsHeaderHeight = 72;
+constexpr lv_coord_t kSettingsContentInset = 16;
+constexpr lv_coord_t kSettingsRowHeight = 84;
+constexpr lv_coord_t kSettingsRowPad = 20;
+constexpr lv_coord_t kSettingsTitleTop = 10;
+constexpr lv_coord_t kSettingsSummaryTop = 48;
+constexpr lv_coord_t kSettingsSummaryHeight = 24;
+constexpr lv_coord_t kSettingsBackWidth = 76;
+constexpr lv_coord_t kSettingsBackHeight = 58;
+constexpr lv_coord_t kSettingsBackLeft = 12;
+constexpr lv_coord_t kSettingsBackTop = 7;
+constexpr lv_coord_t kSettingsHeadingTop = 21;
+constexpr lv_coord_t kSettingsSwitchWidth = 64;
+constexpr lv_coord_t kSettingsSwitchHeight = 38;
+constexpr lv_coord_t kSettingsSwitchClick = 22;
+constexpr lv_coord_t kSettingsSliderWidth = 240;
+constexpr lv_coord_t kSettingsSliderHeight = 24;
+constexpr lv_coord_t kSettingsNarrowSliderWidth = 220;
+constexpr lv_coord_t kSettingsDropdownWidth = 200;
+constexpr lv_coord_t kSettingsInputHeight = 60;
+constexpr lv_coord_t kSettingsConfirmWidth = 480;
+constexpr lv_coord_t kSettingsConfirmHeight = 240;
+constexpr lv_coord_t kSettingsConfirmButtonWidth = 168;
+constexpr lv_coord_t kSettingsConfirmButtonHeight = 54;
+constexpr lv_coord_t kManageRestartWidth = 500;
+constexpr lv_coord_t kManageRestartHeight = 300;
+constexpr lv_coord_t kManageRestartButtonWidth = 190;
+constexpr lv_coord_t kManageRestartButtonHeight = 54;
+constexpr lv_coord_t kForgetDialogWidth = 500;
+constexpr lv_coord_t kForgetDialogHeight = 210;
+constexpr lv_coord_t kForgetButtonWidth = 168;
+constexpr lv_coord_t kForgetButtonHeight = 52;
+constexpr lv_coord_t kForgetButtonInset = 32;
+constexpr lv_coord_t kForgetNameTop = 62;
+constexpr lv_coord_t kWifiDialogWidth = 600;
+constexpr lv_coord_t kWifiDialogHeight = 248;
+constexpr lv_coord_t kWifiDialogGap = 24;
+constexpr lv_coord_t kWifiDialogInset = 24;
+constexpr lv_coord_t kWifiFieldWidth = 380;
+constexpr lv_coord_t kWifiFieldHeight = 56;
+constexpr lv_coord_t kWifiFieldTop = 96;
+constexpr lv_coord_t kWifiRevealWidth = 108;
+constexpr lv_coord_t kWifiActionWidth = 140;
+constexpr lv_coord_t kWifiActionHeight = 50;
+constexpr lv_coord_t kWifiActionInset = 90;
+constexpr lv_coord_t kWifiActionBottom = 16;
+constexpr lv_coord_t kWifiListHeight = 480;
+constexpr lv_coord_t kWifiNetworkRowHeight = 68;
+constexpr const lv_font_t *kSettingsTitleFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kSettingsSummaryFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kSettingsStatusFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kSettingsInputFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kWifiTitleFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kWifiBodyFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kQuickTileFont = &lv_font_montserrat_20;
+#else
 constexpr lv_coord_t kHomePillWidth = 172;
 constexpr lv_coord_t kHomePillHeight = 6;
 constexpr lv_coord_t kHomePillInset = 7;
 constexpr lv_coord_t kHomePillHitMargin = 8;
+constexpr lv_coord_t kQuickCell = 62;
+constexpr lv_coord_t kQuickGap = 10;
+constexpr lv_coord_t kQuickPad = 14;
+constexpr lv_coord_t kQuickMargin = 12;
+constexpr lv_coord_t kQuickGapTop = 8;
+constexpr lv_coord_t kQuickCornerWidth = 120;
+constexpr lv_coord_t kSettingsHeaderHeight = 52;
+constexpr lv_coord_t kSettingsContentInset = 10;
+constexpr lv_coord_t kSettingsRowHeight = 60;
+constexpr lv_coord_t kSettingsRowPad = 14;
+constexpr lv_coord_t kSettingsTitleTop = 8;
+constexpr lv_coord_t kSettingsSummaryTop = 33;
+constexpr lv_coord_t kSettingsSummaryHeight = 18;
+constexpr lv_coord_t kSettingsBackWidth = 64;
+constexpr lv_coord_t kSettingsBackHeight = 44;
+constexpr lv_coord_t kSettingsBackLeft = 8;
+constexpr lv_coord_t kSettingsBackTop = 4;
+constexpr lv_coord_t kSettingsHeadingTop = 14;
+constexpr lv_coord_t kSettingsSwitchWidth = 52;
+constexpr lv_coord_t kSettingsSwitchHeight = 30;
+constexpr lv_coord_t kSettingsSwitchClick = 15;
+constexpr lv_coord_t kSettingsSliderWidth = 180;
+constexpr lv_coord_t kSettingsSliderHeight = 18;
+constexpr lv_coord_t kSettingsNarrowSliderWidth = 160;
+constexpr lv_coord_t kSettingsDropdownWidth = 170;
+constexpr lv_coord_t kSettingsInputHeight = 52;
+constexpr lv_coord_t kSettingsConfirmWidth = 360;
+constexpr lv_coord_t kSettingsConfirmHeight = 190;
+constexpr lv_coord_t kSettingsConfirmButtonWidth = 140;
+constexpr lv_coord_t kSettingsConfirmButtonHeight = 44;
+constexpr lv_coord_t kManageRestartWidth = 380;
+constexpr lv_coord_t kManageRestartHeight = 220;
+constexpr lv_coord_t kManageRestartButtonWidth = 154;
+constexpr lv_coord_t kManageRestartButtonHeight = 44;
+constexpr lv_coord_t kForgetDialogWidth = 350;
+constexpr lv_coord_t kForgetDialogHeight = 150;
+constexpr lv_coord_t kForgetButtonWidth = 120;
+constexpr lv_coord_t kForgetButtonHeight = 38;
+constexpr lv_coord_t kForgetButtonInset = 28;
+constexpr lv_coord_t kForgetNameTop = 42;
+constexpr lv_coord_t kWifiDialogWidth = 450;
+constexpr lv_coord_t kWifiDialogHeight = 200;
+constexpr lv_coord_t kWifiDialogGap = 20;
+constexpr lv_coord_t kWifiDialogInset = 20;
+constexpr lv_coord_t kWifiFieldWidth = 300;
+constexpr lv_coord_t kWifiFieldHeight = 44;
+constexpr lv_coord_t kWifiFieldTop = 76;
+constexpr lv_coord_t kWifiRevealWidth = 90;
+constexpr lv_coord_t kWifiActionWidth = 120;
+constexpr lv_coord_t kWifiActionHeight = 38;
+constexpr lv_coord_t kWifiActionInset = 78;
+constexpr lv_coord_t kWifiActionBottom = 14;
+constexpr lv_coord_t kWifiListHeight = 320;
+constexpr lv_coord_t kWifiNetworkRowHeight = 48;
+constexpr const lv_font_t *kSettingsTitleFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kSettingsSummaryFont = &lv_font_montserrat_16;
+constexpr const lv_font_t *kSettingsStatusFont = &lv_font_montserrat_16;
+constexpr const lv_font_t *kSettingsInputFont = &lv_font_montserrat_16;
+constexpr const lv_font_t *kWifiTitleFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kWifiBodyFont = &lv_font_montserrat_16;
+constexpr const lv_font_t *kQuickTileFont = nullptr;
+#endif
 constexpr lv_coord_t kHomePillHitWidth = kHomePillWidth + 2 * kHomePillHitMargin;
 constexpr lv_coord_t kHomePillMaxLift = 8;
 constexpr uint32_t kHomePillSettleMs = 120;
@@ -402,12 +531,6 @@ constexpr uint32_t kIdentityRevealPercent = 10;
 constexpr uint32_t kCrossoverCommitPercent = 50;
 constexpr uint32_t kTransitionMs = 180;
 constexpr uint32_t kCrossoverSettleMs = 250;
-constexpr lv_coord_t kQuickCell = 62;
-constexpr lv_coord_t kQuickGap = 10;
-constexpr lv_coord_t kQuickPad = 14;
-constexpr lv_coord_t kQuickMargin = 12;
-constexpr lv_coord_t kQuickGapTop = 8;
-constexpr lv_coord_t kQuickCornerWidth = 120;
 constexpr lv_coord_t kQuickPanelSize = 4 * kQuickCell + 3 * kQuickGap + 2 * kQuickPad;
 constexpr uint32_t kQuickAnimMs = 200;
 constexpr size_t kSystemPageDepthMax = 4;
@@ -670,6 +793,9 @@ bool create_quick_settings()
         lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_STATE_CHECKED);
         lv_obj_set_style_transform_zoom(obj, 248, LV_STATE_PRESSED);
         lv_obj_t *label = lv_label_create(obj); lv_label_set_text(label, text); lv_obj_center(label);
+#if CONFIG_IDF_TARGET_ESP32P4
+        lv_obj_set_style_text_font(label, kQuickTileFont, 0);
+#endif
         lv_obj_set_style_text_color(label, lv_color_hex(0xf2f4f7), 0);
         return obj;
     };
@@ -1475,8 +1601,16 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
             identity_icon = lv_img_create(incoming_card);
             if (identity_icon != nullptr) {
                 lv_img_set_src(identity_icon, icon_resource);
+#if CONFIG_IDF_TARGET_ESP32P4
+                lv_img_set_zoom(identity_icon, LV_IMG_ZOOM_NONE * 3 / 2);
+                lv_obj_refr_size(identity_icon);
+                const lv_coord_t label_height = lv_font_get_line_height(&lv_font_montserrat_28);
+                const lv_coord_t group_height = lv_obj_get_height(identity_icon) + 20 + label_height;
+                lv_obj_set_y(identity_icon, static_cast<lv_coord_t>((height - group_height) / 2));
+#else
                 lv_obj_set_y(identity_icon, static_cast<lv_coord_t>(
                     (height - lv_obj_get_height(identity_icon)) / 2 - 34));
+#endif
                 lv_obj_set_style_opa(identity_icon, LV_OPA_COVER, 0);
                 lv_obj_add_flag(identity_icon, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_clear_flag(identity_icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -1487,12 +1621,23 @@ bool begin_card_transition(const ESP_Brookesia_GestureInfo_t &info)
             lv_obj_set_width(identity_name, static_cast<lv_coord_t>(width - 40));
             lv_label_set_long_mode(identity_name, LV_LABEL_LONG_DOT);
             lv_label_set_text(identity_name, target_app->getName());
+#if CONFIG_IDF_TARGET_ESP32P4
+            lv_obj_set_style_text_font(identity_name, &lv_font_montserrat_28, 0);
+#else
             lv_obj_set_style_text_font(identity_name, &lv_font_montserrat_20, 0);
+#endif
             lv_obj_set_style_text_color(identity_name, lv_color_hex(0x1C2A36), 0);
             lv_obj_set_style_text_align(identity_name, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_opa(identity_name, LV_OPA_TRANSP, 0);
+#if CONFIG_IDF_TARGET_ESP32P4
+            const lv_coord_t label_height = lv_font_get_line_height(&lv_font_montserrat_28);
+            const lv_coord_t icon_height = identity_icon != nullptr ? lv_obj_get_height(identity_icon) : 0;
+            const lv_coord_t group_height = icon_height + 20 + label_height;
+            lv_obj_set_y(identity_name, static_cast<lv_coord_t>((height - group_height) / 2 + icon_height + 20));
+#else
             lv_obj_set_y(identity_name, static_cast<lv_coord_t>(
                 (height - lv_obj_get_height(identity_name)) / 2 + 42));
+#endif
             lv_obj_add_flag(identity_name, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(identity_name, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         }
@@ -1817,9 +1962,6 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
     return phone->getManager().getActiveApp() != nullptr && init_indicator_overlay();
 }
 
-constexpr lv_coord_t kWifiDialogHeight = 200;
-constexpr lv_coord_t kWifiDialogGap = 20;
-
 // Centred on the display while the keyboard is away, lifted clear of the band
 // while it is up. Offsets are measured from the parent rather than assumed,
 // because the parent starts below the status bar.
@@ -1867,7 +2009,7 @@ static void wifi_open_credentials(const char *ssid)
     strlcpy(s_wifi_selected, ssid, sizeof(s_wifi_selected));
     if (s_wifi_dialog != nullptr) wifi_close_credentials();
     s_wifi_dialog = lv_obj_create(parent);
-    lv_obj_set_size(s_wifi_dialog, 450, kWifiDialogHeight);
+    lv_obj_set_size(s_wifi_dialog, kWifiDialogWidth, kWifiDialogHeight);
     wifi_dialog_place(crystal_keyboard_is_open());
     lv_obj_set_style_bg_color(s_wifi_dialog, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(s_wifi_dialog, LV_OPA_COVER, 0);
@@ -1880,20 +2022,23 @@ static void wifi_open_credentials(const char *ssid)
     lv_obj_t *title = lv_label_create(s_wifi_dialog);
     lv_label_set_text(title, "Enter WiFi password");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_set_style_text_font(title, kWifiTitleFont, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kWifiDialogInset);
 
     lv_obj_t *network = lv_label_create(s_wifi_dialog);
     char network_text[48];
     snprintf(network_text, sizeof(network_text), "Network: %.32s", s_wifi_selected);
     lv_label_set_text(network, network_text);
     lv_obj_set_style_text_color(network, lv_color_hex(0xcbd5e1), 0);
-    lv_obj_align(network, LV_ALIGN_TOP_MID, 0, 46);
+    lv_obj_set_style_text_font(network, kWifiBodyFont, 0);
+    lv_obj_align(network, LV_ALIGN_TOP_MID, 0,
+                 kWifiDialogInset + static_cast<lv_coord_t>(kWifiTitleFont->line_height) + 8);
 
     // Field and Show share one row, both 44 tall so their centres line up.
     lv_obj_t *input = lv_textarea_create(s_wifi_dialog);
-    lv_obj_set_size(input, 300, 44);
-    lv_obj_align(input, LV_ALIGN_TOP_LEFT, 20, 76);
+    lv_obj_set_size(input, kWifiFieldWidth, kWifiFieldHeight);
+    lv_obj_align(input, LV_ALIGN_TOP_LEFT, kWifiDialogInset, kWifiFieldTop);
+    lv_obj_set_style_text_font(input, kWifiBodyFont, 0);
     lv_textarea_set_password_mode(input, true);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_placeholder_text(input, "Password");
@@ -1904,10 +2049,11 @@ static void wifi_open_credentials(const char *ssid)
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *reveal = lv_btn_create(s_wifi_dialog);
-    lv_obj_set_size(reveal, 90, 44);
-    lv_obj_align(reveal, LV_ALIGN_TOP_RIGHT, -20, 76);
+    lv_obj_set_size(reveal, kWifiRevealWidth, kWifiFieldHeight);
+    lv_obj_align(reveal, LV_ALIGN_TOP_RIGHT, -kWifiDialogInset, kWifiFieldTop);
     lv_obj_t *reveal_label = lv_label_create(reveal);
     lv_label_set_text(reveal_label, "Show");
+    lv_obj_set_style_text_font(reveal_label, kWifiBodyFont, 0);
     lv_obj_center(reveal_label);
     lv_obj_add_event_cb(reveal, [](lv_event_t *event) {
         auto *password = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
@@ -1922,10 +2068,11 @@ static void wifi_open_credentials(const char *ssid)
     // Keep the same 54 px gap as the 350 px forget-network box. This dialog is
     // 100 px wider, so add half of that difference to each edge offset.
     lv_obj_t *connect = lv_btn_create(s_wifi_dialog);
-    lv_obj_set_size(connect, 120, 38);
-    lv_obj_align(connect, LV_ALIGN_BOTTOM_LEFT, 78, -14);
+    lv_obj_set_size(connect, kWifiActionWidth, kWifiActionHeight);
+    lv_obj_align(connect, LV_ALIGN_BOTTOM_LEFT, kWifiActionInset, -kWifiActionBottom);
     lv_obj_t *label = lv_label_create(connect);
     lv_label_set_text(label, "Connect");
+    lv_obj_set_style_text_font(label, kWifiBodyFont, 0);
     lv_obj_center(label);
     lv_obj_add_event_cb(connect, [](lv_event_t *e) {
         if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -1937,10 +2084,11 @@ static void wifi_open_credentials(const char *ssid)
     }, LV_EVENT_CLICKED, input);
 
     lv_obj_t *cancel = lv_btn_create(s_wifi_dialog);
-    lv_obj_set_size(cancel, 120, 38);
-    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -78, -14);
+    lv_obj_set_size(cancel, kWifiActionWidth, kWifiActionHeight);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -kWifiActionInset, -kWifiActionBottom);
     lv_obj_t *cancel_label = lv_label_create(cancel);
     lv_label_set_text(cancel_label, "Cancel");
+    lv_obj_set_style_text_font(cancel_label, kWifiBodyFont, 0);
     lv_obj_set_style_text_color(cancel_label, lv_color_white(), 0);
     lv_obj_center(cancel_label);
     lv_obj_add_event_cb(cancel, [](lv_event_t *) { wifi_close_credentials(); },
@@ -1960,19 +2108,29 @@ static void wifi_open_forget_confirm(const char *ssid)
     if (box == nullptr) return;
     s_wifi_dialog = box;
     crystal_shell_set_modal_open(true);
-    lv_obj_set_size(box, 350, 150); lv_obj_center(box);
+    lv_obj_set_size(box, kForgetDialogWidth, kForgetDialogHeight); lv_obj_center(box);
     lv_obj_set_style_bg_color(box, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *title = lv_label_create(box); lv_label_set_text(title, "Forget network?");
-    lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, kWifiTitleFont, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
     lv_obj_t *name = lv_label_create(box); char text[40]; snprintf(text, sizeof(text), "%.32s", ssid);
-    lv_label_set_text(name, text); lv_obj_set_style_text_color(name, lv_color_hex(0xcbd5e1), 0); lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 42);
-    lv_obj_t *forget = lv_btn_create(box); lv_obj_set_size(forget, 120, 38); lv_obj_align(forget, LV_ALIGN_BOTTOM_LEFT, 28, -14);
-    lv_obj_t *fl = lv_label_create(forget); lv_label_set_text(fl, "Forget"); lv_obj_center(fl);
+    lv_label_set_text(name, text); lv_obj_set_style_text_color(name, lv_color_hex(0xcbd5e1), 0);
+    lv_obj_set_style_text_font(name, kWifiBodyFont, 0);
+    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_t *forget = lv_btn_create(box);
+    lv_obj_set_size(forget, kForgetButtonWidth, kForgetButtonHeight);
+    lv_obj_align(forget, LV_ALIGN_BOTTOM_LEFT, kForgetButtonInset, -14);
+    lv_obj_t *fl = lv_label_create(forget); lv_label_set_text(fl, "Forget");
+    lv_obj_set_style_text_font(fl, kWifiBodyFont, 0); lv_obj_center(fl);
     lv_obj_add_event_cb(forget, [](lv_event_t *) { if (hal().wifi != nullptr) hal().wifi->forget(); wifi_close_credentials(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *cancel = lv_btn_create(box); lv_obj_set_size(cancel, 120, 38); lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -28, -14);
-    lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel"); lv_obj_center(cl);
+    lv_obj_t *cancel = lv_btn_create(box);
+    lv_obj_set_size(cancel, kForgetButtonWidth, kForgetButtonHeight);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -kForgetButtonInset, -14);
+    lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel");
+    lv_obj_set_style_text_font(cl, kWifiBodyFont, 0); lv_obj_center(cl);
     lv_obj_add_event_cb(cancel, [](lv_event_t *) { wifi_close_credentials(); }, LV_EVENT_CLICKED, nullptr);
 }
 
@@ -2042,34 +2200,40 @@ lv_obj_t *system_page_push(const char *title)
 
     lv_obj_t *back = lv_btn_create(page);
     settings_button_feedback(back);
-    lv_obj_set_size(back, 64, 44);
-    lv_obj_set_pos(back, 8, 4);
+    lv_obj_set_size(back, kSettingsBackWidth, kSettingsBackHeight);
+    lv_obj_set_pos(back, kSettingsBackLeft, kSettingsBackTop);
     lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(back, 0, 0);
     lv_obj_add_event_cb(back, [](lv_event_t *) { (void)shell_consume_back(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *back_label = lv_label_create(back);
     lv_label_set_text(back_label, s_system_page_depth == 1 ? LV_SYMBOL_CLOSE : LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_font(back_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(back_label, kSettingsTitleFont, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0xe6edf5), 0);
     lv_obj_center(back_label);
 
     lv_obj_t *heading = lv_label_create(page);
     lv_label_set_text(heading, title);
-    lv_obj_set_style_text_font(heading, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(heading, kSettingsTitleFont, 0);
     lv_obj_set_style_text_color(heading, lv_color_white(), 0);
-    lv_obj_align(heading, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(heading, LV_ALIGN_TOP_MID, 0, kSettingsHeadingTop);
 
     lv_obj_t *content = lv_obj_create(page);
-    lv_obj_set_size(content, LV_PCT(100), lv_area_get_height(&area) - 52);
+    lv_obj_set_size(content, LV_PCT(100), lv_area_get_height(&area) - kSettingsHeaderHeight);
     // Phase 11 edit begin: keep the form's top edge stable when the keyboard reduces
     // the viewport height. A bottom anchor would move every child downward as
     // soon as the viewport is resized.
-    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 52);
+    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, kSettingsHeaderHeight);
     lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(content, 0, 0);
-    lv_obj_set_style_pad_all(content, 10, 0);
-    lv_obj_set_style_pad_row(content, 1, 0);
+    lv_obj_set_style_pad_all(content, kSettingsContentInset, 0);
+    lv_obj_set_style_pad_row(content,
+#if CONFIG_IDF_TARGET_ESP32P4
+                             8,
+#else
+                             1,
+#endif
+                             0);
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(content, LV_DIR_VER);
     // Remove Settings overscroll and throw lag. LVGL's default elastic
@@ -2183,7 +2347,7 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary 
     lv_obj_t *row = lv_btn_create(parent);
     settings_button_feedback(row);
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 60);
+    lv_obj_set_height(row, kSettingsRowHeight);
     lv_obj_set_style_radius(row, 0, 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x1b2028), 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x28323e), LV_STATE_PRESSED);
@@ -2195,7 +2359,7 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary 
     lv_obj_set_style_opa(row, LV_OPA_50, LV_STATE_DISABLED);
     lv_obj_set_style_shadow_width(row, 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_hor(row, 14, 0);
+    lv_obj_set_style_pad_hor(row, kSettingsRowPad, 0);
     // The two labels are placed from the row top with explicit offsets, so the
     // theme's default vertical button padding must go or it shifts both inwards
     // until the title and summary collide.
@@ -2203,24 +2367,23 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary 
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *title = lv_label_create(row);
     lv_label_set_text(title, label);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, kSettingsTitleFont, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xf2f4f7), 0);
     if (summary == nullptr) {
         lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, 0);
     } else {
-        // 23px title line + 2px gap + 18px summary line = 43px, centred in 60px.
-        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 8);
+        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, kSettingsTitleTop);
         lv_obj_t *detail = lv_label_create(row);
         lv_label_set_text(detail, summary);
         lv_label_set_long_mode(detail, LV_LABEL_LONG_DOT);
-        // Clamp to one line; height=18 forces truncation rather than wrap. The width
+        // Clamp to one line; the target-specific height forces truncation rather than wrap. The width
         // takes the whole row so the ellipsis is a last resort instead of the norm -
         // rows that put a control on the right shrink this via settings_row_reserve_right().
         lv_obj_set_width(detail, LV_PCT(100));
-        lv_obj_set_height(detail, 18);
-        lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
+        lv_obj_set_height(detail, kSettingsSummaryHeight);
+        lv_obj_set_style_text_font(detail, kSettingsSummaryFont, 0);
         lv_obj_set_style_text_color(detail, lv_color_hex(0x91a0b3), 0);
-        lv_obj_align(detail, LV_ALIGN_TOP_LEFT, 0, 33);
+        lv_obj_align(detail, LV_ALIGN_TOP_LEFT, 0, kSettingsSummaryTop);
         // Remembered so controls added later can reclaim their own space.
         lv_obj_set_user_data(row, detail);
     }
@@ -2243,9 +2406,14 @@ lv_obj_t *settings_status_label(lv_obj_t *parent)
     lv_label_set_text(status, "");
     lv_obj_set_width(status, LV_PCT(100));
     lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(status, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(status, kSettingsStatusFont, 0);
     lv_obj_set_style_text_color(status, lv_color_hex(0xf59e0b), 0);
     return status;
+}
+
+void settings_style_input(lv_obj_t *input)
+{
+    lv_obj_set_style_text_font(input, kSettingsInputFont, 0);
 }
 
 // Trims the summary label so it stops short of a right-aligned control instead of
@@ -2263,14 +2431,14 @@ void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width)
 lv_obj_t *settings_switch(lv_obj_t *row, bool checked)
 {
     lv_obj_t *control = lv_switch_create(row);
-    lv_obj_set_size(control, 52, 30);
+    lv_obj_set_size(control, kSettingsSwitchWidth, kSettingsSwitchHeight);
     lv_obj_align(control, LV_ALIGN_RIGHT_MID, 0, 0);
     // The 52x30 body is a small target for a finger. Padding the click area by 15px
     // makes it 82x60 - the full row height - without changing how it looks. LVGL
     // hit-tests children before the row, so these presses no longer land on the row.
-    lv_obj_set_ext_click_area(control, 15);
+    lv_obj_set_ext_click_area(control, kSettingsSwitchClick);
     if (checked) lv_obj_add_state(control, LV_STATE_CHECKED);
-    settings_row_reserve_right(row, 52);
+    settings_row_reserve_right(row, kSettingsSwitchWidth);
     return control;
 }
 
@@ -2418,7 +2586,8 @@ void settings_push_ip()
     static const char *keys[] = {"net.ip", "net.mask", "net.gw", "net.dns1", "net.dns2"};
     for (size_t i = 0; i < 5; ++i) {
         s_ip_fields[i] = lv_textarea_create(content);
-        lv_obj_set_size(s_ip_fields[i], LV_PCT(100), 52);
+        lv_obj_set_size(s_ip_fields[i], LV_PCT(100), kSettingsInputHeight);
+        settings_style_input(s_ip_fields[i]);
         lv_textarea_set_one_line(s_ip_fields[i], true);
         lv_textarea_set_placeholder_text(s_ip_fields[i], labels[i]);
         lv_textarea_set_max_length(s_ip_fields[i], 15);
@@ -2469,9 +2638,9 @@ void settings_push_display_power()
     if (content == nullptr) return;
     lv_obj_t *brightness_row = settings_row(content, "Brightness", "0-95");
     lv_obj_t *brightness = lv_slider_create(brightness_row);
-    lv_obj_set_size(brightness, 180, 18);
+    lv_obj_set_size(brightness, kSettingsSliderWidth, kSettingsSliderHeight);
     lv_obj_align(brightness, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(brightness_row, 180);
+    settings_row_reserve_right(brightness_row, kSettingsSliderWidth);
     lv_slider_set_range(brightness, 0, 95);
     lv_slider_set_value(brightness, crystal_brightness_level(), LV_ANIM_OFF);
     lv_obj_add_event_cb(brightness, [](lv_event_t *e) { crystal_brightness_set(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -2493,7 +2662,8 @@ void settings_push_display_power()
     const uint16_t dim_values[] = {0, 15, 30, 60, 300};
     const uint16_t current_dim = crystal_power_dim_seconds();
     for (uint16_t i = 0; i < 5; ++i) if (dim_values[i] == current_dim) lv_dropdown_set_selected(dim, i);
-    lv_obj_set_width(dim, 170); lv_obj_align(dim, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_width(dim, kSettingsDropdownWidth); lv_obj_align(dim, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_font(dim, kSettingsInputFont, 0);
     lv_obj_add_event_cb(dim, [](lv_event_t *e) { static const uint16_t values[] = {0, 15, 30, 60, 300}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_dim_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_dim_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t *off_row = settings_row(content, "Screen Off After", nullptr);
@@ -2502,13 +2672,15 @@ void settings_push_display_power()
     const uint16_t off_values[] = {0, 60, 120, 300, 900};
     const uint16_t current_off = crystal_power_off_seconds();
     for (uint16_t i = 0; i < 5; ++i) if (off_values[i] == current_off) lv_dropdown_set_selected(off, i);
-    lv_obj_set_width(off, 170); lv_obj_align(off, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_width(off, kSettingsDropdownWidth); lv_obj_align(off, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_font(off, kSettingsInputFont, 0);
     lv_obj_add_event_cb(off, [](lv_event_t *e) { static const uint16_t values[] = {0, 60, 120, 300, 900}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_off_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_off_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t *level_row = settings_row(content, "Dim Brightness", "HAL level 5-50");
     lv_obj_t *level = lv_slider_create(level_row);
-    lv_obj_set_size(level, 160, 18); lv_obj_align(level, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(level_row, 160);
+    lv_obj_set_size(level, kSettingsNarrowSliderWidth, kSettingsSliderHeight);
+    lv_obj_align(level, LV_ALIGN_RIGHT_MID, 0, 0);
+    settings_row_reserve_right(level_row, kSettingsNarrowSliderWidth);
     lv_slider_set_range(level, 5, 50); lv_slider_set_value(level, crystal_power_dim_level(), LV_ANIM_OFF);
     lv_obj_add_event_cb(level, [](lv_event_t *e) { crystal_power_set_dim_level(static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e))))); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -2530,8 +2702,9 @@ void settings_push_sound()
     if (content == nullptr) return;
     lv_obj_t *volume_row = settings_row(content, "Volume", "0-100");
     lv_obj_t *volume = lv_slider_create(volume_row);
-    lv_obj_set_size(volume, 180, 18); lv_obj_align(volume, LV_ALIGN_RIGHT_MID, 0, 0);
-    settings_row_reserve_right(volume_row, 180);
+    lv_obj_set_size(volume, kSettingsSliderWidth, kSettingsSliderHeight);
+    lv_obj_align(volume, LV_ALIGN_RIGHT_MID, 0, 0);
+    settings_row_reserve_right(volume_row, kSettingsSliderWidth);
     lv_slider_set_range(volume, 0, 100); lv_slider_set_value(volume, crystal_hal_get_volume(), LV_ANIM_OFF);
     lv_obj_add_event_cb(volume, [](lv_event_t *e) { const uint8_t value = static_cast<uint8_t>(lv_slider_get_value(static_cast<lv_obj_t *>(lv_event_get_target(e)))); if (crystal_hal_set_volume(value) && hal().storage != nullptr) (void)hal().storage->set("volume", &value, sizeof(value)); }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_t *alerts_row = settings_row(content, "Timer & Alarm Sounds", "Play timer completion alerts");
@@ -2669,7 +2842,8 @@ void settings_push_location()
     lv_obj_t *auto_row = settings_row(content, "Automatic Location", "Uses the network location");
     lv_obj_t *automatic = settings_switch(auto_row, crystal_weather_location_automatic());
     s_location_form.city = lv_textarea_create(content);
-    lv_obj_set_size(s_location_form.city, LV_PCT(100), 52);
+    lv_obj_set_size(s_location_form.city, LV_PCT(100), kSettingsInputHeight);
+    settings_style_input(s_location_form.city);
     lv_textarea_set_one_line(s_location_form.city, true);
     lv_textarea_set_placeholder_text(s_location_form.city, "City label for display (required)");
     lv_textarea_set_max_length(s_location_form.city, 23);
@@ -2682,12 +2856,14 @@ void settings_push_location()
         }
     }
     s_location_form.latitude = lv_textarea_create(content);
-    lv_obj_set_size(s_location_form.latitude, LV_PCT(100), 52);
+    lv_obj_set_size(s_location_form.latitude, LV_PCT(100), kSettingsInputHeight);
+    settings_style_input(s_location_form.latitude);
     lv_textarea_set_one_line(s_location_form.latitude, true);
     lv_textarea_set_placeholder_text(s_location_form.latitude, "Latitude -90 to 90 (required)");
     lv_textarea_set_max_length(s_location_form.latitude, 16);
     s_location_form.longitude = lv_textarea_create(content);
-    lv_obj_set_size(s_location_form.longitude, LV_PCT(100), 52);
+    lv_obj_set_size(s_location_form.longitude, LV_PCT(100), kSettingsInputHeight);
+    settings_style_input(s_location_form.longitude);
     lv_textarea_set_one_line(s_location_form.longitude, true);
     lv_textarea_set_placeholder_text(s_location_form.longitude, "Longitude -180 to 180 (required)");
     lv_textarea_set_max_length(s_location_form.longitude, 16);
@@ -2782,12 +2958,14 @@ void settings_push_manual_time()
     if (content == nullptr) return;
     s_manual_time_form.page = lv_obj_get_parent(content);
     s_manual_time_form.date = lv_textarea_create(content);
-    lv_obj_set_size(s_manual_time_form.date, LV_PCT(100), 52);
+    lv_obj_set_size(s_manual_time_form.date, LV_PCT(100), kSettingsInputHeight);
+    settings_style_input(s_manual_time_form.date);
     lv_textarea_set_one_line(s_manual_time_form.date, true);
     lv_textarea_set_placeholder_text(s_manual_time_form.date, "YYYY-MM-DD");
     lv_textarea_set_max_length(s_manual_time_form.date, 10);
     s_manual_time_form.clock = lv_textarea_create(content);
-    lv_obj_set_size(s_manual_time_form.clock, LV_PCT(100), 52);
+    lv_obj_set_size(s_manual_time_form.clock, LV_PCT(100), kSettingsInputHeight);
+    settings_style_input(s_manual_time_form.clock);
     lv_textarea_set_one_line(s_manual_time_form.clock, true);
     lv_textarea_set_placeholder_text(s_manual_time_form.clock, "HH:MM");
     lv_textarea_set_max_length(s_manual_time_form.clock, 5);
@@ -2862,7 +3040,12 @@ void settings_push_about()
     if (content == nullptr) return;
     ISystemInfo *info = hal().system_info;
     (void)settings_row(content, "Device", "Crystal OS Display");
-    (void)settings_row(content, "Hardware", "Waveshare ESP32-S3-Touch-LCD-4B");
+    (void)settings_row(content, "Hardware",
+#if CONFIG_IDF_TARGET_ESP32P4
+                       "Waveshare ESP32-P4-WIFI6-Touch-LCD-4B");
+#else
+                       "Waveshare ESP32-S3-Touch-LCD-4B");
+#endif
     (void)settings_row(content, "Platform", "Crystal OS open-source project");
     (void)settings_row(content, "Crystal OS", info != nullptr ? info->app_version() : "Unknown");
     (void)settings_row(content, "ESP-IDF", info != nullptr ? info->idf_version() : "Unknown");
@@ -2915,14 +3098,20 @@ void open_restart_confirm()
 {
     if (s_system_dialog != nullptr) return;
     s_system_dialog = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_system_dialog, 360, 190); lv_obj_center(s_system_dialog);
+    lv_obj_set_size(s_system_dialog, kSettingsConfirmWidth, kSettingsConfirmHeight);
+    lv_obj_center(s_system_dialog);
     lv_obj_set_style_bg_color(s_system_dialog, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(s_system_dialog, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_system_dialog, 8, 0);
-    lv_obj_t *title = lv_label_create(s_system_dialog); lv_label_set_text(title, "Restart Crystal OS?"); lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0); lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_t *detail = lv_label_create(s_system_dialog); lv_label_set_text(detail, "The display will be unavailable briefly.\nNo settings or app data will be erased."); lv_obj_set_width(detail, 320); lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0); lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 48);
-    lv_obj_t *restart = lv_btn_create(s_system_dialog); lv_obj_set_size(restart, 140, 44); lv_obj_align(restart, LV_ALIGN_BOTTOM_LEFT, 12, -10); lv_obj_t *rl = lv_label_create(restart); lv_label_set_text(rl, "Restart"); lv_obj_center(rl); lv_obj_add_event_cb(restart, [](lv_event_t *) { esp_restart(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *cancel = lv_btn_create(s_system_dialog); lv_obj_set_size(cancel, 140, 44); lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -12, -10); lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel"); lv_obj_center(cl); lv_obj_add_event_cb(cancel, [](lv_event_t *) { system_dialog_close(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *title = lv_label_create(s_system_dialog); lv_label_set_text(title, "Restart Crystal OS?"); lv_obj_set_style_text_font(title, kSettingsTitleFont, 0); lv_obj_set_style_text_color(title, lv_color_white(), 0); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_t *detail = lv_label_create(s_system_dialog); lv_label_set_text(detail, "The display will be unavailable briefly.\nNo settings or app data will be erased."); lv_obj_set_width(detail, kSettingsConfirmWidth - 48); lv_obj_set_style_text_font(detail, kSettingsSummaryFont, 0); lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0); lv_obj_align(detail, LV_ALIGN_TOP_MID, 0,
+#if CONFIG_IDF_TARGET_ESP32P4
+                 62);
+#else
+                 48);
+#endif
+    lv_obj_t *restart = lv_btn_create(s_system_dialog); lv_obj_set_size(restart, kSettingsConfirmButtonWidth, kSettingsConfirmButtonHeight); lv_obj_align(restart, LV_ALIGN_BOTTOM_LEFT, 12, -10); lv_obj_t *rl = lv_label_create(restart); lv_label_set_text(rl, "Restart"); lv_obj_set_style_text_font(rl, kSettingsSummaryFont, 0); lv_obj_center(rl); lv_obj_add_event_cb(restart, [](lv_event_t *) { esp_restart(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *cancel = lv_btn_create(s_system_dialog); lv_obj_set_size(cancel, kSettingsConfirmButtonWidth, kSettingsConfirmButtonHeight); lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -12, -10); lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "Cancel"); lv_obj_set_style_text_font(cl, kSettingsSummaryFont, 0); lv_obj_center(cl); lv_obj_add_event_cb(cancel, [](lv_event_t *) { system_dialog_close(); }, LV_EVENT_CLICKED, nullptr);
     crystal_shell_set_modal_open(true);
 }
 
@@ -3004,49 +3193,67 @@ void open_manage_apps_restart_prompt()
     lv_obj_clear_flag(s_manage_apps_restart_dialog, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *card = lv_obj_create(s_manage_apps_restart_dialog);
-    lv_obj_set_size(card, 380, 220);
+    lv_obj_set_size(card, kManageRestartWidth, kManageRestartHeight);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(card, lv_color_hex(0x59636e), 0);
     lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_radius(card, 16, 0);
-    lv_obj_set_style_pad_all(card, 22, 0);
+    lv_obj_set_style_pad_all(card,
+#if CONFIG_IDF_TARGET_ESP32P4
+                             24,
+#else
+                             22,
+#endif
+                             0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(card);
 
     lv_obj_t *title = lv_label_create(card);
     lv_label_set_text(title, "Restart to Apply Changes?");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, kSettingsTitleFont, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t *detail = lv_label_create(card);
-    lv_obj_set_width(detail, 332);
-    lv_obj_set_height(detail, 72);
+    lv_obj_set_width(detail, kManageRestartWidth - 48);
+    lv_obj_set_height(detail,
+#if CONFIG_IDF_TARGET_ESP32P4
+                      96);
+#else
+                      72);
+#endif
     lv_label_set_long_mode(detail, LV_LABEL_LONG_WRAP);
     lv_label_set_text(detail,
                       "Your app changes have been saved. Restart Crystal OS now to apply them?");
     lv_obj_set_style_text_color(detail, lv_color_hex(0xcbd5e1), 0);
     lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(detail, &lv_font_montserrat_16, 0);
-    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 48);
+    lv_obj_set_style_text_font(detail, kSettingsSummaryFont, 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0,
+#if CONFIG_IDF_TARGET_ESP32P4
+                 64);
+#else
+                 48);
+#endif
 
     lv_obj_t *restart = lv_btn_create(card);
-    lv_obj_set_size(restart, 154, 44);
+    lv_obj_set_size(restart, kManageRestartButtonWidth, kManageRestartButtonHeight);
     lv_obj_align(restart, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     lv_obj_set_style_bg_color(restart, lv_color_hex(0x3b82f6), 0);
     lv_obj_t *restart_label = lv_label_create(restart);
     lv_label_set_text(restart_label, "Restart now");
+    lv_obj_set_style_text_font(restart_label, kSettingsSummaryFont, 0);
     lv_obj_center(restart_label);
     lv_obj_add_event_cb(restart, [](lv_event_t *) { esp_restart(); },
                         LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *later = lv_btn_create(card);
-    lv_obj_set_size(later, 154, 44);
+    lv_obj_set_size(later, kManageRestartButtonWidth, kManageRestartButtonHeight);
     lv_obj_align(later, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(later, lv_color_hex(0x424852), 0);
     lv_obj_t *later_label = lv_label_create(later);
     lv_label_set_text(later_label, "Later");
+    lv_obj_set_style_text_font(later_label, kSettingsSummaryFont, 0);
     lv_obj_center(later_label);
     lv_obj_add_event_cb(later, [](lv_event_t *) { manage_apps_restart_later(); },
                         LV_EVENT_CLICKED, nullptr);
@@ -3361,8 +3568,8 @@ void wifi_page_open()
     lv_obj_t *content = system_page_push("WiFi Networks");
     if (content == nullptr) return;
     s_wifi_page = s_system_page_stack[s_system_page_depth - 1];
-    s_wifi_page_status = lv_label_create(content); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_set_style_text_font(s_wifi_page_status, &lv_font_montserrat_16, 0); lv_obj_set_width(s_wifi_page_status, LV_PCT(100));
-    s_wifi_page_list = lv_list_create(content); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), 320); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
+    s_wifi_page_status = lv_label_create(content); lv_label_set_text(s_wifi_page_status, "Scanning..."); lv_obj_set_style_text_color(s_wifi_page_status, lv_color_hex(0xcbd5e1), 0); lv_obj_set_style_text_font(s_wifi_page_status, kSettingsStatusFont, 0); lv_obj_set_width(s_wifi_page_status, LV_PCT(100));
+    s_wifi_page_list = lv_list_create(content); lv_obj_set_size(s_wifi_page_list, LV_PCT(100), kWifiListHeight); lv_obj_set_style_bg_color(s_wifi_page_list, lv_color_hex(0x1b2028), 0); lv_obj_set_style_bg_opa(s_wifi_page_list, LV_OPA_COVER, 0);
     lv_obj_t *scanning = lv_list_add_text(s_wifi_page_list, "Scanning...");
     if (scanning != nullptr) lv_obj_set_style_text_color(scanning, lv_color_white(), 0);
     if (hal().wifi != nullptr) hal().wifi->scan();
@@ -3385,6 +3592,8 @@ static void wifi_page_fill_list()
         char text[64]; snprintf(text, sizeof(text), "%s%.32s  %d%.3s", connected ? LV_SYMBOL_OK " " : "", networks[i].ssid, networks[i].rssi, networks[i].secured ? "  *" : "");
         lv_obj_t *button = lv_list_add_btn(s_wifi_page_list, networks[i].secured ? LV_SYMBOL_WIFI : LV_SYMBOL_WIFI, text);
         if (button != nullptr) {
+            lv_obj_set_height(button, kWifiNetworkRowHeight);
+            lv_obj_set_style_text_font(button, kWifiBodyFont, 0);
             lv_obj_set_style_text_color(button, lv_color_white(), 0);
             lv_obj_set_style_bg_color(button, lv_color_hex(0x252a30), 0);
             lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);

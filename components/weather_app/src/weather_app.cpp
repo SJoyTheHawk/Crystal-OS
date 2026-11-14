@@ -48,8 +48,41 @@ constexpr uint32_t kValueDim = 0x6B7C8D;   // matches the hero temperature
 constexpr uint32_t kCaption = 0x7C90A4;
 constexpr uint32_t kCaptionDim = 0x5E6E7E;  // matches the hero condition
 
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kPad = 24;
+constexpr lv_coord_t kCardPad = 20;
+constexpr lv_coord_t kGap = 16;
+constexpr lv_coord_t kHeaderButton = 64;
+constexpr lv_coord_t kHeaderInset = 18;
+constexpr lv_coord_t kHeroTop = 48;
+constexpr lv_coord_t kHeroHeight = 232;
+constexpr lv_coord_t kWeatherGlyph = 112;
+constexpr lv_coord_t kTileHeight = 124;
+constexpr lv_coord_t kStatusTop = 48 + 232 + 16 + 124 + 16;
+constexpr const lv_font_t *kLocationFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kCaptionFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kStatusFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kHeroFont = &lv_font_montserrat_48;
+constexpr const lv_font_t *kHeroConditionFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kTileValueFont = &lv_font_montserrat_28;
+#else
 constexpr lv_coord_t kPad = 16;
+constexpr lv_coord_t kCardPad = kPad;
 constexpr lv_coord_t kGap = 12;
+constexpr lv_coord_t kHeaderButton = 40;
+constexpr lv_coord_t kHeaderInset = 14;
+constexpr lv_coord_t kHeroTop = 34;
+constexpr lv_coord_t kHeroHeight = 168;
+constexpr lv_coord_t kWeatherGlyph = 96;
+constexpr lv_coord_t kTileHeight = 88;
+constexpr lv_coord_t kStatusTop = 34 + 168 + 12 + 88 + 12;
+constexpr const lv_font_t *kLocationFont = &lv_font_montserrat_20;
+constexpr const lv_font_t *kCaptionFont = &lv_font_montserrat_14;
+constexpr const lv_font_t *kStatusFont = &lv_font_montserrat_14;
+constexpr const lv_font_t *kHeroFont = &lv_font_montserrat_48;
+constexpr const lv_font_t *kHeroConditionFont = &lv_font_montserrat_28;
+constexpr const lv_font_t *kTileValueFont = &lv_font_montserrat_28;
+#endif
 
 bool isLive(const CrystalApp *app)
 {
@@ -102,7 +135,7 @@ lv_obj_t *makeCard(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1C2733), 0);
     lv_obj_set_style_radius(card, 18, 0);
-    lv_obj_set_style_pad_all(card, kPad, 0);
+    lv_obj_set_style_pad_all(card, kCardPad, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     return card;
 }
@@ -172,11 +205,9 @@ bool WeatherApp::onCreate()
     // right columns sat inside the band, so touches there were claimed as an
     // app-switch swipe and never became a click. ext_click_area gives the touch
     // target back the width the inset costs, without moving the visible circle.
-    constexpr lv_coord_t kButton = 40;
-    constexpr lv_coord_t kInset = 14;
     refresh_button_ = lv_btn_create(root_);
-    lv_obj_set_size(refresh_button_, kButton, kButton);
-    lv_obj_align(refresh_button_, LV_ALIGN_TOP_RIGHT, -kInset, -6);
+    lv_obj_set_size(refresh_button_, kHeaderButton, kHeaderButton);
+    lv_obj_align(refresh_button_, LV_ALIGN_TOP_RIGHT, -kHeaderInset, -6);
     lv_obj_set_ext_click_area(refresh_button_, 6);
     // Low profile: no fill and no border at rest, so the header reads as text
     // with an affordance in it rather than as a toolbar. The pressed state is
@@ -190,20 +221,23 @@ bool WeatherApp::onCreate()
     lv_obj_add_event_cb(refresh_button_, onRefreshClicked, LV_EVENT_CLICKED, this);
     lv_obj_t *refresh_glyph = lv_label_create(refresh_button_);
     lv_label_set_text(refresh_glyph, LV_SYMBOL_REFRESH);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(refresh_glyph, &lv_font_montserrat_28, 0);
+#endif
     lv_obj_set_style_text_color(refresh_glyph, lv_color_hex(0x8FA3B7), 0);
     lv_obj_center(refresh_glyph);
 
-    location_ = makeLabel(root_, &lv_font_montserrat_20, 0xE6EDF5);
+    location_ = makeLabel(root_, kLocationFont, 0xE6EDF5);
     lv_label_set_long_mode(location_, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(location_, content - kButton - kInset - kGap);
+    lv_obj_set_width(location_, content - kHeaderButton - kHeaderInset - kGap);
     lv_obj_align(location_, LV_ALIGN_TOP_LEFT, 0, 0);
 
     // Hero card: temperature on the left, glyph on the right, condition beneath.
     lv_obj_t *hero = makeCard(root_);
-    lv_obj_set_size(hero, content, 168);
-    lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 0, 34);
+    lv_obj_set_size(hero, content, kHeroHeight);
+    lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 0, kHeroTop);
 
-    temperature_ = makeLabel(hero, &lv_font_montserrat_48, 0xFFFFFF);
+    temperature_ = makeLabel(hero, kHeroFont, 0xFFFFFF);
     lv_obj_align(temperature_, LV_ALIGN_TOP_LEFT, 0, 4);
 
     // The degree mark is its own label so it can sit at the temperature's cap
@@ -211,36 +245,36 @@ bool WeatherApp::onCreate()
     degree_ = makeLabel(hero, &lv_font_montserrat_20, 0x9FB3C8);
     lv_label_set_text(degree_, "C");
 
-    condition_ = makeLabel(hero, &lv_font_montserrat_28, 0xC9D6E2);
+    condition_ = makeLabel(hero, kHeroConditionFont, 0xC9D6E2);
     lv_label_set_long_mode(condition_, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(condition_, content - 2 * kPad - 96);
+    lv_obj_set_width(condition_, content - 2 * kCardPad - kWeatherGlyph - kGap);
     lv_obj_align(condition_, LV_ALIGN_BOTTOM_LEFT, 0, -4);
 
-    glyph_ = weather_glyph_create(hero, 96);
+    glyph_ = weather_glyph_create(hero, kWeatherGlyph);
     lv_obj_align(glyph_, LV_ALIGN_TOP_RIGHT, 0, 0);
 
     // Two tiles, two facts. Nothing is invented to fill the row.
     const lv_coord_t tile_w = (content - kGap) / 2;
     lv_obj_t *humidity_tile = makeCard(root_);
-    lv_obj_set_size(humidity_tile, tile_w, 88);
-    lv_obj_align(humidity_tile, LV_ALIGN_TOP_LEFT, 0, 34 + 168 + kGap);
-    humidity_caption_ = makeLabel(humidity_tile, &lv_font_montserrat_14, kCaption);
+    lv_obj_set_size(humidity_tile, tile_w, kTileHeight);
+    lv_obj_align(humidity_tile, LV_ALIGN_TOP_LEFT, 0, kHeroTop + kHeroHeight + kGap);
+    humidity_caption_ = makeLabel(humidity_tile, kCaptionFont, kCaption);
     lv_label_set_text(humidity_caption_, "HUMIDITY");
     lv_obj_align(humidity_caption_, LV_ALIGN_TOP_LEFT, 0, 0);
-    humidity_ = makeLabel(humidity_tile, &lv_font_montserrat_28, kValue);
+    humidity_ = makeLabel(humidity_tile, kTileValueFont, kValue);
     lv_obj_align(humidity_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     lv_obj_t *wind_tile = makeCard(root_);
-    lv_obj_set_size(wind_tile, tile_w, 88);
-    lv_obj_align(wind_tile, LV_ALIGN_TOP_RIGHT, 0, 34 + 168 + kGap);
-    wind_caption_ = makeLabel(wind_tile, &lv_font_montserrat_14, kCaption);
+    lv_obj_set_size(wind_tile, tile_w, kTileHeight);
+    lv_obj_align(wind_tile, LV_ALIGN_TOP_RIGHT, 0, kHeroTop + kHeroHeight + kGap);
+    wind_caption_ = makeLabel(wind_tile, kCaptionFont, kCaption);
     lv_label_set_text(wind_caption_, "WIND");
     lv_obj_align(wind_caption_, LV_ALIGN_TOP_LEFT, 0, 0);
-    wind_ = makeLabel(wind_tile, &lv_font_montserrat_28, kValue);
+    wind_ = makeLabel(wind_tile, kTileValueFont, kValue);
     lv_obj_align(wind_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-    status_ = makeLabel(root_, &lv_font_montserrat_14, 0x7C90A4);
-    lv_obj_align(status_, LV_ALIGN_TOP_LEFT, 0, 34 + 168 + kGap + 88 + kGap);
+    status_ = makeLabel(root_, kStatusFont, 0x7C90A4);
+    lv_obj_align(status_, LV_ALIGN_TOP_LEFT, 0, kStatusTop);
 
     // Paint the cache before asking for anything. A stored reading appears on
     // the first frame; the fetch then quietly replaces it.

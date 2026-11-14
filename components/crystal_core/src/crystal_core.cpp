@@ -41,8 +41,19 @@ constexpr size_t kToastQueueDepth = 12;
 constexpr uint32_t kToastFadeInMs = 150;
 constexpr uint32_t kToastHoldMs = 2500;
 constexpr uint32_t kToastFadeOutMs = 200;
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr lv_coord_t kToastHorizontalPad = 24;
+constexpr lv_coord_t kToastScreenMargin = 24;
+constexpr lv_coord_t kToastMinHeight = 68;
+constexpr lv_coord_t kToastVerticalPad = 16;
+constexpr const lv_font_t *kToastFont = &lv_font_montserrat_20;
+#else
 constexpr lv_coord_t kToastHorizontalPad = 18;
 constexpr lv_coord_t kToastScreenMargin = 16;
+constexpr lv_coord_t kToastMinHeight = 52;
+constexpr lv_coord_t kToastVerticalPad = 14;
+constexpr const lv_font_t *kToastFont = nullptr;
+#endif
 constexpr uint8_t kFullBrightness = 95;
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
@@ -450,14 +461,14 @@ bool init_toast()
     s_toast = lv_obj_create(lv_layer_top());
     if (s_toast == nullptr) return false;
     lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_min_height(s_toast, 52, 0);
+    lv_obj_set_style_min_height(s_toast, kToastMinHeight, 0);
     lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x252a30), 0);
     lv_obj_set_style_bg_opa(s_toast, LV_OPA_90, 0);
     lv_obj_set_style_border_width(s_toast, 1, 0);
     lv_obj_set_style_border_color(s_toast, lv_color_hex(0x59636e), 0);
     lv_obj_set_style_radius(s_toast, 6, 0);
     lv_obj_set_style_pad_hor(s_toast, 18, 0);
-    lv_obj_set_style_pad_ver(s_toast, 14, 0);
+    lv_obj_set_style_pad_ver(s_toast, kToastVerticalPad, 0);
     lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(s_toast, LV_ALIGN_BOTTOM_MID, 0, -58);
@@ -465,6 +476,9 @@ bool init_toast()
     s_toast_label = lv_label_create(s_toast);
     if (s_toast_label == nullptr) return false;
     lv_obj_set_width(s_toast_label, LV_SIZE_CONTENT);
+#if CONFIG_IDF_TARGET_ESP32P4
+    lv_obj_set_style_text_font(s_toast_label, kToastFont, 0);
+#endif
     lv_obj_set_style_text_color(s_toast_label, lv_color_white(), 0);
     lv_obj_set_style_text_align(s_toast_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_toast_label, LV_LABEL_LONG_WRAP);
