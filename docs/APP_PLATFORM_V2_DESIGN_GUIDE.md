@@ -1,7 +1,7 @@
 # Crystal OS App Platform — v2 Design Guide
 
 **Version:** 2.0  
-**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Status:** Phases 14–16 accepted; Phase 17 runtime implemented and host-checked; device acceptance remains open
 **Date:** 2026-11-14
 **Audience:** Architects, senior developers reviewing Phase 14-17 designs
 
@@ -909,11 +909,13 @@ Reuse existing results; production readiness and detailed hardening come later.
 
 ### For Phase 17
 
-- [ ] Lua 5.4 sandbox enforces count hook (50ms deadline) and allocator ceiling
-- [ ] Async `http.fetch` with callback model tested
-- [ ] Worker thread quota: second request queues or errors when limit reached
-- [ ] `data/` quota enforcement: writes beyond limit fail
+- [x] Lua 5.4 sandbox enforces count hook (50ms deadline) and allocator ceiling; host smoke coverage includes protected coroutines
+- [x] Async `http.fetch` uses the shared HTTP worker and LVGL-task callback dispatch; each app's `worker_threads` caps active requests
+- [x] `data/` quota enforcement rejects writes beyond `storage_kb`
 - [ ] `crystal run` works end-to-end (pack, install, launch, log stream)
 - [ ] Bus app converted to script tier; resource cleanup verified
-- [ ] Runaway loop produces app death + toast, not watchdog reset
+- [ ] Device: runaway loop produces app death + toast, not watchdog reset
+- [ ] Device: in-flight HTTP cancellation and system timer persistence verified
+
+See the [Phase 17 implementation record](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md) for code boundaries, host evidence and remaining device acceptance.
 

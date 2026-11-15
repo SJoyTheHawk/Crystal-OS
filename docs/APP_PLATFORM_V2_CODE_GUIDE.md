@@ -1,7 +1,7 @@
 # Crystal OS App Platform — v2 Code Guide
 
 **Version:** 2.0  
-**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Status:** Phases 14-16 complete. Phase 17 Lua runtime and Clock package implemented; device acceptance and Bus script migration remain open.
 **Date:** 2026-11-14
 **Audience:** Developers writing Phase 14-17 code, agents implementing the architecture
 
@@ -20,7 +20,7 @@ com.example.clock3p/
 │   ├── main.lua               # Lua entry point (script tier)
 │   └── main.cpp               # C++ entry point (native tier)
 ├── assets/
-│   ├── icon.bin               # LVGL binary image (96x96 or 128x128)
+│   ├── icon.bin               # bundled image asset; current Lua loader accepts CR16 text
 │   ├── sounds/
 │   │   └── chime.wav
 │   └── images/
@@ -37,7 +37,7 @@ abi: 1
 id: com.example.clock3p
 name: Clock
 version: 1.0.0
-min_os: 1.0.0
+min_os: 0.17.0
 author: Example Co.
 license: MIT
 description: "A simple clock app with timer and alarm"
@@ -45,7 +45,7 @@ description: "A simple clock app with timer and alarm"
 # Runtime
 runtime: lua                    # lua | declarative | native
 entry: src/main.lua           # Module file or entry function
-icon: assets/icon.bin         # LVGL binary image
+icon: assets/icon.bin         # bundled image asset (Lua runtime: CR16 text)
 
 # Visual
 bar_style: dark               # Status bar contrast: dark | light
@@ -91,55 +91,42 @@ crystal run ./com.example.clock3p/
 
 ```lua
 -- src/main.lua
--- Minimal app that displays current time
+-- A module returns lifecycle hooks; handlers use the stable Crystal ABI.
+local ui = crystal.ui
+local service = crystal.service
+local M = {}
+local clock
+local tick
 
-local screen_handle = nil
-
-function onCreate()
-    -- Build UI tree
-    screen_handle = crystal.ui.screen()
-    
-    local container = crystal.ui.container(screen_handle, {
-        flex_direction = "column",
-        gap = 16,
-    })
-    
-    local time_label = crystal.ui.label(container, {
-        text = "00:00",
-        font = "large",
-    })
-    
-    local refresh_timer = crystal.ui.timer(1000, function()
-        local now = crystal.service.time.now()
-        local formatted = crystal.service.time.format("%H:%M:%S")
-        crystal.ui.set_text(time_label, formatted)
-    end)
-    
+function M.onCreate()
+    clock = ui.label(ui.screen(), { text = "--:--:--", font = "large" })
     return true
 end
 
-function onResume()
-    -- App is visible; start timers
+local function refresh()
+    ui.set_text(clock, service.time.format("%H:%M:%S"))
+end
+
+function M.onResume()
+    tick = ui.timer(1000, refresh)
+    refresh()
     return true
 end
 
-function onPause()
-    -- Save state (clock has no persistent state)
+function M.onPause()
+    if tick then ui.timer_delete(tick); tick = nil end
     return true
 end
 
-function onDestroy()
-    -- Cleanup happens automatically; timers deleted
+function M.onDestroy()
+    clock = nil
     return true
 end
 
-return {
-    onCreate = onCreate,
-    onResume = onResume,
-    onPause = onPause,
-    onDestroy = onDestroy,
-}
+return M
 ```
+
+The runnable, packaged example is [`examples/clock3p`](../examples/clock3p). Lua files execute in an app-local sandbox and must return a hook table. The [Phase 17 implementation notes](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md) describe the implemented bindings, quotas, and host checks. Later examples in this guide are design patterns and may show ABI operations that are still outside the current Lua binding; use the package example and implementation notes for callable names and signatures.
 
 ### 2.2 Stateful App (Favorites)
 
@@ -944,9 +931,10 @@ visual UI expressibility, as clarified by the user; Weather data fetching and
 Calculator computation stay with their existing apps. The shared `CrystalUI` class now implements the callable v1 UI contract; its
 [reviewed mapping and bounds](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
 cover ownership, stale handles, events, dynamic lists/charts, timers, animations
-and the system keyboard. Lua adaptation remains Phase 17. The focused core
-device check passed on 2026-11-14; combined-load profiling and detailed
-hardening come later. Visual layout documents for the bundled apps
+and the system keyboard. The Phase 17 Lua binding and sandbox implementation
+are recorded in [Phase 17 implementation notes](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md);
+hardware runtime acceptance remains open. The focused core device check passed
+on 2026-11-14; combined-load profiling and detailed hardening come later. Visual layout documents for the bundled apps
 are in [`examples/declarative_dashboard/visual`](../examples/declarative_dashboard/visual),
 and the host integration test launches each document through the production runtime.
 
@@ -1506,14 +1494,16 @@ and recorded A–F/G–M/N–R hardware evidence before repeating older checks.
 
 ### Phase 17 Code Checklist
 
-- [ ] Lua 5.4 sandbox: `_ENV` doesn't include `os`, `io`, `package`, `require`, `load`, `loadstring`
-- [ ] Count hook: 50ms deadline per callback, raises Lua error on overrun
-- [ ] Allocator hook: per-app memory ceiling, allocation fails when limit exceeded
-- [ ] Async `http.fetch`: returns request_id, callback fires in LVGL task
-- [ ] Worker thread quota: second request queues when limit reached (or errors; per spec)
-- [ ] `data/` quota enforcement: writes beyond `storage_kb` fail with error
+- [x] Lua 5.4 sandbox removes host file/process/module loading access and keeps a separate VM per app
+- [x] Count hook applies a 50ms callback deadline, including protected coroutines; a caught timeout still fails the app callback
+- [x] Allocator hook enforces the manifest memory ceiling from a PSRAM arena
+- [x] Async `http.fetch`: returns a request ID and dispatches its callback on the LVGL task
+- [x] Worker quota: excess concurrent fetch returns `nil, "worker quota exceeded"`
+- [x] `data/` writes enforce `storage_kb` with atomic replacement
+- [x] Lua package builds, packs and inspects; host smoke test covers sandbox, module ABI, deadline and allocator behavior
 - [ ] `crystal run` works: pack, install, launch, log stream, uninstall
-- [ ] Bus app converted to script: resource cleanup verified, no leaked tasks
-- [ ] Runaway loop: `while true do end` produces app death + toast, not watchdog reset
-- [ ] HTTP request cleanup: request started before `onDestroy()` cancels cleanly
+- [ ] Device: `crystal run` and interactive UI lifecycle verified
+- [ ] Device: runaway loop produces app death + toast, not watchdog reset
+- [ ] Device: in-flight HTTP cancellation and system timer persistence verified
+- [ ] Bus app converted to script and resource cleanup verified
 

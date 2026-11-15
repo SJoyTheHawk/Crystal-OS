@@ -5,8 +5,9 @@
 Current development targets the Waveshare ESP32-P4-WIFI6-Touch-LCD-4B.
 As of November 15, 2026, board bring-up, P4.2 visual/interaction acceptance,
 and P4.3 network expansion pass for their documented scopes. P4.4 performance,
-soak, package/OTA, and remaining feature qualification are still open.
-**Complete P4 migration/qualification before resuming Phase 17 (Lua).**
+soak, package/OTA, and remaining feature qualification are still open. Phase 17
+Lua runtime implementation has resumed and is in place; its device acceptance
+checks and Bus script migration are tracked separately.
 
 - [P4.1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md): tested
   rev1.3 board, 720 × 720 display, signed builds, flash layout, and startup.
@@ -38,7 +39,7 @@ instructions in those documents.
 
 - [v2 overview](APP_PLATFORM_V2_OVERVIEW.md)
 - [v2 implementation plan](APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md): original
-  architecture and Phase 14–17 roadmap; resume Phase 17 after migration.
+  architecture and Phase 14–17 roadmap.
 - [v2 design guide](APP_PLATFORM_V2_DESIGN_GUIDE.md)
 - [v2 code guide](APP_PLATFORM_V2_CODE_GUIDE.md)
 - [Original v1 plans](v1_implementation_plan/): preserved OS implementation plan,
@@ -50,6 +51,8 @@ instructions in those documents.
 - [Phase 14 implementation](PHASE_14_IMPLEMENTATION.md)
 - [Phase 15/16 implementation and UI contract](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
 - [Phase 15/16 closure](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
+- [Phase 17 runtime implementation and validation](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md)
+- [Phase 17 step-by-step P4 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
 - [Focused regression guide](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
 - [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
 - [ESP-IDF commands](ESP_IDF_COMMAND_GUIDE.md): existing S3 instructions.

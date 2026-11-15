@@ -35,6 +35,7 @@
 #include "crystal_memory.h"
 #include "crystal_control.hpp"
 #include "crystal_declarative.hpp"
+#include "crystal_script.hpp"
 #include "crystal_shell.hpp"
 #include "crystal_stylesheet.hpp"
 #include "crystal_boot_screen.hpp"
@@ -75,6 +76,7 @@ static CrystalApp *make_package_app(const CrystalPackageManifest &manifest)
         return new DeclarativeApp(manifest.name.c_str(), manifest.id.c_str(), manifest.entry.c_str(),
                                   manifest.system_timer);
     }
+    if (manifest.runtime == "lua") return new ScriptApp(manifest);
     return nullptr;
 }
 

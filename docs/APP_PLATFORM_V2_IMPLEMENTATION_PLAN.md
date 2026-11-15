@@ -1,9 +1,9 @@
 # Crystal OS App Platform — v2 Implementation Plan
 
-> Current work order: migrate the completed Phase 14–16 baseline to ESP32-P4 on main, then resume Phase 17. See the [documentation index](README.md).
+> Current work order: The Phase 17 runtime and Clock package are implemented. Complete device acceptance and the Bus script migration before closing the phase. See the [documentation index](README.md).
 
 **Version:** 2.0  
-**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
+**Status:** Phases 14-16 complete. Phase 17 runtime, Clock package, firmware build and host Lua boundary checks are complete; device acceptance and Bus script migration remain open.
 **Date:** 2026-11-14
 **Scope:** Package format, registry system, control panel, and three runtime tiers (declarative, script, native)
 
@@ -82,7 +82,7 @@ abi: 1                            # Host API major version; refuse install if un
 id: com.example.clock3p           # Reverse-DNS; must match folder name
 name: Clock                       # Display name in launcher
 version: 1.0.0                    # Semver; shown in version info
-min_os: 1.0.0                     # Minimum OS version required
+min_os: 0.17.0                    # Minimum OS version required by this firmware
 author: Example Co.
 license: MIT
 description: "A simple clock app with timer and alarm"
@@ -90,7 +90,7 @@ description: "A simple clock app with timer and alarm"
 # Runtime and entry
 runtime: lua                      # lua | declarative | native
 entry: main.lua                   # Module/file to execute first
-icon: assets/icon.bin             # LVGL binary image, 96×96 or 128×128
+icon: assets/icon.bin             # bundled icon; current Lua loader accepts bounded CR16 text
 
 # Visual configuration
 bar_style: dark                   # Status bar contrast: dark | light (DESIGN.md §2)
@@ -818,15 +818,16 @@ brief device check.
 6. `data/` quota enforcement
 7. `examples/clock3p/` as real third-party app
 
-**Bus app evidence requirements:**
-1. **Async HTTP pattern validated:** Request started before `onDestroy()` completes cleanly or cancels without crashing worker
-2. **Worker thread quota:** Second `http.fetch` while first pending either queues or errors (spec decision)
-3. **onCreate budget:** Tiered guidance (80/200/500ms) or lazy UI construction documented
+**Phase 17 implementation and evidence:** The runtime and package example are recorded in [Phase 17 implementation notes](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md). Worker quota behavior is fixed: `http.fetch` returns `nil, "worker quota exceeded"` when the manifest limit is reached. Follow the [Phase 17 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md) for the remaining device acceptance and Bus conversion work.
 
 **Exit criteria:**
-- Script app runs; deliberate infinite loop produces toast + app death, not watchdog reset
-- Timer armed by script fires after app destroyed
-- Request started mid-flight is cleaned up on destroy (no leaked worker tasks)
+- [x] Script runtime is integrated, builds for ESP32-P4, and the real Lua example packs successfully.
+- [x] Host smoke test exercises sandbox removals, the returned-hook-table ABI, bounded allocation and 50 ms hooks in the main thread and coroutines.
+- [ ] On device, a deliberate infinite loop produces a toast and app death without a watchdog reset.
+- [ ] On device, a timer armed by script fires after the app is destroyed.
+- [ ] On device, an in-flight HTTP request is cancelled on destroy without leaked workers.
+- [ ] Exercise `crystal run` end-to-end with a connected device.
+- [ ] Convert the Bus app to the Script tier and verify resource cleanup; retained as a separate acceptance item because the existing Bus app has a larger service/catalog surface than the clock runtime example.
 
 ---
 
@@ -1088,12 +1089,14 @@ acceptance requirements.
 
 ### Phase 17 Checklist
 
-- [ ] Lua 5.4 sandbox implemented (environment, count hook, allocator)
-- [ ] Per-app memory ceiling enforced
-- [ ] Async `http.fetch` with callback model
-- [ ] Worker thread quota enforcement
-- [ ] `data/` quota enforcement and cleanup
+- [x] Lua 5.4 sandbox implemented (environment, count hook, allocator)
+- [x] Per-app memory ceiling enforced through a PSRAM-backed Lua arena
+- [x] Async `http.fetch` with callback dispatch on the LVGL task
+- [x] Worker thread quota enforced; excess requests return `nil, error`
+- [x] `data/` quota enforced with bounded, atomic file writes
+- [x] `examples/clock3p` is a packable Lua package using the v1 hook-table and UI ABI
+- [x] ESP32-P4 firmware build and host Lua sandbox/deadline/allocator checks pass
 - [ ] `crystal run` works end-to-end
 - [ ] Bus app converted to Script tier and verified for resource leaks
-- [ ] Exit gate: Runaway loop produces app death, not watchdog reset; HTTP request cleaned up on destroy
+- [ ] Device exit gate: runaway loop produces app death, not watchdog reset; timer survives app destruction; HTTP request cleans up on destroy
 

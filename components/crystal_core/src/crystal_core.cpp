@@ -1373,3 +1373,10 @@ void crystal_core_start_services()
 {
     if (s_startup_ready != nullptr) xSemaphoreGive(s_startup_ready);
 }
+
+void crystal_core_show_toast(const char *message)
+{
+    if (message != nullptr) {
+        (void)crystal_ui_post(UI_EVT_TOAST, message, strnlen(message, kEventDataMax));
+    }
+}

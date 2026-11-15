@@ -40,3 +40,4 @@ dependencies:
       - if: "target == esp32p4"
   esphome/libsodium: "^1.10021.12"
   espressif/mdns: "^1"
+  georgik/lua: "==5.4.7"

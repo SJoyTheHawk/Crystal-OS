@@ -22,6 +22,20 @@ static const char *TAG = "crystal_http";
 #define CRYSTAL_HTTP_URL_MAX 256
 #define CRYSTAL_HTTP_CONTEXT_SLOTS CRYSTAL_HTTP_QUEUE_DEPTH
 #define CRYSTAL_HTTP_SYNTHETIC_ERROR ESP_ERR_NOT_SUPPORTED
+#define CRYSTAL_HTTP_BODY_MAX 2048
+#define CRYSTAL_HTTP_HEADERS_MAX 8
+#define CRYSTAL_HTTP_HEADER_NAME_MAX 63
+#define CRYSTAL_HTTP_HEADER_VALUE_MAX 255
+
+typedef struct {
+    char name[CRYSTAL_HTTP_HEADER_NAME_MAX + 1];
+    char value[CRYSTAL_HTTP_HEADER_VALUE_MAX + 1];
+} request_header_t;
+
+typedef struct {
+    char body[CRYSTAL_HTTP_BODY_MAX];
+    request_header_t headers[CRYSTAL_HTTP_HEADERS_MAX];
+} request_payload_t;
 
 // Certificate verification can remain CPU-bound inside esp_http_client_open().
 // A delay between requests cannot let IDLE0 run during that calculation. Keep
@@ -39,6 +53,10 @@ typedef struct {
     uint32_t request_id;
     uint32_t owner_id;
     char url[CRYSTAL_HTTP_URL_MAX];
+    char method[5];
+    size_t body_len;
+    size_t header_count;
+    request_payload_t *payload;
     crystal_http_callback_t callback;
     void *context;
     uint32_t timeout_ms;
@@ -47,6 +65,7 @@ typedef struct {
     uint32_t retry_backoff_max_ms;
     size_t max_body_bytes;
     bool keep_alive;
+    bool disable_auto_redirect;
 } request_slot_t;
 
 typedef struct {
@@ -151,6 +170,9 @@ static void perform_request_once(request_slot_t *slot,
             .url = slot->url,
             .timeout_ms = slot->timeout_ms != 0 ? slot->timeout_ms : 15000,
             .keep_alive_enable = slot->keep_alive,
+            // Script apps are restricted to the manifest host allowlist. Do
+            // not let a 3xx response silently move a request to another host.
+            .disable_auto_redirect = slot->disable_auto_redirect,
             .crt_bundle_attach = esp_crt_bundle_attach,
             // These IDF buffers use ordinary malloc, which prefers internal
             // RAM for small allocations. Bodies still accumulate in PSRAM.
@@ -162,7 +184,19 @@ static void perform_request_once(request_slot_t *slot,
         if (client == NULL) {
             response->transport_error = ESP_ERR_NO_MEM;
         } else {
-            const esp_err_t open_err = esp_http_client_open(client, 0);
+            const bool post = strcmp(slot->method, "POST") == 0;
+            esp_err_t setup_err = esp_http_client_set_method(client,
+                post ? HTTP_METHOD_POST : HTTP_METHOD_GET);
+            for (size_t i = 0; setup_err == ESP_OK && i < slot->header_count; ++i) {
+                setup_err = esp_http_client_set_header(client, slot->payload->headers[i].name,
+                                                       slot->payload->headers[i].value);
+            }
+            if (setup_err == ESP_OK && post) {
+                setup_err = esp_http_client_set_post_field(client, slot->payload->body,
+                                                            (int)slot->body_len);
+            }
+            const esp_err_t open_err = setup_err == ESP_OK ?
+                esp_http_client_open(client, post ? (int)slot->body_len : 0) : setup_err;
             sample_memory(&memory, true);
             if (open_err != ESP_OK) {
                 response->transport_error = open_err;
@@ -170,6 +204,18 @@ static void perform_request_once(request_slot_t *slot,
                          (unsigned long)slot->request_id, esp_err_to_name(open_err));
             } else {
                 ESP_LOGI(TAG, "TLS connected id=%lu", (unsigned long)slot->request_id);
+                response->transport_error = ESP_OK;
+                if (post && slot->body_len != 0) {
+                    const int written = esp_http_client_write(client, slot->payload->body,
+                                                               (int)slot->body_len);
+                    if (written != (int)slot->body_len) {
+                        response->transport_error = ESP_FAIL;
+                        ESP_LOGW(TAG, "request id=%lu body write failed (%d/%u)",
+                                 (unsigned long)slot->request_id, written,
+                                 (unsigned)slot->body_len);
+                    }
+                }
+                if (response->transport_error == ESP_OK) {
                 const int64_t declared = esp_http_client_fetch_headers(client);
                 sample_memory(&memory, true);
                 response->status_code = esp_http_client_get_status_code(client);
@@ -250,6 +296,7 @@ static void perform_request_once(request_slot_t *slot,
                                                      (unsigned long)slot->request_id);
                         }
                     }
+                }
                 }
             }
             // Capture TLS details before close/cleanup destroys the handle.
@@ -391,6 +438,10 @@ static void worker_task(void *arg)
         deliver_request(slot);
 
         if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+            if (slot->payload != NULL) {
+                heap_caps_free(slot->payload);
+                slot->payload = NULL;
+            }
             memset(slot, 0, sizeof(*slot));
             xSemaphoreGive(s_lock);
         }
@@ -452,12 +503,48 @@ uint32_t crystal_http_get(const crystal_http_options_t *options,
                           crystal_http_callback_t callback,
                           void *context)
 {
+    const bool post = options != NULL && options->method != NULL &&
+                      strcmp(options->method, "POST") == 0;
+    const bool method_valid = options == NULL || options->method == NULL || post ||
+                              strcmp(options->method, "GET") == 0;
     if (!s_ready || options == NULL || callback == NULL || options->url == NULL ||
-            options->url[0] == '\0' || strlen(options->url) >= CRYSTAL_HTTP_URL_MAX) {
+            options->url[0] == '\0' || strlen(options->url) >= CRYSTAL_HTTP_URL_MAX ||
+            !method_valid || options->body_len > CRYSTAL_HTTP_BODY_MAX ||
+            (options->body_len != 0 && (options->body == NULL || !post)) ||
+            options->header_count > CRYSTAL_HTTP_HEADERS_MAX ||
+            (options->header_count != 0 && options->headers == NULL)) {
         return 0;
     }
 
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return 0;
+    for (size_t i = 0; i < options->header_count; ++i) {
+        const char *name = options->headers[i].name;
+        const char *value = options->headers[i].value;
+        if (name == NULL || value == NULL || name[0] == '\0' ||
+            strnlen(name, CRYSTAL_HTTP_HEADER_NAME_MAX + 1) > CRYSTAL_HTTP_HEADER_NAME_MAX ||
+            strnlen(value, CRYSTAL_HTTP_HEADER_VALUE_MAX + 1) > CRYSTAL_HTTP_HEADER_VALUE_MAX) return 0;
+        for (const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+            if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                   (*p >= '0' && *p <= '9') || strchr("!#$%&'*+-.^_`|~", *p) != NULL)) return 0;
+        }
+        for (const unsigned char *p = (const unsigned char *)value; *p; ++p) {
+            if (*p < 0x20 || *p == 0x7f) return 0;
+        }
+    }
+
+    request_payload_t *payload = NULL;
+    if (post || options->header_count != 0) {
+        payload = heap_caps_calloc(1, sizeof(*payload), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (payload == NULL) return 0;
+        if (options->body_len != 0) memcpy(payload->body, options->body, options->body_len);
+        for (size_t i = 0; i < options->header_count; ++i) {
+            strlcpy(payload->headers[i].name, options->headers[i].name,
+                    sizeof(payload->headers[i].name));
+            strlcpy(payload->headers[i].value, options->headers[i].value,
+                    sizeof(payload->headers[i].value));
+        }
+    }
+
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) { heap_caps_free(payload); return 0; }
 
     int free_slot = -1;
     for (int i = 0; i < CRYSTAL_HTTP_CONTEXT_SLOTS; ++i) {
@@ -468,6 +555,7 @@ uint32_t crystal_http_get(const crystal_http_options_t *options,
     }
     if (free_slot < 0) {
         xSemaphoreGive(s_lock);
+        heap_caps_free(payload);
         return 0;
     }
 
@@ -478,6 +566,10 @@ uint32_t crystal_http_get(const crystal_http_options_t *options,
     if (slot->request_id == 0) slot->request_id = s_next_request_id++;
     slot->owner_id = options->owner_id;
     strlcpy(slot->url, options->url, sizeof(slot->url));
+    strlcpy(slot->method, post ? "POST" : "GET", sizeof(slot->method));
+    slot->body_len = options->body_len;
+    slot->header_count = options->header_count;
+    slot->payload = payload;
     slot->callback = callback;
     slot->context = context;
     slot->timeout_ms = options->timeout_ms;
@@ -486,10 +578,12 @@ uint32_t crystal_http_get(const crystal_http_options_t *options,
     slot->retry_backoff_max_ms = options->retry_backoff_max_ms;
     slot->max_body_bytes = options->max_body_bytes;
     slot->keep_alive = options->keep_alive;
+    slot->disable_auto_redirect = options->disable_auto_redirect;
 
     queue_item_t item = {.slot = (uint8_t)free_slot};
     if (xQueueSend(s_queue, &item, 0) != pdTRUE) {
         ESP_LOGW(TAG, "request rejected: queue full");
+        heap_caps_free(slot->payload);
         memset(slot, 0, sizeof(*slot));
         xSemaphoreGive(s_lock);
         return 0;
@@ -537,9 +631,9 @@ size_t crystal_http_cancel_owner(uint32_t owner_id)
             }
         }
     }
+    if (count != 0) s_stats.cancellations += (uint32_t)count;
     xSemaphoreGive(s_lock);
     if (count != 0) {
-        s_stats.cancellations += (uint32_t)count;
         ESP_LOGI(TAG, "owner cancellation requested owner=%lu count=%u",
                  (unsigned long)owner_id, (unsigned)count);
     }

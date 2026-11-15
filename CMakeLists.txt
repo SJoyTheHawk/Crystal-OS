@@ -14,4 +14,4 @@ if(IDF_TARGET STREQUAL "esp32p4")
     endif()
 endif()
 
-project(crystal_os VERSION 0.15.0)
+project(crystal_os VERSION 0.17.0)

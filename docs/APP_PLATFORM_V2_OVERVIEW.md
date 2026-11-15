@@ -1,10 +1,10 @@
 # Crystal OS App Platform v2 — Documentation Overview
 
-> Current work order: migrate the completed Phase 14–16 baseline to ESP32-P4 on main, then resume Phase 17. See the [documentation index](README.md).
+> Current work order: The Phase 17 script runtime is implemented; finish its device acceptance checks and Bus script migration. P4.4 qualification and later hardening remain separate open work. See the [documentation index](README.md).
 
 **Date:** 2026-11-14
-**Status:** Phase 14-16 core implementation, host validation and focused device check complete; hardening deferred
-**Documents:** 3 guides + this overview
+**Status:** Phases 14–16 accepted; Phase 17 runtime and Clock package implemented and built for ESP32-P4; device acceptance and Bus script migration remain open
+**Documents:** 3 guides + this overview + Phase 17 implementation and board-test records
 
 **Versioning note:** Crystal OS v1 = Phases 1-13 (baseline OS with bundled apps). Crystal OS v2 = Phase 14+ (app platform, publication release). All documents describe v2.
 
@@ -26,8 +26,11 @@ device check on 2026-11-14, including keyboard outside-tap dismissal; no Phase
 15/16 device follow-ups remain. Combined-load profiling, HTTPS
 reliability investigation and other hardening come later. Public catalog
 hosting and production keys are deployment configuration. Weather fetching and
-Calculator computation remain in their current runtimes. Lua is Phase 17.
-See the [short closure record](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+Calculator computation remain in their current runtimes. Phase 17's Lua runtime,
+HTTP binding and executable Clock package are implemented; device checks for
+watchdog-safe timeout, async cancellation and timer persistence, plus the Bus
+script migration and cleanup qualification, remain open. See the [Phase 17 implementation record](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md)
+and the [short Phase 15/16 closure record](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
 
 ---
 
@@ -91,7 +94,7 @@ Three comprehensive documents covering the v2 app platform (Phases 14-17):
    - **Purpose:** Concrete patterns and code templates to follow
    - **Contents:**
      - Project structure and build setup
-     - **Script tier: 10 Lua examples** (minimal clock, stateful favorites, async HTTP + JSON, rich list, animation, dialog/spinner, scroll_view, tab focus, state machine navigation, plus 2 patterns)
+     - **Script tier: Lua patterns and the runnable Clock package** (the guide's examples cover minimal clock, stateful favorites, async HTTP + JSON, rich list, animation, dialog/spinner, scroll_view, tab focus, state machine navigation, plus 2 patterns)
      - Native tier: 3 C++ examples (minimal, service handles, worker threads)
      - Declarative tier: 3 JSON UI examples (minimal, data binding, conditionals)
      - ABI implementation: host side (C/C++ patterns)
@@ -246,7 +249,7 @@ These are documented in Implementation Plan §12 and Design Guide §14. Decide b
 └── (other docs)
 ```
 
-The [original app-platform proposal](archive/proposals/APP_PLATFORM.md) remains for reference. The three v2 documents are standalone and complete.
+The [original app-platform proposal](archive/proposals/APP_PLATFORM.md) remains for reference. The three v2 guides are standalone; the Phase 17 implementation record adds current runtime evidence and device acceptance status.
 
 ---
 

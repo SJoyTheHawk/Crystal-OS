@@ -12,6 +12,11 @@ extern "C" {
 #endif
 
 typedef struct {
+    const char *name;
+    const char *value;
+} crystal_http_header_t;
+
+typedef struct {
     const char *url;
     uint32_t timeout_ms;
     uint8_t max_attempts;
@@ -19,7 +24,16 @@ typedef struct {
     uint32_t retry_backoff_max_ms;
     size_t max_body_bytes;
     bool keep_alive;
+    // Set for host-restricted callers that must validate every redirect.
+    bool disable_auto_redirect;
     uint32_t owner_id;
+    // Optional bounded request data. NULL method preserves the historical GET
+    // behavior. The worker copies these fields before returning to the caller.
+    const char *method;
+    const char *body;
+    size_t body_len;
+    const crystal_http_header_t *headers;
+    size_t header_count;
 } crystal_http_options_t;
 
 typedef struct {

@@ -80,6 +80,8 @@ void crystal_core_wake_display();
 
 // Loads timezone and initializes system time from the hardware RTC before UI startup.
 void crystal_time_init();
+// LVGL-task-only toast bridge for package runtimes and OS-owned services.
+void crystal_core_show_toast(const char *message);
 
 // Applies local time to both the system clock and the PCF85063 RTC.
 bool crystal_time_set(const struct tm *local_time);

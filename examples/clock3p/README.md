@@ -1,80 +1,25 @@
-# Third-party Clock — worked example
+# Third-party Clock
 
-A design sketch, not working code: the Lua runtime and host ABI it targets are
-proposed, not built. It exists to make the developer experience concrete enough
-to argue with before any of it is implemented.
+This is an executable Lua package for the Phase 17 runtime. It builds the same
+clock, persistent OS countdown timer, and stopwatch screens as the bundled
+clock while using only handles and services exposed through `crystal.*`.
 
-## What ships vs. what lands on the device
+`app.yaml` is the package manifest and `main.lua` returns a table of lifecycle
+hooks. The runtime creates a fresh widget tree on every launch; handles are
+therefore rebuilt in `onCreate`. The stopwatch stores an absolute start time,
+and the countdown belongs to the OS timer service, so both keep their intended
+behavior when the package app is closed.
 
-Authored folder:
+The example requests `notify`, `audio`, and `system_timer` permission. It has no
+network permission and sets `worker_threads: 0`. Persistent stopwatch and lap
+state is written under the package's `data/` directory and limited by
+`storage_kb`.
 
-```
-clock3p/
-  app.yaml
-  main.lua
-  assets/icon.bin
-```
+Package it with the repository tool:
 
-`crystal pack ./clock3p` produces `com.example.clock3p-1.0.0.capp` — one signed
-file, for a catalog download or an email attachment. Installing it unpacks to:
-
-```
-/apps/com.example.clock3p/
-  app.json          app.yaml, converted at pack time (no YAML parser on device)
-  main.lua
-  assets/icon.bin
-  data/             created empty; state.json appears on first write
+```sh
+python3 tools/crystal.py pack examples/clock3p --unsigned -o /tmp/clock3p.capp
 ```
 
-`.capp` is transport only. On the device there is just a folder, and deleting the
-folder is a complete uninstall — program, assets, and state go together.
-
-In developer mode you skip the archive and push the folder straight over USB:
-
-```
-crystal install --usb ./clock3p     # unsigned; developer mode only
-crystal logs -f                     # streams this app's Lua errors
-crystal run com.example.clock3p     # install + launch, one step
-```
-
-## What the OS owns, and why
-
-The countdown is not in this app. `svc.timer.arm()` hands an absolute end instant
-to the `crystal_service` timer, which raises the expiry toast and chime wherever
-the user happens to be. Switch away from a running timer and the app is destroyed
-outright — the timer is not, because it never belonged to the app.
-
-The stopwatch stores an absolute start instant and derives elapsed time on read.
-Same reason, plus one more: an SNTP correction that moves the wall clock leaves a
-stored *elapsed counter* wrong forever, while a stored *instant* stays right.
-
-Both are the rules from `DESIGN.md` §9.5, reachable from a script through the
-ABI rather than reimplemented in it.
-
-## Lifecycle notes for app authors
-
-- `onCreate` runs on **every** launch, on a fresh widget tree. One resident app
-  (`max_running_num = 1`) means there is no "restored" path to branch on.
-- `onPause` is the only guaranteed write point, and it is called before
-  `onDestroy` on every path including return-to-launcher.
-- Widget handles do not survive `onDestroy`. Rebuild in `onCreate`; never cache
-  one in a module-level table expecting it to still be valid.
-- `onStop` is **not called in v1**. It is declared so adding it later is additive,
-  and is reserved for when an OS overlay can fully cover a card. Do not rely on it:
-  stop your timers in `onPause`. When it does arrive, `onStop` is the right place,
-  because the panel is bandwidth-bound and redrawing behind an opaque overlay costs
-  an animation its frames.
-- A callback that runs long is killed. The host checks a deadline every ~10k VM
-  instructions; overrun raises a Lua error, the app is torn down, and the user
-  gets a toast. The OS stays up.
-
-## Permissions
-
-`app.yaml` declares them and the user sees them at install time. Absent means
-denied, not unrestricted: this manifest has no `network_hosts`, so `http.fetch`
-is not reachable from this app at all. A weather app would add:
-
-```yaml
-permissions:
-  network_hosts: ["api.open-meteo.com"]
-```
+Unsigned packages are for developer-mode workflows. Release packages must be
+signed with the configured package trust key.
