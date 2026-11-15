@@ -12,13 +12,17 @@
 constexpr lv_coord_t kManageDialogWidth = 480;
 constexpr lv_coord_t kManageDialogHeight = 300;
 constexpr lv_coord_t kManageDialogPad = 24;
-constexpr lv_coord_t kManageButtonHeight = 52;
+// Match P4 Settings confirmation buttons and Settings row height.
+constexpr lv_coord_t kManageButtonHeight = 54;
 constexpr lv_coord_t kManageDialogButtonWidth = 168;
-constexpr lv_coord_t kManageRowHeight = 80;
-constexpr lv_coord_t kManageRowPad = 18;
+constexpr lv_coord_t kManageRowHeight = 84;
+constexpr lv_coord_t kManageRowPad = 14;
 constexpr lv_coord_t kManageRowGap = 12;
 constexpr lv_coord_t kManageHandleWidth = 32;
 constexpr lv_coord_t kManageHandleClick = 20;
+constexpr lv_coord_t kManageToggleWidth = 112;
+constexpr lv_coord_t kManageRemoveWidth = 120;
+constexpr lv_coord_t kManageClearWidth = 88;
 #else
 constexpr lv_coord_t kManageDialogWidth = 380;
 constexpr lv_coord_t kManageDialogHeight = 250;
@@ -30,6 +34,9 @@ constexpr lv_coord_t kManageRowPad = 10;
 constexpr lv_coord_t kManageRowGap = 8;
 constexpr lv_coord_t kManageHandleWidth = 24;
 constexpr lv_coord_t kManageHandleClick = 12;
+constexpr lv_coord_t kManageToggleWidth = 100;
+constexpr lv_coord_t kManageRemoveWidth = 88;
+constexpr lv_coord_t kManageClearWidth = 64;
 #endif
 
 namespace {
@@ -567,16 +574,16 @@ void crystal_manage_apps_page_build(lv_obj_t *content, crystal_manage_apps_clear
                                    0);
         lv_obj_set_style_text_color(name, lv_color_hex(0xf2f4f7), 0);
 
-        auto *toggle = app_button(row, enabled ? "Disable" : "Enable", 100, false);
+        auto *toggle = app_button(row, enabled ? "Disable" : "Enable", kManageToggleWidth, false);
         lv_obj_add_event_cb(toggle, toggle_btn_cb, LV_EVENT_CLICKED,
                             const_cast<CrystalAppEntry *>(app.entry));
         if (app.entry->origin == CRYSTAL_ORIGIN_PACKAGE) {
-            auto *remove = app_button(row, "Uninstall", 88, false);
+            auto *remove = app_button(row, "Uninstall", kManageRemoveWidth, false);
             lv_obj_set_style_bg_color(remove, lv_color_hex(0xb42318), 0);
             lv_obj_add_event_cb(remove, uninstall_btn_cb, LV_EVENT_CLICKED,
                                 const_cast<CrystalAppEntry *>(app.entry));
         } else if (enabled) {
-            auto *clear = app_button(row, "Clear", 64, false);
+            auto *clear = app_button(row, "Clear", kManageClearWidth, false);
             lv_obj_add_event_cb(clear, clear_btn_cb, LV_EVENT_CLICKED,
                                 const_cast<CrystalAppEntry *>(app.entry));
         }

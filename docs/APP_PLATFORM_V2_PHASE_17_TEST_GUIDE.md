@@ -8,6 +8,22 @@ after running them on the target.
 
 ## 1. Build and flash the Phase 17 firmware
 
+If Clock remains at `--:--:--` and stopwatch state does not change after
+reinstalling the Lua package, rebuild and application-flash the firmware with
+the label-adoption and absolute storage-path fixes. Reinstalling the package
+alone cannot update these C++ runtime components. After flashing, confirm that
+the Clock displays time immediately and advances, a 30-second Timer preset
+shows `00:30` then counts down, and Stopwatch Start advances with nonzero laps.
+Check pause/resume and reset for both counters as well.
+
+For the subsequent Stopwatch-only fix, application-flash the firmware with
+integer-preserving Lua state conversion. Press Stopwatch Reset once to discard
+any start timestamp rounded by the earlier firmware, then Start. After five
+seconds the display and a new Lap should show about `00:05`. Pause for five
+seconds (the value must hold), resume for three seconds (about `00:08`), then
+reset. The countdown Timer was confirmed working separately. On P4, also check
+the Settings-sized Manage Apps buttons, row dragging, and confirmation dialogs.
+
 In a terminal at the repository root:
 
 ```sh
@@ -33,9 +49,11 @@ idf.py -p "$PORT" monitor -b 1000000 | tee "$LOG"
 
 Reset the board if needed. Confirm it reaches the Crystal launcher, initializes
 the display and storage, and shows no panic or watchdog-reset messages. Keep
-this monitor open for the USB-installed tests below. Exit with `Ctrl+]` before
-running a USB package install, then reopen it after install and reboot with
-`idf.py -p "$PORT" monitor -b 1000000 | tee -a "$LOG"`.
+this monitor open for the Wi-Fi-installed tests below. The Waveshare P4's
+CH343 USB-to-UART port supports firmware flashing and logs, but the current
+`crystal install --usb` handler only reads native ESP USB Serial/JTAG. Reusing
+the flash/monitor port for package upload therefore does not work. Use the
+signed Wi-Fi path in Steps 5 and 6 on this board.
 If the board is not connected to the same LAN as the Mac, open **Settings →
 Network → WiFi Networks**, connect it, and confirm its IP under **Device
 Status** before continuing.
@@ -151,9 +169,18 @@ Pass conditions:
   sound alerts are enabled).
 - Clock is uninstalled and the launcher remains responsive throughout.
 
+**Board result (2026-11-15): PASS.** The captured P4 log shows `timer started:
+300 seconds`, Clock `onDestroy`, successful package uninstall, and the catalog
+dropping from six apps to five. More than five minutes later it records
+`crystal_core: timer expired` and the `Timer finished` toast while the launcher
+remains active; the user confirmed the launcher menu is correct after removal.
+The same capture reports `speaker initialization failed`, so audible alarm
+playback was not verified by this run.
+
 ## 5. Verify a runaway Lua callback closes only its app
 
-Create an unsigned development package in `/tmp`:
+Create the development fixture in `/tmp` (the first pack command creates an
+unsigned artifact; sign it below before installing over Wi-Fi):
 
 ```sh
 mkdir -p /tmp/phase17-runaway
@@ -197,182 +224,186 @@ python3 tools/crystal.py pack /tmp/phase17-runaway --unsigned \
   -o /tmp/phase17-runaway.capp
 ```
 
-Exit IDF Monitor with `Ctrl+]`, then install over USB (physical USB install
-accepts unsigned packages for development):
+### Install on the Waveshare P4 using signed Wi-Fi
+
+Keep the serial monitor open. Use the already trusted test key from Step 2 and
+the device URL from Step 3. Enable **Settings → Developer Tools → Local Control
+Panel** if needed and use a fresh pairing PIN shown by the board. In the
+terminal where `PACKAGE_KEY`, `KEY_ID`, `DEVICE_URL`, and `PAIRING_PIN` are set:
 
 ```sh
-python3 tools/crystal.py install --usb --port "$PORT" /tmp/phase17-runaway.capp
+python3 tools/crystal.py pack /tmp/phase17-runaway \
+  --key "$PACKAGE_KEY" --key-id "$KEY_ID" \
+  -o /tmp/phase17-runaway-signed.capp
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --pin "$PAIRING_PIN" \
+  /tmp/phase17-runaway-signed.capp
 ```
 
-Reboot the board and reopen IDF Monitor. Launch **Phase 17 Runaway Test** from
+Save the returned `token` as `TOKEN` in that terminal for the Step 6 installs.
+The token expires on reboot or when the local control panel is disabled; pair
+again with a fresh PIN if necessary. The unsigned `.capp` is not accepted over
+Wi-Fi. If no trusted test key is available, follow Step 2 or mark this check
+**NOT RUN** rather than bypass signature validation.
+
+### Optional native USB Serial/JTAG installation
+
+Only use this alternative if the selected port actually connects to the ESP
+native USB Serial/JTAG controller. A `/dev/cu.usbmodem...` name alone does not
+prove this: the CH343 bridge also uses that naming on macOS. The board's other
+USB OTG connector is not automatically the Serial/JTAG endpoint either.
+Close any monitor using the native port and set `USB_PORT` to that endpoint:
+
+```sh
+python3 tools/crystal.py install --usb --port "$USB_PORT" /tmp/phase17-runaway.capp
+```
+
+For the native USB path, reboot the board and reopen IDF Monitor. For Wi-Fi,
+reboot only if the install response reports `restart_required: true`, then
+reopen Monitor as needed. Launch **Phase 17 Runaway Test** from
 the launcher and tap **Run forever**. Confirm the **App stopped** toast appears,
 the test app closes back to the launcher, and the serial log records the
 50 ms callback limit without a panic, watchdog reset, or board reboot. Remove
 the test package through **Settings → Manage Apps** after recording the result.
 
+**Board result (2026-11-15): PASS for the logged timeout/closure/no-reset
+behavior.** The signed Wi-Fi install returned `installed: true`; after reboot,
+the P4 registered `com.example.phase17.runaway`. At 28,921 ms it logged
+`App stopped responding (50 ms callback limit)`, followed by the **App stopped**
+toast at 28,922 ms, `onPause` at 28,923 ms, and `onDestroy` at 28,924 ms. UI
+redraw records continue through 58,904 ms without a panic, watchdog reset, or
+another boot in the supplied capture. Visual confirmation of the launcher and
+touch responsiveness, plus test-package removal, remain to be recorded.
+
+Evidence: user-supplied `Pasted text.txt` attachment
+`e41de52c-9ee4-42b9-9561-ebc214e82220`. The log identifies ESP32-P4 silicon
+revision v1.3, app version 0.17.0, build time November 15, 2026 at 18:24:17,
+and flashed ELF SHA-256 prefix `6d39dc7da...`. IDF Monitor warns that the local
+build differs (`c5392688...`); do not attribute this run to the current local
+binary hash or rely on its decoded symbol names. The full tested firmware
+image hash and physical board revision remain unrecorded.
+
 ## 6. Verify HTTP success, allowlist and quota behavior
 
-Use the Mac's LAN IPv4 address, not `127.0.0.1`. For Wi-Fi `en0`, find it with
-`ipconfig getifaddr en0`; use the active interface if the result is empty. Start
-this temporary HTTP fixture in a separate terminal. Allow incoming TCP traffic
-to port 8000 in the Mac firewall if it is enabled. The fixture responds
-immediately to `/ok` and delays `/slow` long enough to test cancellation:
+This check uses two terminal windows and the P4 serial monitor. Keep the Mac
+and P4 on the same LAN. The test package uses the Mac's IPv4 address in both its
+host allowlist and request URLs.
+
+**Terminal A — run the temporary HTTP server.** From the repository root:
 
 ```sh
-python3 -u - <<'PY'
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from time import sleep
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        print(f"request {self.path}", flush=True)
-        if self.path == "/slow": sleep(20)
-        body = b'{"ok":true}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        try: self.wfile.write(body)
-        except BrokenPipeError: pass
-    def log_message(self, *_): pass
-
-ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
-PY
+python3 tools/phase17_http_fixture.py serve
 ```
 
-In another terminal, create the test packages. Replace every `192.168.1.20`
-in both package directories with the Mac's LAN IPv4 address. The host in
-`network_hosts` must exactly match the host in the Lua URLs; the port is not
-part of the allowlist entry.
+Leave this terminal running. It prints each request it receives. If macOS
+Firewall asks, allow incoming Python connections on port 8000. If you already
+started another fixture server on port 8000, stop it with `Ctrl+C` first.
+
+**Terminal B — create the test packages and check the server.** From the
+repository root, get the Mac's Wi-Fi IPv4 address:
 
 ```sh
-mkdir -p /tmp/phase17-http
-cat > /tmp/phase17-http/app.yaml <<'YAML'
-abi: 1
-id: com.example.phase17.http
-name: Phase 17 HTTP Test
-version: 1.0.0
-min_os: 0.17.0
-author: Crystal OS test
-license: MIT
-runtime: lua
-entry: main.lua
-bar_style: dark
-memory_kb: 160
-storage_kb: 8
-worker_threads: 1
-permissions:
-  network_hosts:
-    - 192.168.1.20
-YAML
-cat > /tmp/phase17-http/main.lua <<'LUA'
-local http = crystal.service.http
-local base = "http://192.168.1.20:8000"
-local M = {}
-
-function M.onCreate()
-  local id, err = http.fetch(base .. "/slow", {}, function(_, status, body)
-    print("PHASE17_HTTP_CALLBACK", status, body)
-    local cancel_id, cancel_err = http.fetch(base .. "/slow", {}, function()
-      print("PHASE17_CANCEL_CALLBACK_UNEXPECTED")
-    end)
-    print("PHASE17_CANCEL_REQUEST", cancel_id or "nil", cancel_err or "")
-  end)
-  print("PHASE17_HTTP_STARTED", id or "nil", err or "")
-
-  local extra, extra_err = http.fetch(base .. "/ok", {}, function()
-    print("PHASE17_QUOTA_CALLBACK_UNEXPECTED")
-  end)
-  print("PHASE17_QUOTA", extra or "nil", extra_err or "")
-
-  local denied, denied_err = http.fetch("http://example.invalid/ok", {}, function()
-    print("PHASE17_ALLOWLIST_CALLBACK_UNEXPECTED")
-  end)
-  print("PHASE17_ALLOWLIST", denied or "nil", denied_err or "")
-  return true
-end
-
-function M.onResume() return true end
-function M.onPause() return true end
-function M.onDestroy() return true end
-return M
-LUA
+MAC_IP="$(ipconfig getifaddr en0)"
+if [ -z "$MAC_IP" ]; then
+  printf 'Enter the Mac LAN IPv4 address: '
+  read -r MAC_IP
+fi
+printf 'Mac LAN IP: %s\n' "$MAC_IP"
 ```
 
-Create a second package to prove that cancelling the first app's owner request
-does not leave the shared worker stuck:
+Then create both packages and make a quick request:
 
 ```sh
-mkdir -p /tmp/phase17-http-worker-check
-cat > /tmp/phase17-http-worker-check/app.yaml <<'YAML'
-abi: 1
-id: com.example.phase17.httpworker
-name: Phase 17 HTTP Worker Check
-version: 1.0.0
-min_os: 0.17.0
-author: Crystal OS test
-license: MIT
-runtime: lua
-entry: main.lua
-bar_style: dark
-memory_kb: 160
-storage_kb: 8
-worker_threads: 1
-permissions:
-  network_hosts:
-    - 192.168.1.20
-YAML
-cat > /tmp/phase17-http-worker-check/main.lua <<'LUA'
-local http = crystal.service.http
-local M = {}
-
-function M.onCreate()
-  local id, err = http.fetch("http://192.168.1.20:8000/ok", {}, function(_, status, body)
-    print("PHASE17_WORKER_RECOVERY_CALLBACK", status, body)
-  end)
-  print("PHASE17_WORKER_RECOVERY_STARTED", id or "nil", err or "")
-  return true
-end
-
-function M.onResume() return true end
-function M.onPause() return true end
-function M.onDestroy() return true end
-return M
-LUA
+python3 tools/phase17_http_fixture.py create --host "$MAC_IP"
+curl -i "http://$MAC_IP:8000/ok"
 ```
 
-Pack unsigned, exit IDF Monitor, upload and reboot as in Step 5:
+The curl response should be `200 OK` with `{"ok":true}`, and Terminal A should
+show `request /ok`. That confirms the server and Mac address work. The create
+command writes `/tmp/phase17-http` and `/tmp/phase17-http-worker-check` and
+puts the selected Mac IP into each manifest and Lua URL. The app gives `/slow`
+a 60-second client timeout because the fixture deliberately waits 20 seconds.
+If curl works but the P4 cannot connect, check the Mac firewall and confirm the
+P4 is not on an isolated guest Wi-Fi network.
+
+Keep these two addresses separate: `MAC_IP` is the Mac running port 8000;
+`DEVICE_URL` is the P4's Local Control Panel URL shown on the device, usually
+`http://<P4-IP>/` with no port 8000. The install command sends its POST request
+to the P4. Terminal A should only receive the fixture's GET requests.
+
+**Terminal B — pack and install.** Set the same signing key ID used in Step 2,
+and the P4's Local Control Panel URL. These shell variables must be set in
+Terminal B; variables from other terminal windows are not shared.
+
+Package signing needs the Python dependencies from Step 2. If they are not
+installed for this `python3`, install them before packing:
 
 ```sh
-python3 tools/crystal.py pack /tmp/phase17-http --unsigned \
-  -o /tmp/phase17-http.capp
-python3 tools/crystal.py pack /tmp/phase17-http-worker-check --unsigned \
-  -o /tmp/phase17-http-worker-check.capp
-python3 tools/crystal.py install --usb --port "$PORT" /tmp/phase17-http.capp
-python3 tools/crystal.py install --usb --port "$PORT" /tmp/phase17-http-worker-check.capp
+python3 -m pip install -r tools/requirements-pack.txt
 ```
 
-After reboot, open Monitor and launch **Phase 17 HTTP Test**. Confirm the Mac
-server sees `/slow` and the device logs show:
+```sh
+PACKAGE_KEY="$HOME/.crystal_keys/phase17-test-ed25519.pem"
+KEY_ID=240 # Change this if Step 2 used another key ID.
+printf 'P4 device URL (not the Mac URL; omit port 8000): '
+read -r DEVICE_URL
+python3 tools/crystal.py pack /tmp/phase17-http --key "$PACKAGE_KEY" --key-id "$KEY_ID" -o /tmp/phase17-http.capp
+python3 tools/crystal.py pack /tmp/phase17-http-worker-check --key "$PACKAGE_KEY" --key-id "$KEY_ID" -o /tmp/phase17-http-worker-check.capp
+```
+
+Choose one installation path. If the Step 5 token is still valid, install both
+packages with it:
+
+```sh
+printf 'Step 5 pairing token: '
+read -r TOKEN
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --token "$TOKEN" /tmp/phase17-http.capp
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --token "$TOKEN" /tmp/phase17-http-worker-check.capp
+```
+
+If the token expired, enable the Local Control Panel and pair by PIN while
+installing the first package. That command already installs the HTTP Test app;
+do not install that package a second time. Copy the returned token and use it
+only for the worker-check package:
+
+```sh
+printf 'Fresh P4 pairing PIN: '
+read -r PAIRING_PIN
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --pin "$PAIRING_PIN" /tmp/phase17-http.capp
+printf 'Token returned by that install: '
+read -r TOKEN
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --token "$TOKEN" /tmp/phase17-http-worker-check.capp
+```
+
+Install both packages before rebooting if either response says
+`restart_required: true`; reopen the serial monitor after reboot if needed.
+
+Launch **Phase 17 HTTP Test** from the P4 launcher. The app has no screen, so
+watch the serial monitor and Terminal A. Terminal A should show `/slow`; the
+device log should show:
 
 - `PHASE17_HTTP_STARTED` with a request ID.
 - `PHASE17_QUOTA nil worker quota exceeded` while the first request is active.
-- `PHASE17_ALLOWLIST nil network host is not allowed` for
-  `example.invalid`.
-- After about 20 seconds, `PHASE17_HTTP_CALLBACK 200` with the JSON body and a
-  `PHASE17_CANCEL_REQUEST` line with a request ID.
+- `PHASE17_ALLOWLIST nil network host is not allowed` for `example.invalid`.
+- About 20 seconds later, `PHASE17_HTTP_CALLBACK 200` with the JSON body and
+  `PHASE17_CANCEL_REQUEST` with a request ID.
 
-As soon as `PHASE17_CANCEL_REQUEST` appears, uninstall **Phase 17 HTTP Test**
-from **Settings → Manage Apps** while its second `/slow` request is in flight.
-Wait at least 25 seconds. Pass the cancellation check if the app is removed,
-the OS stays responsive, and `PHASE17_CANCEL_CALLBACK_UNEXPECTED` never
-appears. The server may report a closed client when the request is cancelled;
-that is expected. Then launch **Phase 17 HTTP Worker Check**. Confirm
+`PHASE17_CANCEL_REQUEST` means the second request was queued; it does not mean
+the Mac has received it yet. Wait until Terminal A prints `request /slow` a
+second time, then immediately uninstall **Phase 17 HTTP Test** from
+**Settings → Manage Apps** while that request is in flight. Wait at least 25
+seconds. Pass cancellation if the app is removed, the OS stays responsive, and
+`PHASE17_CANCEL_CALLBACK_UNEXPECTED` does not appear. Terminal A may report a
+closed client when the request is cancelled; that is expected.
+
+Then launch **Phase 17 HTTP Worker Check**. Confirm
 `PHASE17_WORKER_RECOVERY_STARTED` has a request ID and
-`PHASE17_WORKER_RECOVERY_CALLBACK 200` appears. This confirms the shared worker
-still accepts and completes a request after owner cancellation. Uninstall the
-worker-check package. Stop the local fixture with `Ctrl+C` and remove either
-package if it is still installed.
+`PHASE17_WORKER_RECOVERY_CALLBACK 200` appears. This verifies the shared worker
+still completes requests after an app owner is cancelled. Uninstall the
+worker-check package, stop the server with Ctrl+C, and remove any remaining
+test package.
+
+The fixture generator and server are in
+[`tools/phase17_http_fixture.py`](../tools/phase17_http_fixture.py).
 
 ## 7. Bus app conversion and cleanup gate
 
@@ -413,11 +444,11 @@ substitute for any board result above.
 
 | Acceptance item | Result | Evidence / notes |
 | --- | --- | --- |
-| `crystal run` pack/install/launch/log stream | | |
-| Timer fires after Clock destruction | | |
-| Runaway callback closes app without reset | | |
-| HTTP callback, allowlist and request quota | | |
-| HTTP cancellation during app destruction | | |
+| `crystal run` pack/install/launch/log stream | PASS | Signed install/launch returned success; Clock tabs were subsequently confirmed working on the P4. |
+| Timer fires after Clock destruction | PASS | 300-second timer expired and displayed `Timer finished` after Clock destroy/uninstall; P4 serial log dated 2026-11-15. Speaker initialization failed, so audible alarm is unverified. |
+| Runaway callback closes app without reset | PASS (serial evidence) | 2026-11-15 P4 capture: 50 ms limit, App stopped toast, onPause/onDestroy, then about 30 seconds of continued UI redraws without reset. Visual launcher/touch check and uninstall pending; flashed/local ELF mismatch noted in Step 5. |
+| HTTP callback, allowlist and request quota | PASS (serial evidence) | 2026-11-15 P4 capture, OS 0.17.0, silicon revision v1.3: request id 1 returned status 200 with `{"ok":true}`; quota and allowlist errors matched the expected results. |
+| HTTP cancellation during app destruction | PASS (serial evidence) | Same capture: the Mac received the second `/slow`; owner cancellation was requested, request id 3 completed with `ESP_ERR_INVALID_STATE` and `cancelled=1`, with no Lua callback. Worker-check request returned 200 afterward; both test apps were uninstalled. ELF SHA prefix `177c07ebe`; full image hash and physical board revision unrecorded. |
 | Bus Script conversion and cleanup | | |
 
 After all tests, uninstall remaining test packages. USB package uninstall does

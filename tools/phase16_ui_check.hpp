@@ -35,6 +35,17 @@ static void check_ui_facade(DeclarativeApp &app)
     }
     CrystalResources other_resources;
     CrystalUI other(other_resources);
+    // Script widgets adopt standalone labels without a separate text object.
+    // Exercise that path directly, independently of the declarative builder.
+    auto *plain_label = lv_label_create(lv_scr_act());
+    lv_label_set_text(plain_label, "--:--:--");
+    auto plain = other.adopt(plain_label);
+    std::string plain_text;
+    assert(plain && other.get_text(plain, &plain_text) && plain_text == "--:--:--");
+    assert(other.set_text(plain, "12:34:56"));
+    assert(other.get_text(plain, &plain_text) && plain_text == "12:34:56");
+    assert(other.adopt(plain_label) == plain);
+    assert(other.remove(plain) && !other.set_text(plain, "stale"));
     auto root = ui.screen(); assert(root && !other.set_hidden(root, true));
     auto options = [](const char *json) { auto *value = cJSON_Parse(json); assert(value); return value; };
     auto *spec = options(R"({"id":"dynamic_label","text":"Initial","font":"small"})");

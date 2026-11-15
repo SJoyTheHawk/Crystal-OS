@@ -62,6 +62,8 @@ bool CrystalUI::valid_type(Handle id, const lv_obj_class_t *type) const {
 }
 CrystalUI::Handle CrystalUI::adopt(lv_obj_t *object, lv_obj_t *text) {
     if (!object || resetting_) return 0;
+    // A standalone label is its own text target; composite widgets supply one.
+    if (!text && lv_obj_check_type(object, &lv_label_class)) text = object;
     if (auto id = handle(object)) { if (text) node(id)->text = text; return id; }
     size_t live = 0; for (const auto &row : nodes_) if (row->object) ++live;
     if (live >= 192) return 0;

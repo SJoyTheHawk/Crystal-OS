@@ -248,6 +248,39 @@ int main() {
 '''
 
 
+FILESYSTEM_HARNESS = r'''
+#include <cassert>
+#include <cerrno>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <sys/stat.h>
+// The production helper is inserted verbatim by the runner.
+__MAKE_PARENT_DIRS__
+int main(int argc, char **argv) {
+    assert(argc == 2);
+    namespace fs = std::filesystem;
+    const fs::path root = fs::absolute(argv[1]);
+    const auto state = root / "littlefs/apps/com.example.clock3p/data/state.json";
+    assert(make_parent_dirs(state.string()));
+    assert(fs::is_directory(state.parent_path()));
+    assert(make_parent_dirs(state.string())); // Existing parents remain valid.
+    { std::ofstream file(state); file << R"({"sw_start":100})"; assert(file.good()); }
+    std::string saved; { std::ifstream file(state); std::getline(file, saved); }
+    assert(saved == R"({"sw_start":100})");
+    assert(make_parent_dirs((state.parent_path() / "nested/laps.json").string()));
+    assert(!make_parent_dirs((state / "blocked.json").string()));
+    fs::current_path(root);
+    assert(make_parent_dirs("relative/data/state.json"));
+    assert(fs::is_directory("relative/data"));
+    assert(!make_parent_dirs(""));
+    assert(!make_parent_dirs("state.json"));
+    std::puts("phase17 production storage path checks passed");
+}
+'''
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     lua = root / "managed_components" / "georgik__lua" / "lua"
@@ -281,6 +314,15 @@ def main() -> int:
         subprocess.run(["c++", "-std=c++17", f"-I{root / 'components/crystal_script/include'}",
                         str(url_harness), "-o", str(url_binary)], cwd=root, check=True)
         subprocess.run([str(url_binary)], cwd=root, check=True)
+        script_source = (root / "components/crystal_script/src/crystal_script.cpp").read_text()
+        helper = script_source.split("bool make_parent_dirs(", 1)[1].split("\nbool write_all(", 1)[0]
+        filesystem_harness = directory / "filesystem.cpp"
+        filesystem_binary = directory / "phase17-filesystem"
+        filesystem_harness.write_text(FILESYSTEM_HARNESS.replace(
+            "__MAKE_PARENT_DIRS__", "bool make_parent_dirs(" + helper))
+        subprocess.run(["c++", "-std=c++17", str(filesystem_harness),
+                        "-o", str(filesystem_binary)], cwd=root, check=True)
+        subprocess.run([str(filesystem_binary), str(directory / "storage")], cwd=root, check=True)
     return 0
 
 

@@ -53,7 +53,11 @@ constexpr const char *kWifiEnabledKey = "wifi_enabled";
 constexpr const char *kDhcpKey = "net.dhcp";
 constexpr uint8_t kRtcAddress = 0x51;
 constexpr uint8_t kAxp2101Address = 0x34;
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr uint32_t kAlarmSampleRate = BSP_AUDIO_SAMPLE_RATE_HZ;
+#else
 constexpr uint32_t kAlarmSampleRate = 22050;
+#endif
 constexpr float kPi = 3.14159265358979323846f;
 // The board BSP allocates I2S DMA buffers from internal memory and asserts on
 // failure. Leave enough contiguous internal heap for TLS and LVGL callers
@@ -1008,7 +1012,23 @@ bool ensure_speaker()
     format.bits_per_sample = 16;
     format.channel = 1;
     format.sample_rate = kAlarmSampleRate;
-    if (esp_codec_dev_open(s_speaker, &format) != ESP_CODEC_DEV_OK) {
+    const int open_err = esp_codec_dev_open(s_speaker, &format);
+    if (open_err != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "speaker codec open failed: 0x%x", open_err);
+        s_speaker = nullptr;
+        return false;
+    }
+    const int volume_err = esp_codec_dev_set_out_vol(s_speaker, s_volume);
+    if (volume_err != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "speaker volume setup failed: 0x%x", volume_err);
+        (void)esp_codec_dev_close(s_speaker);
+        s_speaker = nullptr;
+        return false;
+    }
+    const int mute_err = esp_codec_dev_set_out_mute(s_speaker, false);
+    if (mute_err != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "speaker unmute failed: 0x%x", mute_err);
+        (void)esp_codec_dev_close(s_speaker);
         s_speaker = nullptr;
         return false;
     }
@@ -1206,11 +1226,17 @@ void crystal_hal_timer_alarm()
         return;
     }
 
-    (void)bsp_audio_poweramp_enable(true);
+    esp_err_t amp_err = bsp_audio_poweramp_enable(true);
+    if (amp_err != ESP_OK) {
+        ESP_LOGE(TAG, "speaker amplifier enable failed: %s", esp_err_to_name(amp_err));
+    }
     const bool played = write_alarm_tone(880, 120) && write_alarm_tone(0, 55) &&
                         write_alarm_tone(1175, 120) && write_alarm_tone(0, 55) &&
                         write_alarm_tone(880, 180) && write_alarm_tone(0, 40);
-    (void)bsp_audio_poweramp_enable(false);
+    amp_err = bsp_audio_poweramp_enable(false);
+    if (amp_err != ESP_OK) {
+        ESP_LOGE(TAG, "speaker amplifier disable failed: %s", esp_err_to_name(amp_err));
+    }
     if (played) ESP_LOGI(TAG, "timer alarm played");
     else ESP_LOGE(TAG, "timer alarm playback failed");
 }

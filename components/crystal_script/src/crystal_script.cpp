@@ -100,11 +100,13 @@ bool make_parent_dirs(const std::string &path)
     const size_t slash = path.find_last_of('/');
     if (slash == std::string::npos) return false;
     const std::string parent = path.substr(0, slash);
-    std::string current;
-    size_t start = 0;
+    // Package data paths are absolute. Skip the root separator instead of
+    // trying mkdir("") and preserve it when appending the first component.
+    std::string current = path.front() == '/' ? "/" : "";
+    size_t start = current.size();
     while (start < parent.size()) {
         const size_t end = parent.find('/', start);
-        if (!current.empty()) current.push_back('/');
+        if (!current.empty() && current.back() != '/') current.push_back('/');
         current.append(parent, start, end == std::string::npos ? end : end - start);
         if (mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) return false;
         struct stat st{};
@@ -1102,7 +1104,10 @@ cJSON *ScriptApp::lua_to_json(int index, unsigned depth, unsigned *node_count)
     case LUA_TNIL: return cJSON_CreateNull();
     case LUA_TBOOLEAN: return cJSON_CreateBool(lua_toboolean(lua_, index));
     case LUA_TNUMBER: {
-        const double value = lua_tonumber(lua_, index);
+        // The embedded Lua build uses float32; timestamps must stay integers.
+        const double value = lua_isinteger(lua_, index)
+            ? static_cast<double>(lua_tointeger(lua_, index))
+            : static_cast<double>(lua_tonumber(lua_, index));
         return std::isfinite(value) ? cJSON_CreateNumber(value) : nullptr;
     }
     case LUA_TSTRING: {
@@ -1158,7 +1163,14 @@ void ScriptApp::json_to_lua(const cJSON *value, unsigned depth)
     if (!value || depth > kMaxJsonDepth) { lua_pushnil(lua_); return; }
     if (cJSON_IsNull(value)) lua_pushnil(lua_);
     else if (cJSON_IsBool(value)) lua_pushboolean(lua_, cJSON_IsTrue(value));
-    else if (cJSON_IsNumber(value)) lua_pushnumber(lua_, value->valuedouble);
+    else if (cJSON_IsNumber(value)) {
+        const double number = value->valuedouble;
+        if (std::isfinite(number) && std::floor(number) == number &&
+            number >= static_cast<double>(LUA_MININTEGER) &&
+            number <= static_cast<double>(LUA_MAXINTEGER))
+            lua_pushinteger(lua_, static_cast<lua_Integer>(number));
+        else lua_pushnumber(lua_, number);
+    }
     else if (cJSON_IsString(value)) lua_pushstring(lua_, value->valuestring ? value->valuestring : "");
     else if (cJSON_IsArray(value)) {
         const int count = cJSON_GetArraySize(value); lua_createtable(lua_, count, 0);

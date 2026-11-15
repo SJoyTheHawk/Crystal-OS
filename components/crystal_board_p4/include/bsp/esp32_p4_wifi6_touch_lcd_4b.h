@@ -6,6 +6,8 @@
 #include "esp_codec_dev.h"
 #include "esp_err.h"
 
+#define BSP_AUDIO_SAMPLE_RATE_HZ 22050U
+
 #ifdef __cplusplus
 extern "C" {
 #endif

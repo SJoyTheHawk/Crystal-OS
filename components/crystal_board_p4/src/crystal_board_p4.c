@@ -12,7 +12,11 @@
 #include "esp_lv_adapter.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "driver/gpio.h"
+#include "driver/i2s_std.h"
 #include "driver/ledc.h"
+#include "dev_audio_codec.h"
+#include "periph_i2s.h"
 
 static const char *TAG = "crystal_board_p4";
 static const uint32_t kBacklightMinDuty = 480;
@@ -22,8 +26,77 @@ static dev_display_lcd_handles_t *s_display_handles;
 static dev_lcd_touch_handles_t *s_touch_handles;
 static periph_ledc_handle_t *s_brightness_handle;
 static i2c_master_bus_handle_t s_i2c_bus;
+static i2s_chan_handle_t s_audio_tx;
+static i2s_chan_handle_t s_audio_rx;
+static dev_audio_codec_handles_t *s_speaker_handles;
 static lv_display_t *s_display;
 static lv_indev_t *s_input;
+
+// Waveshare ESP32-P4-WIFI6-Touch-LCD-4B board wiring, as declared by its
+// board_devices.yaml and board_peripherals.yaml.
+#define BSP_AUDIO_TX_PERIPHERAL "i2s_audio_out"
+#define BSP_AUDIO_RX_PERIPHERAL "i2s_audio_in"
+#define BSP_AUDIO_DAC_DEVICE "audio_dac"
+#define BSP_POWER_AMP_IO GPIO_NUM_53
+
+static esp_err_t ensure_audio_bus(void)
+{
+    if (s_audio_tx != NULL && s_audio_rx != NULL) {
+        return ESP_OK;
+    }
+    if (s_audio_tx != NULL || s_audio_rx != NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Match Waveshare bsp_audio_init(NULL): 22050 Hz, 16-bit mono STD on both
+    // directions. The board metadata's normal voice profile is 24 kHz TX plus
+    // 24 kHz TDM RX, which would leave the shared I2S port at different clock
+    // settings from Crystal's 22050 Hz alarm stream.
+    periph_i2s_config_t *board_tx_config = NULL;
+    esp_err_t err = esp_board_periph_get_config(BSP_AUDIO_TX_PERIPHERAL,
+                                                (void **)&board_tx_config);
+    if (err != ESP_OK || board_tx_config == NULL) {
+        ESP_LOGE(TAG, "Audio I2S TX configuration unavailable: %s", esp_err_to_name(err));
+        return err != ESP_OK ? err : ESP_ERR_INVALID_STATE;
+    }
+    periph_i2s_config_t tx_config = *board_tx_config;
+    tx_config.role = I2S_ROLE_MASTER;
+    tx_config.mode = I2S_COMM_MODE_STD;
+    tx_config.direction = I2S_DIR_TX;
+    tx_config.i2s_cfg.std.clk_cfg.sample_rate_hz = BSP_AUDIO_SAMPLE_RATE_HZ;
+    const i2s_std_slot_config_t mono_slots = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(
+        I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+    tx_config.i2s_cfg.std.slot_cfg = mono_slots;
+    periph_i2s_config_t rx_config = tx_config;
+    rx_config.direction = I2S_DIR_RX;
+    err = esp_board_periph_override_config(BSP_AUDIO_TX_PERIPHERAL, &tx_config,
+                                           sizeof(tx_config));
+    if (err == ESP_OK) {
+        err = esp_board_periph_override_config(BSP_AUDIO_RX_PERIPHERAL, &rx_config,
+                                               sizeof(rx_config));
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio I2S configuration failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    // Create TX before RX, matching the Waveshare BSP's required order.
+    err = esp_board_periph_ref_handle(BSP_AUDIO_TX_PERIPHERAL,
+                                      (void **)&s_audio_tx);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio I2S TX init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_board_periph_ref_handle(BSP_AUDIO_RX_PERIPHERAL,
+                                      (void **)&s_audio_rx);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio I2S RX init failed: %s", esp_err_to_name(err));
+        (void)esp_board_periph_unref_handle(BSP_AUDIO_TX_PERIPHERAL);
+        s_audio_tx = NULL;
+        return err;
+    }
+    return ESP_OK;
+}
 
 static esp_err_t ensure_brightness_device(void)
 {
@@ -220,11 +293,35 @@ i2c_master_bus_handle_t bsp_i2c_get_handle(void)
 
 esp_codec_dev_handle_t bsp_audio_codec_speaker_init(void)
 {
-    return NULL;
+    if (s_speaker_handles != NULL && s_speaker_handles->codec_dev != NULL) {
+        return s_speaker_handles->codec_dev;
+    }
+
+    esp_err_t err = ensure_audio_bus();
+    if (err != ESP_OK) {
+        return NULL;
+    }
+    err = esp_board_manager_init_device_by_name(BSP_AUDIO_DAC_DEVICE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio DAC initialization failed: %s", esp_err_to_name(err));
+        return NULL;
+    }
+    err = esp_board_manager_get_device_handle(BSP_AUDIO_DAC_DEVICE,
+                                              (void **)&s_speaker_handles);
+    if (err != ESP_OK || s_speaker_handles == NULL ||
+            s_speaker_handles->codec_dev == NULL) {
+        ESP_LOGE(TAG, "Audio DAC handle unavailable: %s", esp_err_to_name(err));
+        (void)esp_board_manager_deinit_device_by_name(BSP_AUDIO_DAC_DEVICE);
+        s_speaker_handles = NULL;
+        return NULL;
+    }
+    return s_speaker_handles->codec_dev;
 }
 
 esp_err_t bsp_audio_poweramp_enable(bool enable)
 {
-    (void)enable;
-    return ESP_ERR_NOT_SUPPORTED;
+    if (s_speaker_handles == NULL || s_speaker_handles->codec_dev == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return gpio_set_level(BSP_POWER_AMP_IO, enable ? 1 : 0);
 }

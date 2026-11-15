@@ -20,6 +20,7 @@ CONF = '''
 #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_28 1
 #define LV_USE_SNAPSHOT 1
 #define LV_USE_LOG 0
 '''
@@ -106,6 +107,10 @@ static void check_row(lv_obj_t *content, int i, const char *id, bool enabled) {
     auto *button = lv_obj_get_child(row, 2);
     assert(std::strcmp(label(button, 0), enabled ? "Disable" : "Enable") == 0);
     assert(!lv_obj_has_state(button, LV_STATE_DISABLED));
+#if CONFIG_IDF_TARGET_ESP32P4
+    assert(lv_obj_get_height(button) == 54 && lv_obj_get_width(button) == 112);
+    assert(lv_obj_get_height(row) == 84);
+#endif
     if (enabled) {
         auto *clear = lv_obj_get_child(row, 3);
         assert(std::strcmp(label(clear, 0), "Clear") == 0);
@@ -139,14 +144,19 @@ static void snapshot(lv_obj_t *page, const char *name) {
     std::fclose(file);
     lv_snapshot_free(snap);
 }
+#if CONFIG_IDF_TARGET_ESP32P4
+constexpr int screen_size = 720, header_height = 72;
+#else
+constexpr int screen_size = 480, header_height = 52;
+#endif
 int main() {
     lv_init();
-    static lv_color_t pixels[480 * 20];
+    static lv_color_t pixels[screen_size * 20];
     static lv_disp_draw_buf_t draw;
-    lv_disp_draw_buf_init(&draw, pixels, nullptr, 480 * 20);
+    lv_disp_draw_buf_init(&draw, pixels, nullptr, screen_size * 20);
     static lv_disp_drv_t driver;
     lv_disp_drv_init(&driver);
-    driver.hor_res = 480; driver.ver_res = 480;
+    driver.hor_res = screen_size; driver.ver_res = screen_size;
     driver.draw_buf = &draw; driver.flush_cb = flush;
     lv_disp_drv_register(&driver);
     static lv_indev_drv_t input;
@@ -161,7 +171,7 @@ int main() {
         lv_indev_read_timer_cb(pointer->driver->read_timer);
     };
     auto *page = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(page, 480, 480);
+    lv_obj_set_size(page, screen_size, screen_size);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_style_border_width(page, 0, 0);
     lv_obj_set_style_radius(page, 0, 0);
@@ -178,7 +188,7 @@ int main() {
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
     auto *content = lv_obj_create(page);
-    lv_obj_set_size(content, 480, 428); lv_obj_set_pos(content, 0, 52);
+    lv_obj_set_size(content, screen_size, screen_size - header_height); lv_obj_set_pos(content, 0, header_height);
     lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(content, 0, 0);
     lv_obj_set_style_pad_all(content, 10, 0);
@@ -471,6 +481,7 @@ def png_from_ppm(source):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--target', choices=('s3', 'p4'), default='s3')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='crystal-manage-apps-') as directory:
         temp = Path(directory)
@@ -486,6 +497,7 @@ set(LV_CONF_PATH "{temp}/lv_conf.h" CACHE STRING "" FORCE)
 add_subdirectory("{lvgl}" lvgl)
 add_executable(check check.cpp "{shell}/manage_apps_page.cpp")
 target_include_directories(check PRIVATE "{temp}" "{shell}" "{ROOT}/components/crystal_registry/include")
+target_compile_definitions(check PRIVATE CONFIG_IDF_TARGET_ESP32P4={int(args.target == "p4")})
 target_compile_options(check PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(check PRIVATE lvgl)
 ''')

@@ -824,9 +824,9 @@ brief device check.
 - [x] Script runtime is integrated, builds for ESP32-P4, and the real Lua example packs successfully.
 - [x] Host smoke test exercises sandbox removals, the returned-hook-table ABI, bounded allocation and 50 ms hooks in the main thread and coroutines.
 - [ ] On device, a deliberate infinite loop produces a toast and app death without a watchdog reset.
-- [ ] On device, a timer armed by script fires after the app is destroyed.
-- [ ] On device, an in-flight HTTP request is cancelled on destroy without leaked workers.
-- [ ] Exercise `crystal run` end-to-end with a connected device.
+- [x] On device, the Clock's script-armed 300-second system timer expires after the package is destroyed and uninstalled; the OS logs `timer expired` and displays `Timer finished` (P4 serial capture, 2026-11-15).
+- [x] On device, an in-flight HTTP request is cancelled on destroy without leaked workers (P4 serial capture, 2026-11-15: request id 3 cancelled with `ESP_ERR_INVALID_STATE`/`cancelled=1`, no Lua callback; worker recovery request returned 200).
+- [x] Exercise `crystal run` end-to-end with a connected device; signed install and launch succeeded and Clock behavior was confirmed on the P4 (Nov 2026).
 - [ ] Convert the Bus app to the Script tier and verify resource cleanup; retained as a separate acceptance item because the existing Bus app has a larger service/catalog surface than the clock runtime example.
 
 ---
@@ -1096,7 +1096,9 @@ acceptance requirements.
 - [x] `data/` quota enforced with bounded, atomic file writes
 - [x] `examples/clock3p` is a packable Lua package using the v1 hook-table and UI ABI
 - [x] ESP32-P4 firmware build and host Lua sandbox/deadline/allocator checks pass
-- [ ] `crystal run` works end-to-end
+- [x] `crystal run` works end-to-end; signed device install and launch succeeded, with all Clock tabs confirmed working (Nov 2026)
 - [ ] Bus app converted to Script tier and verified for resource leaks
-- [ ] Device exit gate: runaway loop produces app death, not watchdog reset; timer survives app destruction; HTTP request cleans up on destroy
+- [x] Device timer-survival check: 300-second timer expired and displayed its OS toast after Clock was destroyed and uninstalled (P4 serial capture, 2026-11-15)
+- [ ] Device exit gate: runaway loop produces app death without watchdog reset; visual launcher/touch confirmation and test-app cleanup remain unrecorded.
+- [x] Device HTTP cancellation: in-flight request cleans up on destroy, with no callback and subsequent worker recovery request succeeds (P4 serial capture, 2026-11-15).
 

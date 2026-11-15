@@ -513,8 +513,18 @@ def install_usb(port, package):
             return None
 
         os.write(fd, f'CRYSTAL/1 INSTALL {len(payload)}\n'.encode('ascii'))
-        if protocol_line() != 'CRYSTAL/1 READY':
-            raise ValueError('device did not acknowledge USB upload')
+        acknowledgement = protocol_line()
+        if acknowledgement != 'CRYSTAL/1 READY':
+            if acknowledgement and acknowledgement.startswith('CRYSTAL/1 ERROR '):
+                raise ValueError(f'device USB install failed: {acknowledgement[len("CRYSTAL/1 ERROR "):]}')
+            if acknowledgement:
+                raise ValueError(f'unexpected USB upload response: {acknowledgement}')
+            raise ValueError(
+                f'device did not acknowledge USB upload on {port}; '
+                'close any serial monitor and wait for the launcher. '
+                'This transport requires native ESP USB Serial/JTAG, not a '
+                'USB-to-UART bridge (such as CH343 used for P4 flashing/logs). '
+                'For a UART-connected board, install a signed package with --wifi.')
         offset = 0
         while offset < len(payload):
             chunk = payload[offset:offset + 2048]

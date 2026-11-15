@@ -86,6 +86,56 @@ card launch enters `onCreate` without an initial `onResume` callback. CrystalUI
 suspends app-owned timers while the card is paused and resumes them on return, so
 the package keeps one timer handle across card switches.
 
+The board report of unchanged `--:--:--`/`00:00` labels exposed two additional
+firmware defects. `CrystalUI::adopt` now treats a standalone label as its own
+text target, allowing Lua `ui.set_text`/`ui.get_text` calls to reach it. Script
+storage directory creation now preserves the leading slash in absolute package
+data paths instead of failing on `mkdir("")`; stopwatch state can therefore be
+written. These corrections require an application firmware flash, even when the
+latest Clock Lua package is already installed.
+
+The subsequent board clarification confirmed that the countdown Timer works;
+the remaining failure is Stopwatch. The bundled Lua configuration uses 32-bit
+integers and floats. Converting an integer Unix timestamp through `lua_tonumber`
+and restoring it with `lua_pushnumber` loses second-level precision. JSON/state
+conversion now preserves integer values in both directions. The regression in
+`tools/test_phase17_bindings.py` compiles the production JSON, filesystem, state
+and timer bindings with the bundled Lua configuration. It rejects the previous
+timestamp conversion and checks exact timestamp round trips, stopwatch start,
+pause/resume, nonzero laps and reset using controlled time and UI adapters.
+It also checks the already-working countdown API for regressions. This is not
+a full ScriptApp or physical-board test.
+
+Manage Apps uses the P4 Settings proportions: 54-pixel-high action buttons
+and 84-pixel rows. Inline Enable/Disable, Clear and Uninstall widths are
+112, 88 and 120 pixels; confirmation buttons match Settings at 168 by 54
+pixels. Its S3 dimensions remain unchanged.
+`tools/test_manage_apps_page.py --target p4` and `--target s3` exercise the
+production page with real LVGL and render layout previews for both sizes.
+
+**P4 board acceptance (2026-11-15):** The captured serial log confirms a
+300-second system timer started, the Clock package was destroyed and
+successfully uninstalled, and the OS timer still expired with the `Timer
+finished` toast. The log shows the app catalog count drop from six to five, and
+the user confirmed the launcher menu was correct after removal. The speaker
+initialization failed in this run, so audible alarm output remains unverified.
+The board also confirmed all three Clock tabs working. The `crystal run` signed
+install and launch path returned success. A subsequent signed runaway-package
+test recorded the 50 ms callback limit at 28,921 ms, the App stopped toast,
+onPause/onDestroy, and continued UI redraws through 58,904 ms without a reset.
+This passes the serial-evidenced timeout and app-closure check; visual launcher
+and touch confirmation and package cleanup remain unrecorded. The capture
+reports flashed ELF prefix `6d39dc7da...` and a mismatch with the local build,
+so it does not establish acceptance of that local binary. See Step 5 of the
+test guide for the evidence reference. A later P4 capture (OS 0.17.0, silicon
+revision v1.3) passes HTTP success, quota, allowlist, cancellation and worker
+recovery: request id 1 returned 200, request id 3 was cancelled during owner
+teardown with `ESP_ERR_INVALID_STATE`/`cancelled=1` and no Lua callback, and the
+worker-check request then returned 200. Both test apps were uninstalled. The
+full firmware image hash and physical board revision were not recorded. The
+runaway test's visual launcher/touch confirmation and cleanup, plus Bus
+conversion, remain open.
+
 ## Evidence
 
 The following checks pass in the repository workspace:
@@ -94,6 +144,7 @@ The following checks pass in the repository workspace:
 python3 tools/test_phase17_runtime.py
 phase17 Lua sandbox, ABI, coroutine deadlines, and allocator checks passed
 phase17 exact-host and redirect-boundary checks passed
+phase17 production storage path checks passed
 ```
 
 The host test compiles the bundled Lua 5.4 sources in a boundary harness that
@@ -102,8 +153,12 @@ main and protected coroutine deadline handling, caught timeout behavior and
 bounded allocation. Its allocator is a host `realloc`-based limit harness; it
 does not instantiate `ScriptApp` or exercise the firmware PSRAM arena. A
 separate C++ harness checks exact-host matching, userinfo/port rejection and
-redirect-boundary inputs. These tests do not replace an LVGL or physical-board
-test.
+redirect-boundary inputs. A filesystem harness compiles the production directory
+helper verbatim and checks absolute/nested paths, existing directories, a
+state-file round trip and rejection of file-as-parent paths. The platform suite
+(`tools/test_app_platform_v2.py`) also exercises standalone label adoption and
+text updates through the production facade and real LVGL under ASan/UBSan.
+These checks do not replace a full ScriptApp or physical-board test.
 
 The ESP32-P4 firmware also builds and links with the runtime, Lua dependency,
 HTTP extensions and factory integration. The real Clock package packs and
@@ -116,14 +171,10 @@ python tools/crystal.py inspect /tmp/clock3p.capp
 
 ## Remaining work
 
-The script runtime and Clock package are ready for device qualification. The
-first four checks require a connected P4 board and the interactive tooling
-path; Bus conversion is a separate scoped implementation and cleanup gate:
+The script runtime and Clock package passed the basic P4 Clock and timer-after-
+uninstall checks. The remaining device checks and Bus conversion are:
 
-- `crystal run` pack/install/launch/log/uninstall flow;
 - an infinite Lua loop producing app closure and a toast without a watchdog reset;
-- timer persistence after app destruction;
-- cancellation of an in-flight HTTP request without leaked workers;
 - conversion of the Bus app to the script tier and resource-cleanup verification.
 
 The phase checklist in the implementation plan and code guide tracks these

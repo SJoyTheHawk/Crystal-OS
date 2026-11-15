@@ -20,7 +20,7 @@ void monitor(lv_disp_drv_t *driver, uint32_t time, uint32_t pixels)
     if (time > 16) ++s_over_budget;
     const uint32_t elapsed = lv_tick_elaps(s_started);
     if (elapsed < 5000) return;
-    ESP_LOGI("crystal_ui_perf",
+    ESP_LOGD("crystal_ui_perf",
              "redraws=%lu window_ms=%lu avg_draw_ms=%lu max_draw_ms=%lu over_16ms=%lu refresh_ms=%u",
              static_cast<unsigned long>(s_frames), static_cast<unsigned long>(elapsed),
              static_cast<unsigned long>(s_total_ms / s_frames),
