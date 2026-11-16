@@ -39,6 +39,17 @@ private:
     struct Block;
     struct CallbackRef { ScriptApp *app = nullptr; int ref = LUA_NOREF; };
     struct HttpResult { uint32_t id = 0; int status = 0; std::string body; };
+    struct Invocation {
+        ScriptApp *app;
+        const char *hook = nullptr;
+        int ref = LUA_NOREF;
+        CrystalUI::Handle handle = 0;
+        const char *message = nullptr;
+        const HttpResult *response = nullptr;
+        bool required = false;
+    };
+    static int protected_invoke(lua_State *state);
+    bool invoke(Invocation &invocation);
     struct AsyncState {
         std::mutex mutex;
         bool active = true;
@@ -146,10 +157,19 @@ private:
     void *arena_ = nullptr;
     size_t arena_size_ = 0;
     size_t arena_used_ = 0;
+    size_t arena_peak_ = 0;
+    size_t json_peak_internal_bytes_ = 0;
+    size_t json_peak_psram_bytes_ = 0;
+    uint32_t native_internal_baseline_ = 0;
+    uint32_t native_psram_baseline_ = 0;
+    uint32_t native_internal_low_water_ = 0;
+    uint32_t native_psram_low_water_ = 0;
+    uint32_t json_decode_count_ = 0;
+    uint32_t json_largest_input_bytes_ = 0;
     int hooks_ref_ = LUA_NOREF;
     int64_t deadline_us_ = 0;
     bool deadline_exceeded_ = false;
-    bool memory_limit_exceeded_ = false;
+    bool runtime_failed_ = false;
     bool in_destroy_ = false;
     lv_obj_t *root_ = nullptr;
     lv_timer_t *http_timer_ = nullptr;

@@ -7,10 +7,12 @@
 #include "cJSON.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <dirent.h>
+#include <deque>
 #include <fcntl.h>
 #include <memory>
 #include <set>
@@ -36,6 +38,23 @@ int path_stat(const char *path, struct stat *st) {
 std::string s_root;
 CrystalPackageLimits s_limits;
 std::vector<CrystalPackageRecord> s_records;
+// Only the management task mutates package state or this deletion cursor.
+// Never run a full catalog-sized tree deletion inside a live LVGL callback.
+struct RemovalFrame { std::string path; DIR *directory = nullptr; };
+std::deque<std::string> s_removals;
+std::vector<RemovalFrame> s_removal_stack;
+// Install handlers may run on an HTTP/USB task. They only read this admission
+// flag, never the management task's queue or directory cursor.
+std::atomic<bool> s_removal_pending{false};
+void reset_removals() {
+    for (auto &frame : s_removal_stack) if (frame.directory) closedir(frame.directory);
+    s_removal_stack.clear(); s_removals.clear(); s_removal_pending = false;
+}
+void finish_removal_frame() {
+    s_removal_stack.pop_back();
+    if (s_removal_stack.empty()) s_removals.pop_front();
+    if (s_removals.empty()) s_removal_pending = false;
+}
 using Json = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>;
 Json json(cJSON *value) { return Json(value, cJSON_Delete); }
 bool fail(std::string *error, const char *message) { if (error) *error = message; return false; }
@@ -377,9 +396,14 @@ bool crystal_package_read_file(const std::string &id, const std::string &path,
 
 bool crystal_packages_init(const char *root, CrystalPackageLimits limits, std::string *error) {
     if (!root || !*root || !limits.memory_bytes || !limits.storage_bytes) return fail(error, "Invalid package configuration");
+    reset_removals();
     s_root.clear(); s_records.clear();
     const std::string base(root);
     if (!mkdir_ok(base) || !remove_tree(base + "/.staging")) return fail(error, "Could not prepare app storage");
+    // Before the live UI/watchdog starts, finish interrupted logical uninstalls.
+    // Trash names are never valid app IDs and cannot be rediscovered as apps.
+    if (!remove_tree(base + "/.trash") || !mkdir_ok(base + "/.trash"))
+        return fail(error, "Could not recover removed app storage");
     std::string saved;
     int status = read_blob("pkg.registry", &saved, kRegistryMax);
     auto previous = status > 0 ? parse(saved) : json(cJSON_CreateArray());
@@ -459,6 +483,7 @@ bool crystal_packages_init(const char *root, CrystalPackageLimits limits, std::s
 }
 
 bool crystal_package_install(FILE *stream, bool developer_mode, std::string *error, crystal_package_verify_t verifier) {
+    if (s_removal_pending.load()) return fail(error, "App storage cleanup in progress; retry shortly");
 #ifdef ESP_PLATFORM
     if (verifier == nullptr) verifier = crystal_signature_verify_package;
 #endif
@@ -571,11 +596,63 @@ bool crystal_package_remove(const std::string &id, bool cleanup_verified, std::s
         if (!save_records()) { *it = old; return fail(error, "Resources active; could not persist disabled state"); }
         return fail(error, "Resources still active; app disabled and data retained");
     }
-    if (!remove_tree(s_root + "/" + id)) return fail(error, "Could not remove app files; retry removal");
-    if (!crystal_package_state_clear(id)) return fail(error, "Could not clear package state; retry removal");
+    const std::string source = s_root + "/" + id, detached = s_root + "/.trash/" + id;
+    struct stat existing{};
+    if (path_stat(detached.c_str(), &existing) == 0 || errno != ENOENT)
+        return fail(error, "App storage cleanup in progress; retry shortly");
+    const bool moved = rename(source.c_str(), detached.c_str()) == 0;
+    if (!moved && errno != ENOENT) return fail(error, "Could not detach app files; retry removal");
+    if (!crystal_package_state_clear(id)) {
+        if (moved) (void)rename(detached.c_str(), source.c_str());
+        return fail(error, "Could not clear package state; retry removal");
+    }
     const auto old = s_records; s_records.erase(it);
-    if (!save_records()) { s_records = old; return fail(error, "Could not prune registry; boot will reconcile"); }
+    if (!save_records()) {
+        s_records = old;
+        if (moved) (void)rename(detached.c_str(), source.c_str());
+        return fail(error, "Could not prune registry; boot will reconcile");
+    }
+    if (moved) { s_removals.push_back(detached); s_removal_pending = true; }
+    if (error) error->clear();
     return true;
+}
+
+bool crystal_package_cleanup_step(std::string *error) {
+    if (error) error->clear();
+    if (s_removals.empty()) return true;
+    if (s_removal_stack.empty()) {
+        s_removal_stack.push_back({s_removals.front(), nullptr});
+        return false;
+    }
+    auto &frame = s_removal_stack.back();
+    if (!frame.directory) {
+        struct stat st{};
+        if (path_stat(frame.path.c_str(), &st) != 0) {
+            if (errno != ENOENT) return fail(error, "Could not inspect removed app files");
+            finish_removal_frame();
+        } else if (!S_ISDIR(st.st_mode)) {
+            if (unlink(frame.path.c_str()) != 0) return fail(error, "Could not reclaim removed app file");
+            finish_removal_frame();
+        } else {
+            frame.directory = opendir(frame.path.c_str());
+            if (!frame.directory) return fail(error, "Could not open removed app directory");
+        }
+        return s_removals.empty();
+    }
+    errno = 0;
+    auto *entry = readdir(frame.directory);
+    if (entry) {
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
+            const std::string child = frame.path + "/" + entry->d_name;
+            s_removal_stack.push_back({child, nullptr});
+        }
+        return false;
+    }
+    if (errno) return fail(error, "Could not scan removed app directory");
+    closedir(frame.directory); frame.directory = nullptr;
+    if (rmdir(frame.path.c_str()) != 0) return fail(error, "Could not reclaim removed app directory");
+    finish_removal_frame();
+    return s_removals.empty();
 }
 
 bool crystal_package_state_get(const std::string &id, const char *key, void *out, size_t *length) {

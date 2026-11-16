@@ -405,37 +405,305 @@ test package.
 The fixture generator and server are in
 [`tools/phase17_http_fixture.py`](../tools/phase17_http_fixture.py).
 
-## 7. Bus app conversion and cleanup gate
+## 7. Stage A: Bus baseline and resource capture
 
-This is implementation plus acceptance work, not a test that can be run on the
-current Lua Clock package. Preserve the extracted native snapshot. First review
-[`examples/bus_app/ARCHITECTURE_HANDOFF.md`](../examples/bus_app/ARCHITECTURE_HANDOFF.md)
-and [`examples/bus_app/docs/bus-app-workflow.md`](../examples/bus_app/docs/bus-app-workflow.md);
-record which user-facing scope is being migrated (at minimum route/stop lookup,
-favorites and live ETA) and the required KMB/CTB hosts. Check each flow against
-the current Lua HTTP, JSON response, memory, storage and UI limits. The old
-full catalogs and direct native service are not automatically compatible with
-the script quotas; reduce the initial catalog scope or implement and validate
-a bounded host capability before proceeding if a flow exceeds them.
+Stage A uses the existing **Bus Lite 0.2.3** fixture flow before catalog work.
+The package has a 160 KiB Lua arena, 16 KiB app-storage quota and one HTTP
+worker. Host package and LVGL tests pass; this does not establish P4 runtime
+fit. The current image was built for OS 0.17.0 but has not yet been flashed or
+tested on the board in this run. Its SHA-256 is recorded in the transformation
+plan.
 
-Create a separate script package, keep provider-specific logic inside it, and
-use only current runtime APIs. Run the fixture parser/catalog check documented
-in [`examples/bus_app/README.md`](../examples/bus_app/README.md):
+The runtime and Bus package now emit resource snapshots at named checkpoints
+only: `launch_begin`, `launch_ready`, the first `catalog_loaded`, the first
+`stops_loaded`, the first `eta_complete`, and `teardown`. There is no periodic
+diagnostic timer. The snapshots include arena size/current/peak/largest-free,
+internal and PSRAM free/largest blocks and app deltas, HTTP/TLS and JSON peaks,
+callback/resource counts, and app-storage use. The post-cleanup line is
+`crystal_script: resource-checkpoint teardown ... clean=1`.
+
+### Prepare and flash the known firmware
+
+Use the build in this checkout so the Lua memory-failure containment and
+checkpoint instrumentation are present. The board configuration is the
+ESP32-P4 rev 1.x Function EV profile with hosted C6 Wi-Fi.
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 examples/bus_app/tools/bus_catalog/test_stop_catalogs.py
+source /Users/szemy/.espressif/v6.1/esp-idf/export.sh
+idf.py build
+ls /dev/cu.*
 ```
 
-Treat that guide's documented `--full` KMB artifact mismatch as an open issue,
-not as a passing golden test. Pack and inspect the new `.capp`, then test the
-agreed route/stop, favorites and network flows on the board. Finally repeat
-open → load → leave → uninstall at least ten times. Record cleanup evidence
-after each cycle; the registry must report no retained app resources, the
-package must uninstall cleanly, and the next launch/network request must still
-work. Record every unimplemented or out-of-quota Bus capability before
-claiming Phase 17 complete.
+Close any existing `idf_monitor` or serial terminal first; it holds the USB
+serial port exclusively. Set `PORT` to the P4 USB serial device, then
+application-flash and open a monitor in one terminal:
 
-## 8. Record the result
+```sh
+export PORT=/dev/cu.usbmodemXXXX
+idf.py -p "$PORT" app-flash
+idf.py -p "$PORT" monitor -b 1000000
+```
+
+Record `shasum -a 256 build/crystal_os.bin` with the log. Confirm boot reaches
+the launcher without a panic. Application flashing preserves the package
+partition. The old Bus package must be uninstalled before replacing it; that
+removes its saved favorites and recent routes.
+
+### Install the fixture package and exercise the flow
+
+Keep the monitor open. In a second terminal, start the Mac fixture server and
+leave it running:
+
+```sh
+python3 tools/phase17_bus_fixture.py serve
+```
+
+In a third terminal, set `MAC_IP` to the Mac's LAN address and `DEVICE_URL` to
+the P4 Local Control Panel URL. These are different addresses: the app fetches
+the Mac fixture on port 8000, while the CLI installs to the P4. Complete
+Steps 2 and 3 above if a trusted signing key or fresh pairing PIN is needed.
+
+```sh
+MAC_IP=192.168.1.195
+DEVICE_URL=http://192.168.1.52/
+PAIRING_PIN=123456
+PACKAGE_KEY="$HOME/.crystal_keys/phase17-test-ed25519.pem"
+KEY_ID=240
+python3 tools/phase17_bus_fixture.py create --host "$MAC_IP"
+python3 tools/crystal.py run /tmp/phase17-bus \
+  --wifi "$DEVICE_URL" --pin "$PAIRING_PIN" \
+  --key "$PACKAGE_KEY" --key-id "$KEY_ID"
+```
+
+In Bus Lite, open **Search**, type `1A`, and choose **1A KMB**. Confirm the
+numbered stop list loads, choose the second stop, and check that fixture arrivals
+appear. Use Back to return to the stop list and Search, then open Favorites and
+return to Search. This checks the existing launch, route, stop, ETA and
+navigation baseline. The fixture output should show route/stop/ETA requests.
+
+Capture the serial lines beginning `BUS_RESOURCE`. Each named checkpoint should
+appear once during this run. Exit Bus Lite and confirm the final cleanup line
+reports `clean=1` with no retained resources. Do not use the host test's mock
+numbers as board measurements. Record the actual output, app version, firmware
+hash, date, board revision and serial log. If this is repeated, retain the
+lowest internal/PSRAM and Lua-largest-free readings for comparison with later
+catalog stages.
+
+Host verification commands are:
+
+```sh
+python3 tools/test_phase17_bus_package.py
+python3 tools/test_phase17_bus_render.py
+```
+
+The render test exercises production Lua UI bindings and real LVGL at 480/720
+pixels; HTTP, state and resource metrics are deterministic adapters. The
+separate allocator check exercises 160 KiB memory recovery and OOM containment.
+These checks do not replace the P4 run above. After Stage A passes on hardware,
+continue with the complete catalog and live-provider stages in the
+[transformation plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md).
+
+## 8. Stage B: build and inspect the bounded catalog assets
+
+Stage B is a host-only catalog preparation step. It uses the recorded
+2026-10-02 provider snapshots already in this checkout; it does not contact a
+Mac fixture server or a live provider. Generate the package assets with:
+
+```sh
+python3 tools/build_phase17_bus_catalog.py \
+  --kmb-routes examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
+  --ctb-routes examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
+  --kmb-stops examples/bus_app/artifacts/bus_catalog/sources/kmb-stop-20261002.json.gz \
+  --ctb-stops examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
+  --output examples/bus3p/assets/catalog \
+  --generated-at 2026-10-02T22:37:17+08:00 \
+  --source-revision pinned-20261002 \
+  --kmb-route-label recorded-hkbus-routeFareList-kmb \
+  --ctb-route-label recorded-hkbus-routeFareList-ctb \
+  --kmb-route-timestamp 2026-10-02T00:00:00Z \
+  --ctb-route-timestamp 2026-10-02T00:00:00Z \
+  --kmb-stop-timestamp 2026-10-02T22:37:17+08:00 \
+  --ctb-stop-timestamp 2026-10-02T01:18:18Z
+```
+
+The command must report 2,115 normalized route records, 160 joint records,
+6,753 KMB stops and 2,586 CTB stops. Check that `assets/catalog/manifest.json`
+records source hashes/timestamps and that its limits report 115 files, every
+JSON Lines page at most 16 KiB (and every asset below the 32 KiB contract), and
+a total below 5.5 MiB. Run the catalog, package and UI
+checks:
+
+```sh
+python3 tools/test_phase17_bus_catalog.py
+python3 tools/test_phase17_bus_package.py
+python3 tools/test_phase17_bus_render.py
+```
+
+Repack for inspection or later portal installation with the IDF Python
+environment if the system Python does not have signing dependencies:
+
+```sh
+/Users/szemy/.espressif/python_env/idf6.1_py3.10_env/bin/python \
+  tools/crystal.py pack examples/bus3p \
+  --key "$HOME/.crystal_keys/phase17-test-ed25519.pem" --key-id 240 \
+  -o /tmp/phase17-bus.capp
+/Users/szemy/.espressif/python_env/idf6.1_py3.10_env/bin/python \
+  tools/crystal.py inspect /tmp/phase17-bus.capp
+```
+
+The package contains the Stage C Lua catalog reader. Do not use this step's
+asset count as a board memory measurement.
+
+## 9. Stage C: exercise catalog-backed pages
+
+**2026-11-16 launch failure and retest:** The 0.2.3 catalog package exhausted
+its 160 KiB arena immediately after launch_begin. Teardown reported 131 KiB
+peak payload; allocator headers and fragmentation also consume the arena.
+Free PSRAM remained about 24 MiB. Use Bus Lite 0.2.4 with the provisional
+512 KiB quota and bounded search buffers. Firmware does not change.
+Uninstall the prior Bus Lite package (saved stops are deleted), upload
+/tmp/phase17-bus-stagec.capp in the P4 Control Panel, then apply/restart.
+
+First confirm launch_ready appears and launch_begin shows /512. Search 1,
+wait for the catalog to finish, and use Next/Previous through several pages;
+then change quickly to 1A. Continue the steps below, capturing search_ready,
+stops_loaded, eta_complete and teardown. Do not mark the P4 memory target
+passed from host measurements: record the board peak and largest free block.
+
+**Follow-up watchdog retest (0.2.5):** 0.2.4 now launches without OOM, but
+search exceeded the 50 ms callback deadline. Install 0.2.5 from
+/tmp/phase17-bus-stagec.capp. The reader separates file IO and individual JSON
+conversions over timer ticks; wait for the search status to complete. Verify
+1, 1A, 101 and Next/Previous, then stop metadata and arrivals. Keep the serial
+log from launch_begin through search_ready and teardown. Record whether the
+870–919 ms onCreate warning persists. Memory and callback acceptance are
+pending this board retest; no firmware reflash is required.
+
+**0.2.5 board retest: partial pass.** The excerpt beginning at uptime
+1,023,080 ms reaches launch_ready, search_ready, stops_loaded and eta_complete
+with no quota or callback timeout. Observed peak Lua payload is 247/512 KiB;
+internal free memory stays 236 KiB at checkpoints. Startup still takes 746 ms
+against the 200 ms lifecycle budget. The 7,093 ms span between catalog_loaded
+and search_ready includes scheduling/debounce and is not a clean latency test.
+The fixture terminal history mixes runs and has no timestamps; do not assign
+its earlier /api/routes requests to this launch.
+
+For the remaining board checks, use 1A KMB or 2 CTB for stops/ETA and 68X KMB
+for the 17-stop paging check. Use 101 only to inspect the joint search card and
+identity: this fixture does not supply 101 stops/ETA. Unknown routes (including
+1 and 101/101R) return HTTP 200 with {"stops":[],"etas":[]} (22 bytes).
+Capture navigation/cancellation and a final teardown checkpoint separately;
+those are not proven by this log. No package reinstall is required for these
+remaining checks.
+
+**68X follow-up: restart the fixture server before paging.** The next supplied
+board excerpt (uptime 1,625,383–1,684,082 ms, request IDs 18–33) shows all
+16 requests completing with HTTP 200, no Lua quota/callback failure, and stable
+internal free heap of 242,211 bytes after responses. However, the three stop
+responses are each 289 bytes: this exactly matches the earlier three-stop 68X
+fixture. The current 17-stop fixture serializes to 1,665 bytes. The Python
+server likely still has the older module loaded; editing the file does not
+reload the running process. Paging is not yet verified by this excerpt.
+
+1. In the fixture server terminal, press Ctrl+C, then restart it from this repo:
+
+       python3 tools/phase17_bus_fixture.py serve
+
+2. In another terminal, verify the running server returns 17 stops:
+
+       curl -fsS 'http://192.168.1.195:8000/api/stops?route=68X&operator=KMB&bound=I&service_type=1' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["stops"]))'
+
+3. In the existing Bus Lite install, reopen 68X and refresh the stop list using
+   the top-right action. Check Page 1 / 3, Next to Page 2 / 3 (stops 9–16),
+   then Page 3 / 3 (stop 17). Select stop 17 and verify the fixture logs
+   stop=KMB-68X-017; return and verify Previous still works.
+4. Home produces onPause, as it does at the end of the supplied log. For final
+   cleanup evidence, uninstall Bus Lite through Manage Apps or the Control
+   Panel after finishing (this deletes favorites/recents). Capture onDestroy
+   and resource-checkpoint teardown with tracked=0 and clean=1.
+
+No app reinstall or firmware flash is needed to correct the server data.
+
+**68X stop-17 retest: paging and app cleanup observed; firmware fix required.**
+The next board log receives 1,665-byte stop responses and the Mac logs
+stop=KMB-68X-017 in both directions. Uninstall reaches onDestroy and reports
+153/512 KiB payload, 247 KiB peak, tracked=0, clean=1. App resource cleanup
+passes this run. The LVGL task watchdog then fires during synchronous file
+deletion, about five seconds after teardown; uninstall eventually succeeds.
+This is a firmware package-deletion stall, not a Lua resource leak.
+
+The current build fixes deletion by detaching the clean app and scheduling
+one bounded filesystem cleanup step per 20 ms timer tick. Flash the new
+application image with the existing app-flash procedure in Section 1. Firmware
+SHA-256: 07ef3ea76f3be930fad88b0db6047032e0647a6880e583690be15ce72ae1587b.
+No board flash was performed by the agent. Bus Lite CAPP remains 0.2.5.
+
+After application flashing, reinstall the same signed Bus CAPP and repeat
+68X stop 17, then uninstall. The launcher should remove Bus Lite and Settings
+should respond while file reclamation finishes. Capture clean=1 and the
+single App storage cleanup complete log, with no task_wdt warning. Immediate
+reinstall may report App storage cleanup in progress; retry after completion.
+Power loss during reclamation is recovered at boot. Uninstall still removes
+saved stops/recents. Full ten-cycle P4 coverage and startup tuning remain open.
+
+**Deferred uninstall retest: PASS (single P4 run).** The user confirms
+resource-checkpoint teardown at uptime 339,100 ms with tracked=0 and clean=1,
+156/512 KiB current Lua payload and 248 KiB peak. Manage Apps reports success
+at 339,126 ms and refreshes its list at 339,141 ms. App storage cleanup complete
+appears at 347,087 ms, about 7.96 seconds after logical uninstall. No watchdog
+warning appears in the supplied excerpt. The uninstall watchdog regression
+is closed for this run. Ten-cycle P4 stability, startup latency and remaining
+explicit Stage C interaction checks are not established by this excerpt.
+
+Stage C keeps the deterministic fixture for the selected route's stop sequence
+and ETA response, while route discovery and stop metadata use the bundled
+catalog. Recreate the fixture package after changing the Mac address, then
+install it through the P4 developer control panel or with `crystal run`:
+
+```sh
+MAC_IP=192.168.1.195
+DEVICE_URL=http://192.168.1.52/
+PAIRING_PIN=123456
+python3 tools/phase17_bus_fixture.py create --host "$MAC_IP"
+python3 tools/crystal.py pack /tmp/phase17-bus \
+  --key "$HOME/.crystal_keys/phase17-test-ed25519.pem" --key-id 240 \
+  -o /tmp/phase17-bus.capp
+python3 tools/crystal.py install --wifi "$DEVICE_URL" --pin "$PAIRING_PIN" /tmp/phase17-bus.capp
+```
+
+After applying the package, keep the fixture server running in a separate
+terminal (`python3 tools/phase17_bus_fixture.py serve`) and check the following
+workflow on the board:
+
+1. Open Search and enter `1A`. Wait for the catalog status to finish. The route
+   cards must come from the package and show a destination beginning with
+   `To`; the Mac fixture must receive no `/api/routes` request.
+2. Select the fixture's `68X` KMB route, verify that its 17-stop page contains
+   the complete ordered sequence, and use Next/Previous. The visible rows must
+   be reused and the page indicator must move without losing earlier or later
+   stops.
+3. Select a stop and confirm the fixture receives `/api/stops` and `/api/eta`
+   with the selected provider-qualified route and stop. The ETA page remains a
+   separate board with three arrival rows.
+4. Search `101` to reach a recorded joint card. The card must show `KMB/CTB` and
+   retain the route's destination. Selecting it must keep both provider parts
+   in the saved/recent identity even though Stage C uses the first part for the
+   fixture stop request.
+5. If a stop response omits its name, verify the row says `Metadata unavailable
+   - Retry`; press the header refresh and confirm the operator catalog is
+   consulted again without a crash.
+6. Type quickly, change the query before the catalog finishes, go Back, pause or
+   leave the app, and return. A late catalog page must not replace the newer
+   query or the current page. Capture the named `BUS_RESOURCE` checkpoints and
+   confirm no quota toast, reset or retained-resource error.
+
+The current catalog path uses one 100 ms timer for the 200 ms debounce and
+bounded page continuation. Host checks assert the source remains below 64 KiB
+and the production binding remains at or below 64 callbacks. Stage D adds live
+provider requests, joint ETA merging and automatic refresh; do not mark those
+items as Stage C failures.
+
+## 10. Record the result
 
 For each acceptance item, record **PASS**, **FAIL**, or **NOT RUN**, along with
 the date, board revision, firmware SHA-256 (`shasum -a 256 build/crystal_os.bin`),
@@ -449,7 +717,10 @@ substitute for any board result above.
 | Runaway callback closes app without reset | PASS (serial evidence) | 2026-11-15 P4 capture: 50 ms limit, App stopped toast, onPause/onDestroy, then about 30 seconds of continued UI redraws without reset. Visual launcher/touch check and uninstall pending; flashed/local ELF mismatch noted in Step 5. |
 | HTTP callback, allowlist and request quota | PASS (serial evidence) | 2026-11-15 P4 capture, OS 0.17.0, silicon revision v1.3: request id 1 returned status 200 with `{"ok":true}`; quota and allowlist errors matched the expected results. |
 | HTTP cancellation during app destruction | PASS (serial evidence) | Same capture: the Mac received the second `/slow`; owner cancellation was requested, request id 3 completed with `ESP_ERR_INVALID_STATE` and `cancelled=1`, with no Lua callback. Worker-check request returned 200 afterward; both test apps were uninstalled. ELF SHA prefix `177c07ebe`; full image hash and physical board revision unrecorded. |
-| Bus Script conversion and cleanup | | |
+| Bus Lite bounded Script package and cleanup | PASS (bounded fixture flow) | Earlier P4 run reported empty stops; fixed Lua append argument loss, 32-bit sentinel overflow and the saved-stop callback timeout caused by synchronous state/UI work in an ETA callback. Version 0.2.3 follows the native layout and adds persistent recent routes. The developer-panel retest completed search, stops, ETA, Favorites and reopening a saved stop without the previous crash. Host package and production-binding/LVGL checks pass at 480/720 pixels. Numeric `BUS_RESOURCE` capture, repeated cleanup cycles and the catalog/live-provider stages remain open. |
+| Stage B catalog generation and package limits | PASS (host) | Recorded snapshot produced 2,115 routes (160 joint), 6,753 KMB stops and 2,586 CTB stops in 115 files; JSON Lines pages are at most 16 KiB, total catalog assets are 1,802,584 bytes, and the package remains below the 5.5 MiB limit. |
+| Stage C catalog-backed search and paging | PARTIAL PASS (board) | 0.2.4 launched but search hit the 50 ms callback limit. Corrected 0.2.5 keeps 512 KiB and limits each timer tick to one file read or one needed JSON decode. Host work-bound and coverage checks pass. The latest P4 excerpt reaches search/stops/ETA without quota or callback failure (247/512 KiB peak payload); startup remains 746 ms. 68X stop 17 is now reachable in both directions and Lua teardown is clean (tracked=0 clean=1); synchronous filesystem deletion triggered the LVGL watchdog. Deferred cleanup now also passes a single P4 retest: uninstall succeeds at 339,126 ms and App storage cleanup complete appears at 347,087 ms without a watchdog warning in the excerpt. Signed `/tmp/phase17-bus-stagec.capp` is 1,847,721 bytes, SHA-256 `48cd34b505df5c898f6eefbabea927d69a5db45170242d608ca4717216326bac`. Search, stop-17 reachability in both directions and single-run cleanup have board evidence. Missing metadata retry, explicit joint identity/cancellation/late-page checks, startup latency and repeat-cycle coverage remain open. |
+| Stage C deferred uninstall and storage cleanup | PASS (single P4 run) | teardown tracked=0 clean=1; 248/512 KiB peak payload. Manage Apps succeeds before incremental reclamation finishes about eight seconds later. Completion log observed; no task_wdt warning in the supplied excerpt. Ten-cycle hardware coverage remains pending. |
 
 After all tests, uninstall remaining test packages. USB package uninstall does
 not remove signing trust. If you provisioned a test key, record its ID and

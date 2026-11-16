@@ -4,6 +4,7 @@
 #include "crystal_stylesheet.hpp"
 #include "crystal_page_transition.hpp"
 #include "crystal_boot_screen.hpp"
+#include "crystal_ui_metrics.hpp"
 #include "manage_apps_page.h"
 
 #include <cmath>
@@ -2102,6 +2103,7 @@ bool crystal_shell_init(ESP_Brookesia_Phone *phone)
 
     s_phone = phone;
     s_gesture = gesture;
+    crystal_ui_metrics_start(lv_disp_get_default());
     crystal_registry_set_removed_hook(on_installed_app_removed);
     crystal_app_set_shell_back_hook(shell_consume_back);
     CrystalUI::set_focus_hooks(crystal_keyboard_show, crystal_keyboard_hide_for);
@@ -3656,6 +3658,17 @@ void settings_push_developer_tools()
     lv_obj_add_event_cb(s_control_api_switch, control_panel_toggle_changed,
                         LV_EVENT_VALUE_CHANGED, nullptr);
 
+    lv_obj_t *resources = settings_row(content, "Resources Monitor", "CPU and FPS in the bottom-right corner");
+    lv_obj_t *resources_switch = settings_switch(resources, crystal_resources_monitor_enabled());
+#if !LV_USE_PERF_MONITOR
+    lv_obj_add_state(resources_switch, LV_STATE_DISABLED);
+#endif
+    lv_obj_add_event_cb(resources_switch, [](lv_event_t *event) {
+        const bool visible = lv_obj_has_state(
+            static_cast<lv_obj_t *>(lv_event_get_target(event)), LV_STATE_CHECKED);
+        crystal_resources_monitor_set_enabled(visible);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);
     lv_label_set_text(note, "Use the Wi-Fi panel to install and manage apps. Developers can also install using the USB command-line tool.");
@@ -3823,7 +3836,7 @@ void settings_open()
     lv_obj_add_event_cb(region, [](lv_event_t *) { settings_push_region_time(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *manage = settings_row(content, "Manage Apps", "View installed and available apps");
     lv_obj_add_event_cb(manage, [](lv_event_t *) { manage_apps_page_open(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *developer = settings_row(content, "Developer Tools", "Local control panel and pairing");
+    lv_obj_t *developer = settings_row(content, "Developer Tools", "Local control panel and resource monitor");
     lv_obj_add_event_cb(developer, [](lv_event_t *) { settings_push_developer_tools(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *system = settings_row(content, "System", hal().system_info != nullptr ? hal().system_info->app_version() : "About and status");
     lv_obj_add_event_cb(system, [](lv_event_t *) { settings_push_system(); }, LV_EVENT_CLICKED, nullptr);

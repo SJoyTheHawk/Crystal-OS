@@ -829,6 +829,21 @@ brief device check.
 - [x] Exercise `crystal run` end-to-end with a connected device; signed install and launch succeeded and Clock behavior was confirmed on the P4 (Nov 2026).
 - [ ] Convert the Bus app to the Script tier and verify resource cleanup; retained as a separate acceptance item because the existing Bus app has a larger service/catalog surface than the clock runtime example.
 
+The first bounded acceptance slice is `examples/bus3p/` (Bus Lite). It proves
+that route search, on-demand stops, fixture ETA, saved-stop persistence, and
+request cancellation can be packaged in Lua. Version 0.2.2 follows the native
+Favorites/Search keypad and stop-picker layout; production-binding/LVGL host
+checks pass, with board retesting and cleanup still open. It does not close the full Bus
+migration: the large KMB/CTB catalogs and complete provider workflows remain
+outside the Phase 17 Script budget until a streamed or host-managed catalog
+capability exists.
+
+The [Phase 17.3 Bus comparison and remaining-work plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md)
+proposes a smaller acceptance completion: packaged real route/stop samples,
+direct provider ETA, visible-page refresh and the existing cleanup check. Full
+catalog migration is deferred under that proposed scope; the Bus checkbox
+remains open until the bounded live flow passes on the board.
+
 ---
 
 ## 12. Resource Budgets and Quotas

@@ -27,7 +27,7 @@ using crystal_registry_removed_hook_t = void (*)(size_t removed_index);
 void crystal_registry_set_removed_hook(crystal_registry_removed_hook_t hook);
 CrystalApp *crystal_registry_create_app(const CrystalAppEntry *entry);
 // LVGL task, with the display lock held. Stops the app, verifies its ledger,
-// detaches it from the launcher, then removes package files and state.
+// detaches it from the launcher, clears state and queues detached file cleanup.
 bool crystal_registry_uninstall_package(const char *id);
 
 bool crystal_registry_install(ESP_Brookesia_Phone *phone,

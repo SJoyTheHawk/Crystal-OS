@@ -1326,8 +1326,13 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (display == nullptr || clock_update == nullptr || connectivity_update == nullptr ||
             battery_update == nullptr || status_context == nullptr) return false;
 
-    if (!crystal_http_init()) {
-        ESP_LOGE(TAG, "failed to initialize crystal_http");
+    // The HTTP worker can start as soon as a restored package runs its
+    // onCreate hook. Initialize lwIP before creating that worker; otherwise a
+    // request queued during boot can enter esp_http_client while tcpip's
+    // mailbox is still invalid (tcpip_send_msg_wait_sem assertion).
+    const esp_err_t netif_err = esp_netif_init();
+    if (netif_err != ESP_OK && netif_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "failed to initialize esp_netif: %s", esp_err_to_name(netif_err));
         return false;
     }
 
@@ -1337,6 +1342,11 @@ bool crystal_core_init(void *display, crystal_clock_update_cb_t clock_update,
     if (event_loop_err != ESP_OK && event_loop_err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "failed to create default event loop: %s",
                  esp_err_to_name(event_loop_err));
+        return false;
+    }
+
+    if (!crystal_http_init()) {
+        ESP_LOGE(TAG, "failed to initialize crystal_http");
         return false;
     }
 

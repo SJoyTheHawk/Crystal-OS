@@ -53,6 +53,7 @@ instructions in those documents.
 - [Phase 15/16 closure](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
 - [Phase 17 runtime implementation and validation](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md)
 - [Phase 17 step-by-step P4 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
+- [Phase 17.3 Bus Lua comparison and remaining acceptance plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md)
 - [Focused regression guide](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
 - [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
 - [ESP-IDF commands](ESP_IDF_COMMAND_GUIDE.md): existing S3 instructions.

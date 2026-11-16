@@ -27,6 +27,24 @@ FIXTURE = r'''
 #include <cstring>
 #include <string>
 #include "lvgl.h"
+struct TestStorage {
+    uint8_t value = 1;
+    size_t length = 1;
+    bool present = false;
+    unsigned writes = 0;
+    bool get(const char *key, void *out, size_t *size) {
+        assert(!std::strcmp(key, "dev.resources"));
+        if (!present) return false;
+        if (*size >= length) std::memcpy(out, &value, length);
+        *size = length; return true;
+    }
+    bool set(const char *key, const void *data, size_t size) {
+        assert(!std::strcmp(key, "dev.resources") && size == 1);
+        value = *static_cast<const uint8_t *>(data); length = size;
+        present = true; ++writes; return true;
+    }
+};
+static TestStorage storage;
 static lv_obj_t *s_developer_tools_page, *s_control_api_row, *s_control_api_switch;
 static lv_obj_t *s_control_status_label, *s_system_page_stack[4], *content;
 static unsigned s_system_page_depth;
@@ -41,9 +59,9 @@ struct IWifi {
     bool has_ip() const { return connected; }
     bool ip_config(IpConfig *out) const { out->ip = 1; return connected; }
 };
-struct Hal { IWifi *wifi; };
+struct Hal { IWifi *wifi; TestStorage *storage; };
 static IWifi wifi;
-static Hal services{&wifi};
+static Hal services{&wifi, &storage};
 Hal &hal() { return services; }
 struct EthernetInfo { bool has_ip=false; unsigned ip=2; };
 static EthernetInfo ethernet;
@@ -95,6 +113,23 @@ void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width);
 
 CHECK = r'''
 static void flush(lv_disp_drv_t *driver, const lv_area_t *, lv_color_t *) { lv_disp_flush_ready(driver); }
+static lv_obj_t *resources_switch() {
+    for (uint32_t i = 0; i < lv_obj_get_child_cnt(content); ++i) {
+        auto *row = lv_obj_get_child(content, i);
+        if (!lv_obj_check_type(row, &lv_btn_class)) continue;
+        if (!std::strcmp(lv_label_get_text(lv_obj_get_child(row, 0)), "Resources Monitor")) {
+            return lv_obj_get_child(row, -1);
+        }
+    }
+    assert(false); return nullptr;
+}
+static void resources_toggle(bool on) {
+    auto *control = resources_switch();
+    assert(lv_obj_check_type(control, &lv_switch_class));
+    if (on) lv_obj_add_state(control, LV_STATE_CHECKED);
+    else lv_obj_clear_state(control, LV_STATE_CHECKED);
+    lv_event_send(control, LV_EVENT_VALUE_CHANGED, nullptr);
+}
 static void page_close() {
     auto *page = s_developer_tools_page;
     s_developer_tools_page = s_control_api_row = s_control_api_switch = s_control_status_label = nullptr;
@@ -143,8 +178,44 @@ int main() {
     lv_disp_draw_buf_init(&draw, pixels, nullptr, 480 * 20);
     static lv_disp_drv_t driver; lv_disp_drv_init(&driver);
     driver.hor_res = driver.ver_res = 480; driver.draw_buf = &draw; driver.flush_cb = flush;
-    lv_disp_drv_register(&driver);
+    auto *display = lv_disp_drv_register(&driver);
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x11151b), 0);
+
+    // Restore the preference before LVGL lazily creates its CPU/FPS label.
+    assert(crystal_resources_monitor_enabled()); // Fresh devices keep the existing overlay.
+    storage.present = true; storage.value = 0;
+    crystal_ui_metrics_start(display);
+    auto *dialog = lv_label_create(lv_layer_top()); lv_label_set_text(dialog, "Dialog stays visible");
+    for (unsigned i = 0; i < 40; ++i) { lv_tick_inc(10); lv_timer_handler(); }
+    auto *monitor = lv_obj_get_child(lv_layer_sys(), 0);
+    assert(monitor && lv_obj_check_type(monitor, &lv_label_class));
+    assert(std::strstr(lv_label_get_text(monitor), "FPS") && std::strstr(lv_label_get_text(monitor), "CPU"));
+    assert(!lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
+    assert(storage.writes == 0); // Restoring never writes flash.
+    reset();
+    assert(!lv_obj_has_state(resources_switch(), LV_STATE_CHECKED));
+    resources_toggle(true);
+    assert(lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
+    assert(crystal_resources_monitor_enabled() && storage.value == 1 && storage.writes == 1);
+    page_close(); settings_push_developer_tools();
+    assert(lv_obj_has_state(resources_switch(), LV_STATE_CHECKED));
+    resources_toggle(false);
+    assert(!lv_obj_is_visible(monitor) && !crystal_resources_monitor_enabled());
+    page_close(); settings_push_developer_tools();
+    assert(!lv_obj_has_state(resources_switch(), LV_STATE_CHECKED));
+    // Startup reapplies the saved choice even if the display's flags were reset.
+    lv_obj_clear_flag(lv_layer_sys(), LV_OBJ_FLAG_HIDDEN);
+    crystal_ui_metrics_start(display);
+    assert(!lv_obj_is_visible(monitor) && storage.writes == 2);
+    storage.value = 2; assert(crystal_resources_monitor_enabled());
+    storage.value = 0; storage.length = 0; assert(crystal_resources_monitor_enabled());
+    services.storage = nullptr; assert(crystal_resources_monitor_enabled());
+    crystal_resources_monitor_set_enabled(true); assert(lv_obj_is_visible(monitor));
+    services.storage = &storage; storage.length = 1;
+    crystal_ui_metrics_start(display);
+    assert(!lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
+    lv_obj_del(dialog);
+
     reset(); state(false, false); summary("Off - enable to pair a browser");
     assert(lv_obj_get_child_cnt(s_control_api_row) == 3); // title, summary, switch
     lv_area_t title_box, summary_box, toggle_box, row_box;
@@ -200,7 +271,7 @@ int main() {
     assert(dialogs==1 && shown_url=="http://192.168.1.158/");
     toggle(false);assert(!server_enabled);
     page_close(); fail_page = true; settings_push_developer_tools(); assert(!s_developer_tools_page);
-    puts("PASS: real LVGL panel toggle layout, initial state, startup lock, pairing, disable, no-Wi-Fi rollback, task/server failures, retry, and page exit/reopen");
+    puts("PASS: real LVGL resource monitor visibility and saved preference, panel toggle layout, startup lock, pairing, disable, no-Wi-Fi rollback, task/server failures, retry, and page exit/reopen");
 }
 '''
 
@@ -232,14 +303,19 @@ def main():
     )
     with tempfile.TemporaryDirectory(prefix='crystal-developer-tools-') as directory:
         temp = Path(directory)
-        (temp / 'lv_conf.h').write_text(CONF)
-        (temp / 'check.cpp').write_text(FIXTURE + constants + functions + CHECK)
+        (temp / 'lv_conf.h').write_text(CONF + '\n#define LV_USE_PERF_MONITOR 1\n')
+        (temp / 'sdkconfig.h').write_text('#pragma once\n#define CONFIG_IDF_TARGET_ESP32P4 0\n')
+        (temp / 'esp_log.h').write_text('#pragma once\n')
+        (temp / 'crystal_hal.hpp').write_text('#pragma once\n')
+        metrics = ROOT / 'components/crystal_shell/src/crystal_ui_metrics.cpp'
+        (temp / 'check.cpp').write_text(FIXTURE + f'\n#include "{metrics}"\n' + constants + functions + CHECK)
         (temp / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)
 project(developer_tools_test LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(LV_CONF_PATH "{temp}/lv_conf.h" CACHE STRING "" FORCE)
 add_subdirectory("{ROOT}/managed_components/lvgl__lvgl" lvgl)
 add_executable(check check.cpp)
+target_include_directories(check PRIVATE "{temp}" "{ROOT}/components/crystal_shell/include")
 target_compile_options(check PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(check PRIVATE lvgl)
 ''')

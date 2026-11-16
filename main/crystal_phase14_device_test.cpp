@@ -174,11 +174,20 @@ void tick(lv_timer_t *)
 {
     CrystalApp *app = test_app();
     switch (s_test.step) {
-    case Step::Install:
+    case Step::Install: {
+        // Physical deletion is scheduled in bounded steps after logical removal.
+        // Yield between those steps instead of treating immediate reinstall as
+        // a failure or draining a whole directory tree in this callback.
+        std::string error;
+        if (!crystal_package_cleanup_step(&error)) {
+            if (!error.empty()) failed(error.c_str());
+            return;
+        }
         if (!install()) return;
         ESP_LOGI(TAG, "PASS: installed Calculator Test from embedded .capp");
         s_test.step = Step::Launch;
         break;
+    }
     case Step::Launch:
         if (!send_event(app, ESP_BROOKESIA_CORE_APP_EVENT_TYPE_START) ||
             s_test.phone->getManager().getActiveApp() != app) { failed("Calculator Test did not launch"); return; }

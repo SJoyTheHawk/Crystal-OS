@@ -267,6 +267,20 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "Could not find LVGL task to subscribe to watchdog");
     }
 
+    // Package removal detaches the verified-clean app immediately. Reclaim
+    // just one file/traversal step per tick so catalog-sized bundles cannot
+    // block LVGL input or its watchdog heartbeat for several seconds.
+    require_boot_step(lv_timer_create([](lv_timer_t *) {
+        static bool cleanup_failed = false, cleanup_pending = false;
+        std::string error;
+        const bool idle = crystal_package_cleanup_step(&error);
+        if (!error.empty() && !cleanup_failed)
+            ESP_LOGW(TAG, "Deferred app storage cleanup: %s", error.c_str());
+        cleanup_failed = !error.empty();
+        if (idle && cleanup_pending) ESP_LOGI(TAG, "App storage cleanup complete");
+        cleanup_pending = !idle;
+    }, 20, nullptr) != nullptr, "Failed to schedule app storage cleanup");
+
     auto *phone = new ESP_Brookesia_Phone(display);
     require_boot_step(phone != nullptr, "Failed to create Brookesia phone");
 

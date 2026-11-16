@@ -23,6 +23,7 @@
 #include "crystal_package.hpp"
 #include "crystal_script_url.hpp"
 #include "crystal_network.h"
+#include "crystal_http.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -188,12 +189,10 @@ void *ScriptApp::lua_allocate(void *context, void *pointer, size_t, size_t new_s
     auto *app = static_cast<ScriptApp *>(context);
     if (new_size == 0) { app->arena_release(pointer); return nullptr; }
     if (new_size > SIZE_MAX - alignof(std::max_align_t)) {
-        app->memory_limit_exceeded_ = true;
         return nullptr;
     }
     if (!pointer) {
         void *result = app->arena_allocate(new_size);
-        if (!result) app->memory_limit_exceeded_ = true;
         return result;
     }
     auto *block = static_cast<Block *>(pointer) - 1;
@@ -239,10 +238,11 @@ void *ScriptApp::lua_allocate(void *context, void *pointer, size_t, size_t new_s
             block->size = combined;
         }
         app->arena_used_ += block->size - previous_size;
+        if (app->arena_used_ > app->arena_peak_) app->arena_peak_ = app->arena_used_;
         return pointer;
     }
     void *replacement = app->arena_allocate(new_size);
-    if (!replacement) { app->memory_limit_exceeded_ = true; return nullptr; }
+    if (!replacement) return nullptr;
     memcpy(replacement, pointer, previous_size);
     app->arena_release(pointer);
     return replacement;
@@ -270,6 +270,7 @@ void *ScriptApp::arena_allocate(size_t bytes)
         }
         block->free = false;
         arena_used_ += block->size;
+        if (arena_used_ > arena_peak_) arena_peak_ = arena_used_;
         return block + 1;
     }
     return nullptr;
@@ -469,7 +470,16 @@ bool ScriptApp::onCreate()
     }
     async_ = std::make_shared<AsyncState>();
     deadline_exceeded_ = false;
-    memory_limit_exceeded_ = false;
+    runtime_failed_ = false;
+    native_internal_baseline_ = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    native_psram_baseline_ = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    native_internal_low_water_ = native_internal_baseline_;
+    native_psram_low_water_ = native_psram_baseline_;
+    arena_peak_ = 0;
+    json_peak_internal_bytes_ = 0;
+    json_peak_psram_bytes_ = 0;
+    json_decode_count_ = 0;
+    json_largest_input_bytes_ = 0;
     arena_size_ = static_cast<size_t>(manifest_.memory_kb) * 1024;
     arena_ = resources().allocate(arena_size_);
     if (!arena_ || arena_size_ <= sizeof(Block) + alignof(std::max_align_t)) return false;
@@ -503,9 +513,9 @@ bool ScriptApp::onCreate()
     deadline_exceeded_ = false;
     int status = luaL_loadbufferx(lua_, source.data(), source.size(), manifest_.entry.c_str(), "t");
     if (status == LUA_OK) status = lua_pcall(lua_, 0, 1, 0);
-    if (status != LUA_OK || deadline_exceeded_ || memory_limit_exceeded_) {
+    if (status != LUA_OK || deadline_exceeded_) {
         const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
-            memory_limit_exceeded_ ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
+            status == LUA_ERRMEM ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
         runtime_error(message);
         lua_pop(lua_, 1);
         return false;
@@ -515,31 +525,72 @@ bool ScriptApp::onCreate()
     return execute("onCreate");
 }
 
+// All allocating argument setup and hook lookup run inside lua_pcall. A
+// failed first allocation is normal: Lua can collect garbage and retry it.
+// Only the protected call's final LUA_ERRMEM means the app exhausted its quota.
+int ScriptApp::protected_invoke(lua_State *state)
+{
+    auto *call = static_cast<Invocation *>(lua_touserdata(state, 1));
+    auto *app = call->app;
+    if (call->hook) {
+        lua_rawgeti(state, LUA_REGISTRYINDEX, app->hooks_ref_);
+        lua_getfield(state, -1, call->hook);
+        lua_remove(state, -2);
+        if (lua_isnil(state, -1)) { lua_pushboolean(state, !call->required); return 1; }
+        if (!lua_isfunction(state, -1)) return luaL_error(state, "Lifecycle hook is not a function");
+        lua_call(state, 0, 1);
+        const bool is_back = !strcmp(call->hook, "onBack");
+        lua_pushboolean(state, is_back ? (lua_isboolean(state, -1) && lua_toboolean(state, -1)) :
+            !(lua_isboolean(state, -1) && !lua_toboolean(state, -1)));
+    } else {
+        lua_rawgeti(state, LUA_REGISTRYINDEX, call->ref);
+        if (call->response) {
+            lua_pushinteger(state, call->response->id);
+            lua_pushinteger(state, call->response->status);
+            lua_pushlstring(state, call->response->body.data(), call->response->body.size());
+            lua_call(state, 3, 0);
+        } else {
+            if (call->message) lua_pushstring(state, call->message);
+            else lua_pushinteger(state, call->handle);
+            lua_call(state, 1, 0);
+        }
+        lua_pushboolean(state, true);
+    }
+    return 1;
+}
+
+bool ScriptApp::invoke(Invocation &invocation)
+{
+    if (!lua_ || runtime_failed_) return false;
+    const int top = lua_gettop(lua_);
+    if (!lua_checkstack(lua_, 2)) { runtime_error("Per-app Lua memory quota exceeded"); return false; }
+    lua_pushcfunction(lua_, protected_invoke); // Zero-upvalue C function: no allocation.
+    lua_pushlightuserdata(lua_, &invocation);
+    deadline_us_ = esp_timer_get_time() + 50000;
+    deadline_exceeded_ = false;
+    const int status = lua_pcall(lua_, 1, 1, 0);
+    const bool accepted = status == LUA_OK && lua_toboolean(lua_, -1);
+    if (status != LUA_OK || deadline_exceeded_) {
+        const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
+            status == LUA_ERRMEM ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
+        runtime_error(message ? message : "Lua callback failed");
+    }
+    // A successful zero-result callback has no error to pop. Always restore
+    // the saved stack depth, including when a caught deadline remains fatal.
+    lua_settop(lua_, top);
+    return accepted && !runtime_failed_;
+}
+
 bool ScriptApp::execute(const char *hook, bool required)
 {
     if (!lua_ || hooks_ref_ == LUA_NOREF) return !required;
-    lua_rawgeti(lua_, LUA_REGISTRYINDEX, hooks_ref_);
-    lua_getfield(lua_, -1, hook);
-    lua_remove(lua_, -2);
-    if (lua_isnil(lua_, -1)) { lua_pop(lua_, 1); return !required; }
-    if (!lua_isfunction(lua_, -1)) { lua_pop(lua_, 1); runtime_error("Lifecycle hook is not a function"); return false; }
-    deadline_us_ = esp_timer_get_time() + 50000;
-    deadline_exceeded_ = false;
-    const int status = lua_pcall(lua_, 0, 1, 0);
-    if (status != LUA_OK || deadline_exceeded_ || memory_limit_exceeded_) {
-        const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
-            memory_limit_exceeded_ ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
-        runtime_error(message ? message : "Lua callback failed");
-        lua_pop(lua_, 1);
-        return false;
-    }
-    const bool accepted = !(lua_isboolean(lua_, -1) && !lua_toboolean(lua_, -1));
-    lua_pop(lua_, 1);
-    return accepted;
+    Invocation call{this}; call.hook = hook; call.required = required;
+    return invoke(call);
 }
 
 void ScriptApp::runtime_error(const char *message)
 {
+    runtime_failed_ = true; // Never re-enter a failed VM from timers or teardown hooks.
     const char *detail = message ? message : "Lua runtime error";
     ESP_LOGE(TAG, "%s: %s", manifest_.id.c_str(), detail);
     char toast[128];
@@ -595,23 +646,7 @@ bool ScriptApp::onResume()
 
 bool ScriptApp::onBack()
 {
-    if (lua_ && hooks_ref_ != LUA_NOREF) {
-        lua_rawgeti(lua_, LUA_REGISTRYINDEX, hooks_ref_);
-        lua_getfield(lua_, -1, "onBack"); lua_remove(lua_, -2);
-        if (lua_isfunction(lua_, -1)) {
-            deadline_us_ = esp_timer_get_time() + 50000;
-            deadline_exceeded_ = false;
-            const int status = lua_pcall(lua_, 0, 1, 0);
-            if (status != LUA_OK || deadline_exceeded_ || memory_limit_exceeded_) {
-                const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
-                    memory_limit_exceeded_ ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
-                runtime_error(message); lua_pop(lua_, 1); return false;
-            }
-            const bool handled = lua_isboolean(lua_, -1) && lua_toboolean(lua_, -1);
-            lua_pop(lua_, 1);
-            if (handled) return true;
-        } else lua_pop(lua_, 1);
-    }
+    if (!runtime_failed_ && execute("onBack", true)) return true;
     return CrystalApp::onBack();
 }
 
@@ -630,6 +665,9 @@ void ScriptApp::release_callbacks()
 
 bool ScriptApp::onDestroy()
 {
+    const size_t quota_before_release = arena_size_;
+    const size_t used_before_release = arena_used_;
+    const size_t peak_before_release = arena_peak_;
     in_destroy_ = true;
     (void)execute("onDestroy");
     cancel_requests();
@@ -654,6 +692,15 @@ bool ScriptApp::onDestroy()
         lua_close(lua_); lua_ = nullptr;
     }
     if (arena_) { resources().deallocate(arena_); arena_ = nullptr; arena_size_ = 0; arena_used_ = 0; }
+    const auto cleanup = resources().report();
+    ESP_LOGI(TAG, "resource-checkpoint teardown id=%s lua_kb=%u lua_used_kb=%u lua_peak_kb=%u internal_free=%u largest_internal=%u psram_free=%u tracked=%zu clean=%u",
+             manifest_.id.c_str(), static_cast<unsigned>(quota_before_release / 1024),
+             static_cast<unsigned>(used_before_release / 1024), static_cast<unsigned>(peak_before_release / 1024),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)),
+             cleanup.tasks + cleanup.timers + cleanup.queues + cleanup.allocations + cleanup.objects,
+             cleanup.clean() ? 1U : 0U);
     if (!async_) async_ = std::make_shared<AsyncState>();
     in_destroy_ = false;
     return true;
@@ -681,18 +728,9 @@ void ScriptApp::ui_anim_done(CrystalUI::Handle handle, void *context) { ui_event
 
 bool ScriptApp::call_ref(int ref, CrystalUI::Handle handle, const char *message)
 {
-    if (!lua_ || ref == LUA_NOREF || in_destroy_) return false;
-    lua_rawgeti(lua_, LUA_REGISTRYINDEX, ref);
-    if (message) lua_pushstring(lua_, message); else lua_pushinteger(lua_, handle);
-    deadline_us_ = esp_timer_get_time() + 50000;
-    deadline_exceeded_ = false;
-    const int status = lua_pcall(lua_, 1, 0, 0);
-    if (status != LUA_OK || deadline_exceeded_ || memory_limit_exceeded_) {
-        const char *error = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
-            memory_limit_exceeded_ ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
-        runtime_error(error); lua_pop(lua_, 1); return false;
-    }
-    return true;
+    if (!lua_ || ref == LUA_NOREF || in_destroy_ || runtime_failed_) return false;
+    Invocation call{this}; call.ref = ref; call.handle = handle; call.message = message;
+    return invoke(call);
 }
 
 lv_obj_t *ScriptApp::build_widget(const cJSON *spec, lv_obj_t *parent, void *context)
@@ -750,7 +788,10 @@ lv_obj_t *ScriptApp::build_widget(const cJSON *spec, lv_obj_t *parent, void *con
         lv_obj_set_style_bg_color(object, lv_color_hex(0x273541), 0);
         lv_obj_set_style_text_color(object, lv_color_hex(0xF4F7FA), 0);
         lv_obj_set_style_radius(object, 8, 0);
-        if (text) { lv_obj_center(text); lv_obj_set_style_text_color(text, lv_color_hex(0xF4F7FA), 0); }
+        // Let the label inherit the button's text style, including later
+        // set_style updates (active tabs, left-aligned rows, disabled actions).
+        lv_obj_set_style_text_align(object, LV_TEXT_ALIGN_CENTER, 0);
+        if (text) { lv_obj_set_width(text, LV_PCT(100)); lv_obj_center(text); }
     } else if (!strcmp(type, "arc")) {
         lv_obj_set_style_arc_color(object, lv_color_hex(0x344553), LV_PART_MAIN);
         lv_obj_set_style_arc_color(object, lv_color_hex(0x53C8B6), LV_PART_INDICATOR);
@@ -828,6 +869,9 @@ bool ScriptApp::apply_style(lv_obj_t *object, const cJSON *style)
         } else if (!strcmp(item->string, "opacity")) {
             if (!finite_integer(item, 0, 255, &value)) return false;
             lv_obj_set_style_opa(object, value, 0);
+        } else if (!strcmp(item->string, "bg_opa")) {
+            if (!finite_integer(item, 0, 255, &value)) return false;
+            lv_obj_set_style_bg_opa(object, value, 0);
         } else if (!strcmp(item->string, "radius") || !strcmp(item->string, "padding") || !strcmp(item->string, "border_width")) {
             if (!finite_integer(item, 0, 255, &value)) return false;
             if (!strcmp(item->string, "radius")) lv_obj_set_style_radius(object, value, 0);
@@ -835,7 +879,8 @@ bool ScriptApp::apply_style(lv_obj_t *object, const cJSON *style)
             else lv_obj_set_style_border_width(object, value, 0);
         } else if (!strcmp(item->string, "font_size")) {
             if (!finite_integer(item, 12, 48, &value)) return false;
-            const lv_font_t *font = value <= 16 ? &lv_font_montserrat_16 : value <= 22 ? &lv_font_montserrat_20 : &lv_font_montserrat_28;
+            const lv_font_t *font = value <= 16 ? &lv_font_montserrat_16 : value <= 22 ? &lv_font_montserrat_20 :
+                value <= 28 ? &lv_font_montserrat_28 : &lv_font_montserrat_48;
             lv_obj_set_style_text_font(object, font, 0);
         } else if (!strcmp(item->string, "align")) {
             if (!cJSON_IsString(item)) return false;
@@ -1003,7 +1048,12 @@ int ScriptApp::ui_off(lua_State *state)
 }
 int ScriptApp::ui_list_add(lua_State *state)
 {
-    lua_pushinteger(state, UINT32_MAX); lua_replace(state, 2); return ui_list_insert(state);
+    // Preserve the item argument and append at the actual list length.
+    // UINT32_MAX wraps to -1 in the firmware's 32-bit Lua integer build.
+    auto *app = self(state); uint32_t handle = 0; unsigned count = 0;
+    if (!app || !lua_uint(state, 1, 1, UINT32_MAX, &handle) ||
+        !app->ui_.list_count(handle, &count)) { lua_pushboolean(state, false); return 1; }
+    lua_pushinteger(state, count); lua_insert(state, 2); return ui_list_insert(state);
 }
 int ScriptApp::ui_list_insert(lua_State *state)
 {
@@ -1288,9 +1338,23 @@ int ScriptApp::json_decode(lua_State *state)
 {
     size_t length = 0; const char *text = lua_tolstring(state, 1, &length);
     if (!text || length > kMaxFileBytes || memchr(text, '\0', length)) { lua_pushnil(state); return 1; }
+    auto *app = self(state);
+    const size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     cJSON *value = cJSON_ParseWithLength(text, length);
+    const size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t psram_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (app) {
+        ++app->json_decode_count_;
+        if (length > app->json_largest_input_bytes_)
+            app->json_largest_input_bytes_ = static_cast<uint32_t>(length);
+        const size_t internal_cost = internal_before > internal_after ? internal_before - internal_after : 0;
+        const size_t psram_cost = psram_before > psram_after ? psram_before - psram_after : 0;
+        if (internal_cost > app->json_peak_internal_bytes_) app->json_peak_internal_bytes_ = internal_cost;
+        if (psram_cost > app->json_peak_psram_bytes_) app->json_peak_psram_bytes_ = psram_cost;
+    }
     if (!value) { lua_pushnil(state); return 1; }
-    auto *app = self(state); if (app) app->json_to_lua(value); else lua_pushnil(state); cJSON_Delete(value); return 1;
+    if (app) app->json_to_lua(value); else lua_pushnil(state); cJSON_Delete(value); return 1;
 }
 
 int ScriptApp::fs_read(lua_State *state)
@@ -1424,12 +1488,76 @@ int ScriptApp::service_location_get(lua_State *state)
 }
 int ScriptApp::service_system_info(lua_State *state)
 {
-    lua_createtable(state, 0, 4);
+    auto *app = self(state);
+    lua_createtable(state, 0, 40);
+    auto set = [state](const char *key, lua_Integer value) {
+        lua_pushinteger(state, value); lua_setfield(state, -2, key);
+    };
     lua_pushstring(state, hal().system_info ? hal().system_info->app_version() : "unknown"); lua_setfield(state, -2, "os_version");
-    lua_pushinteger(state, 1); lua_setfield(state, -2, "abi_version");
-    lua_pushinteger(state, hal().system_info ? hal().system_info->free_psram() / 1024 : 0); lua_setfield(state, -2, "free_psram_kb");
-    uint32_t used = 0, total = 0; if (hal().system_info) (void)hal().system_info->storage_bytes(&used, &total);
-    lua_pushinteger(state, total > used ? (total - used) / 1024 : 0); lua_setfield(state, -2, "free_storage_kb"); return 1;
+    set("abi_version", 1);
+    const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (app) {
+        if (!app->native_internal_low_water_ || internal_free < app->native_internal_low_water_)
+            app->native_internal_low_water_ = static_cast<uint32_t>(internal_free);
+        if (!app->native_psram_low_water_ || psram_free < app->native_psram_low_water_)
+            app->native_psram_low_water_ = static_cast<uint32_t>(psram_free);
+    }
+    set("free_internal_kb", static_cast<lua_Integer>(internal_free / 1024));
+    set("largest_internal_kb", static_cast<lua_Integer>(internal_largest / 1024));
+    set("free_psram_kb", static_cast<lua_Integer>(psram_free / 1024));
+    set("largest_psram_kb", static_cast<lua_Integer>(psram_largest / 1024));
+    set("native_internal_low_kb", app ? app->native_internal_low_water_ / 1024 : 0);
+    set("native_psram_low_kb", app ? app->native_psram_low_water_ / 1024 : 0);
+    set("native_internal_delta_kb", app ?
+        (static_cast<lua_Integer>(app->native_internal_baseline_) - static_cast<lua_Integer>(internal_free)) / 1024 : 0);
+    set("native_psram_delta_kb", app ?
+        (static_cast<lua_Integer>(app->native_psram_baseline_) - static_cast<lua_Integer>(psram_free)) / 1024 : 0);
+    set("lua_arena_kb", app ? static_cast<lua_Integer>(app->arena_size_ / 1024) : 0);
+    set("lua_used_kb", app ? static_cast<lua_Integer>(app->arena_used_ / 1024) : 0);
+    set("lua_peak_kb", app ? static_cast<lua_Integer>(app->arena_peak_ / 1024) : 0);
+    size_t largest_arena_block = 0;
+    if (app && app->arena_) {
+        for (auto *block = static_cast<Block *>(app->arena_); block; block = block->next) {
+            if (block->free && block->size > largest_arena_block) largest_arena_block = block->size;
+        }
+    }
+    set("lua_largest_free_kb", static_cast<lua_Integer>(largest_arena_block / 1024));
+    const CrystalCleanupReport resources = app ? app->resources().report() : CrystalCleanupReport{};
+    set("app_tasks", static_cast<lua_Integer>(resources.tasks));
+    set("app_timers", static_cast<lua_Integer>(resources.timers));
+    set("app_queues", static_cast<lua_Integer>(resources.queues));
+    set("app_allocations", static_cast<lua_Integer>(resources.allocations));
+    set("app_objects", static_cast<lua_Integer>(resources.objects));
+    set("app_tracked_bytes", static_cast<lua_Integer>(resources.heap_bytes));
+    set("app_callbacks", app ? static_cast<lua_Integer>(app->callbacks_.size()) : 0);
+    set("app_http_callbacks", app ? static_cast<lua_Integer>(app->request_callbacks_.size()) : 0);
+    size_t app_storage_bytes = 0;
+    if (app) (void)app->data_size(&app_storage_bytes);
+    set("app_storage_bytes", static_cast<lua_Integer>(app_storage_bytes));
+    set("json_peak_internal_bytes", app ? static_cast<lua_Integer>(app->json_peak_internal_bytes_) : 0);
+    set("json_peak_psram_bytes", app ? static_cast<lua_Integer>(app->json_peak_psram_bytes_) : 0);
+    set("json_decode_count", app ? app->json_decode_count_ : 0);
+    set("json_largest_input_bytes", app ? app->json_largest_input_bytes_ : 0);
+    crystal_http_stats_t http{};
+    if (crystal_http_get_stats(&http)) {
+        set("http_peak_body_bytes", http.peak_body_bytes);
+        set("http_min_tls_internal_bytes", http.min_tls_internal_free);
+        set("http_min_tls_largest_bytes", http.min_tls_largest_internal);
+        set("http_min_tls_psram_bytes", http.min_tls_psram_free);
+        set("http_completed", http.completed);
+        set("http_cancellations", http.cancellations);
+    } else {
+        set("http_peak_body_bytes", 0); set("http_min_tls_internal_bytes", 0);
+        set("http_min_tls_largest_bytes", 0); set("http_min_tls_psram_bytes", 0);
+        set("http_completed", 0); set("http_cancellations", 0);
+    }
+    uint32_t storage_used = 0, storage_total = 0;
+    if (hal().system_info) (void)hal().system_info->storage_bytes(&storage_used, &storage_total);
+    set("free_storage_kb", storage_total > storage_used ? (storage_total - storage_used) / 1024 : 0);
+    return 1;
 }
 
 int ScriptApp::http_fetch(lua_State *state)
@@ -1581,7 +1709,7 @@ void ScriptApp::http_callback(const crystal_http_response_t *response, void *con
 void ScriptApp::http_dispatch(lv_timer_t *timer)
 {
     auto *app = static_cast<ScriptApp *>(timer->user_data);
-    if (!app || !app->lua_ || app->in_destroy_) return;
+    if (!app || !app->lua_ || app->in_destroy_ || app->runtime_failed_) return;
     HttpResult result{};
     bool has_result = false;
     {
@@ -1598,21 +1726,10 @@ void ScriptApp::http_dispatch(lv_timer_t *timer)
         if (found != app->request_callbacks_.end()) {
             const int ref = found->second;
             app->request_callbacks_.erase(found);
-            lua_rawgeti(app->lua_, LUA_REGISTRYINDEX, ref);
+            Invocation call{app}; call.ref = ref; call.response = &result;
+            const bool ok = app->invoke(call);
             luaL_unref(app->lua_, LUA_REGISTRYINDEX, ref);
-            lua_pushinteger(app->lua_, result.id);
-            lua_pushinteger(app->lua_, result.status);
-            lua_pushlstring(app->lua_, result.body.data(), result.body.size());
-            app->deadline_us_ = esp_timer_get_time() + 50000;
-            app->deadline_exceeded_ = false;
-            const int status = lua_pcall(app->lua_, 3, 0, 0);
-            if (status != LUA_OK || app->deadline_exceeded_ || app->memory_limit_exceeded_) {
-                const char *message = app->deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
-                    app->memory_limit_exceeded_ ? "Per-app Lua memory quota exceeded" : lua_tostring(app->lua_, -1);
-                app->runtime_error(message ? message : "HTTP callback failed");
-                lua_pop(app->lua_, 1);
-                return;
-            }
+            if (!ok) return;
         }
     }
     if (app->active_requests_.empty()) lv_timer_pause(timer);

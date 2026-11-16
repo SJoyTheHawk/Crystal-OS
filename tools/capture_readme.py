@@ -59,6 +59,7 @@ def main():
                ROOT / 'components/crystal_package/src/crystal_resources.cpp',
                ROOT / 'components/crystal_shell/src/crystal_stylesheet.cpp',
                ROOT / 'components/crystal_shell/src/crystal_page_transition.cpp',
+               ROOT / 'components/crystal_shell/src/crystal_ui_metrics.cpp',
                capture / 'package_stubs.cpp', capture / 'capture.cpp', capture / 'capture_shell.cpp', capture / 'services.cpp']
     for app in ('clock_app', 'weather_app', 'calculator_app', 'ethernet_app'):
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.cpp')))

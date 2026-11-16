@@ -60,7 +60,15 @@ public:
 static Storage storage;
 static std::string error;
 static fs::path fixtures;
+static unsigned drain_removals() {
+    unsigned steps = 0;
+    while (!crystal_package_cleanup_step(&error)) {
+        assert(error.empty() && ++steps < 10000);
+    }
+    return steps;
+}
 static bool install(const char *name, bool developer = true) {
+    drain_removals();
     FILE *f = fopen((fixtures / name).c_str(), "rb"); assert(f);
     bool ok = crystal_package_install(f, developer, &error); fclose(f); return ok;
 }
@@ -253,7 +261,36 @@ int main(int argc, char **argv) {
     assert(crystal_package_launch_result("org.crystal.calculator", false));
     assert(!crystal_packages()[0].enabled);
     assert(crystal_package_set_enabled("org.crystal.calculator", true));
+    // A catalog-sized app must disappear immediately while physical cleanup
+    // stays bounded and prevents installs from bypassing the storage budget.
+    fs::create_directories(root / "org.crystal.calculator/assets/catalog");
+    for (unsigned i = 0; i < 117; ++i)
+        std::ofstream(root / "org.crystal.calculator/assets/catalog" / (std::to_string(i) + ".jsonl")) << std::string(16384, 'x');
+    storage.fail_write = true;
+    assert(!crystal_package_remove("org.crystal.calculator", true, &error));
+    storage.fail_write = false;
+    assert(fs::exists(root / "org.crystal.calculator/assets/catalog/116.jsonl"));
+    assert(!fs::exists(root / ".trash/org.crystal.calculator"));
+    assert(crystal_package_cleanup_step(&error));
     assert(crystal_package_remove("org.crystal.calculator", true, &error));
+    assert(!fs::exists(root / "org.crystal.calculator"));
+    assert(fs::exists(root / ".trash/org.crystal.calculator/assets/catalog/116.jsonl"));
+    FILE *blocked = fopen((fixtures / "calculator.capp").c_str(), "rb"); assert(blocked);
+    assert(!crystal_package_install(blocked, true, &error)); fclose(blocked);
+    assert(error.find("cleanup in progress") != std::string::npos);
+    assert(!crystal_package_cleanup_step(&error) && error.empty());
+    assert(fs::exists(root / ".trash/org.crystal.calculator/assets/catalog/116.jsonl"));
+    assert(drain_removals() > 117);
+    assert(!fs::exists(root / ".trash/org.crystal.calculator"));
+    // Power loss after detach must not resurrect app files or private state.
+    assert(install("calculator.capp"));
+    assert(crystal_package_state_set("org.crystal.calculator", "recovery", &first, sizeof(first)));
+    assert(crystal_package_remove("org.crystal.calculator", true, &error));
+    assert(fs::exists(root / ".trash/org.crystal.calculator"));
+    assert(crystal_packages_init(root.c_str(), limits, &error));
+    assert(!fs::exists(root / ".trash/org.crystal.calculator"));
+    assert(crystal_package_cleanup_step(&error));
+    std::puts("PASS: bounded catalog-sized deletion, install admission and interrupted-uninstall recovery");
     std::puts("PASS: package bounds, CRC, traversal, duplicates, reserved paths, ABI, permissions, quotas, signature rejection, rollback, staging and persistence");
 
     // Resource ledger: typed handles, stale handles, memory ceiling and all leak categories.

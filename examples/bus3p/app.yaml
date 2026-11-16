@@ -1,0 +1,19 @@
+{
+  "abi": 1,
+  "id": "com.example.bus3p",
+  "name": "Bus Lite",
+  "version": "0.2.5",
+  "min_os": "0.17.0",
+  "author": "Crystal OS test",
+  "license": "MIT",
+  "runtime": "lua",
+  "entry": "main.lua",
+  "bar_style": "dark",
+  "memory_kb": 512,
+  "storage_kb": 16,
+  "worker_threads": 1,
+  "permissions": {
+    "notify": true,
+    "network_hosts": ["phase17.bus.fixture"]
+  }
+}

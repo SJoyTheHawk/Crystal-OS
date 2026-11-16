@@ -47,7 +47,14 @@ bool crystal_package_set_slot(const std::string &id, uint16_t slot);
 bool crystal_package_launch_result(const std::string &id, bool success);
 // Caller stops and verifies resources before authorizing removal. Leaks disable
 // the app and retain its files, state and registry entry for recovery.
+// Successful removal atomically detaches files into hidden trash. Reclaim the
+// detached files with cleanup_step on the management task; boot also recovers it.
 bool crystal_package_remove(const std::string &id, bool cleanup_verified, std::string *error);
+// One bounded filesystem traversal/removal step; true means no cleanup remains.
+// False with an empty error means work remains; false with an error is retryable.
+// Call only on the management task, between LVGL event/timer callbacks.
+// New installs are rejected while cleanup remains, preserving storage admission.
+bool crystal_package_cleanup_step(std::string *error = nullptr);
 bool crystal_package_state_get(const std::string &id, const char *key, void *out, size_t *length);
 bool crystal_package_state_set(const std::string &id, const char *key, const void *value, size_t length);
 bool crystal_package_state_erase(const std::string &id, const char *key);

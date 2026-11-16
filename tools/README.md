@@ -178,6 +178,10 @@ See the implementation notes for expected logs, reruns, and failure handling.
 
 ## Browser control panel
 
+In device Settings → Developer Tools, Resources Monitor shows or hides the
+CPU/FPS overlay in the bottom-right corner immediately. The preference survives
+restarts; the monitor stays on by default until you turn it off.
+
 In device Settings → Developer Tools, Local Control Panel uses the same
 right-aligned switch as the other Settings toggles. It is disabled while
 startup is pending, returns off if Wi-Fi or startup fails, and opens the

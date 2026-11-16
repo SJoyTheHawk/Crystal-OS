@@ -130,6 +130,12 @@ int main(int argc, char **argv) {
     assert(crystal_phase14_device_test_status() == CrystalPhase14TestStatus::Passed);
     std::puts("PASS: production device harness, 10 cycles, UI formula/result restoration, simulated reboot, state deletion and completed-run guard");
 
+    // Production main schedules this on its maintenance timer. The host
+    // driver waits explicitly before its next direct install request.
+    unsigned cleanup_steps = 0;
+    while (!crystal_package_cleanup_step(&error)) {
+        assert(error.empty() && ++cleanup_steps < 10000);
+    }
     FILE *stream = fmemopen(fixture.data(), fixture.size(), "rb"); assert(stream);
     assert(crystal_package_install(stream, true, &error)); fclose(stream);
     assert(crystal_registry_apply_changes());

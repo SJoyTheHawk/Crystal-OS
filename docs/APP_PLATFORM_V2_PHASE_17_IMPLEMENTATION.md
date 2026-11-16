@@ -179,5 +179,52 @@ uninstall checks. The remaining device checks and Bus conversion are:
 
 The phase checklist in the implementation plan and code guide tracks these
 board checks and the Bus migration separately.
+
+The first Bus migration attempt is now available as `examples/bus3p/` (**Bus
+Lite**). It is a real Lua package using the current UI, state, JSON, and async
+HTTP APIs. `tools/phase17_bus_fixture.py` creates a board-addressable copy and
+serves bounded route, stop, and ETA responses. The host package check passes;
+the P4 interaction, persistence, ten-cycle cleanup run, and full KMB/CTB catalog
+conversion remain open. The bounded slice is intentional: the native Bus
+catalogs are larger than the Script tier's response and memory budgets.
 Follow the [step-by-step P4 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
 to run and record those checks.
+
+Bus Lite 0.2.3 follows the native Favorites/Search keypad and stop-picker layout,
+with stop-specific favorites and arrivals. Its device report exposed two
+`ui.list_add` bugs: argument 2 was replaced instead of shifted, and UINT32_MAX
+wrapped to -1 in 32-bit Lua. Append now inserts the actual list length. The Lua
+style surface adds `bg_opa` (0–255) and maps sizes above 28 to the available
+48-point font. `tools/test_phase17_bus_render.py` tests production bindings and
+CrystalUI with real LVGL and saves 480/720-pixel renders. This corrects the
+previous mock-only coverage gap; device retesting remains required.
+
+Bus Lite 0.2.3 also stores the five most recently opened routes in app state.
+The empty search field displays these entries and opens their stop lists without
+another route lookup. The feature reuses the existing result rows and callback
+budget. Host interaction coverage checks persistence, deduplication on reopen,
+and returning to the recent list.
+
+## Lua memory-failure containment (2026-11-16)
+
+The Bus capture reported `Per-app Lua memory quota exceeded`, followed by a
+`luaD_throw` abort. HTTP responses were released and system heap readings were
+stable. The capture alone does not prove an app cleanup leak. Runtime inspection
+found that the allocator latched any initial failure even when Lua's emergency
+GC retry succeeded. Zero-result callback dispatch then treated that successful
+call as an error and popped a nonexistent error value, corrupting stack depth.
+
+Quota handling now uses the final protected-call status. Hook lookup and HTTP
+body/string argument setup run inside a protected trampoline. Every dispatch
+restores its original stack depth. A terminal runtime error prevents further
+Lua callbacks and lifecycle hooks; native teardown still releases resources.
+The package's 160 KiB quota is unchanged.
+
+Host evidence: Bus UI runs 1,000 refreshes at both display sizes using the
+production arena allocator and callback dispatch. The 64-bit host UI harness
+uses 256 KiB due to larger pointers/block headers and its Lua test driver; this
+is not a claim that the complete P4 UI has been measured at 160 KiB. A separate
+exact-160-KiB run verifies emergency-GC recovery, real callback OOM, HTTP-argument
+OOM, stack balance, skipped hooks after failure and zero allocated bytes after
+`lua_close`. Runtime/Clock suites and the P4 firmware build pass. Device retest
+is pending; monitor's missing `riscv32-esp-elf-gdb` is a separate host-tool issue.

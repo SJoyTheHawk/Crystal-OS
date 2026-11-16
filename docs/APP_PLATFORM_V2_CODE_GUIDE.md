@@ -1507,3 +1507,126 @@ and recorded A–F/G–M/N–R hardware evidence before repeating older checks.
 - [ ] Device: in-flight HTTP cancellation and system timer persistence verified
 - [ ] Bus app converted to script and resource cleanup verified
 
+## P4 Bus transformation: verified runtime contracts and Stage A diagnostics
+
+This section records contracts verified in the current ESP32-P4 Lua runtime.
+The S3 limits and measurements elsewhere in this guide are historical and do
+not establish P4 capacity.
+
+| API or limit | Current P4 contract |
+| --- | --- |
+| `crystal.fs.read("assets/…")` | Returns the complete asset or `nil`; reads are limited to 64 KiB. |
+| `crystal.json.decode(text)` | Converts JSON to Lua values subject to the 512-node, depth-16 and app-arena limits. Invalid JSON returns `nil`. |
+| `crystal.service.http.fetch(url, opts, callback)` | Returns an ID or `nil, error`; callback arguments are `(id, status, body)`. The body cap is 64 KiB, and concurrency is bounded by manifest `worker_threads`. |
+| `crystal.service.http.cancel(id)` | Requests cancellation. A generation/identity check must still discard stale callbacks. |
+| `crystal.service.time.now()` | Returns Unix seconds. |
+| `crystal.ui.timer(period_ms, callback)` | Registers a managed LVGL timer and consumes one of the app's 64 callback slots. |
+| `crystal.state.set(key, value)` | Returns whether the state update was written. `state.flush()` currently returns success without performing a second write. |
+| Package limits | Package tooling enforces 128 files and 5.5 MiB total; Lua source is limited to 64 KiB. Asset files can be read whole, so catalog pages should remain substantially smaller than that ceiling. |
+
+### Stage B catalog asset contract
+
+`tools/build_phase17_bus_catalog.py` is the host-only generator for the P4 Bus
+package. It accepts recorded provider JSON (plain or gzip), writes normalized
+JSON Lines route/stop pages, operator-qualified stop pages, and small descriptor indexes under
+`examples/bus3p/assets/catalog/`, and records each source's timestamp and
+SHA-256 in `manifest.json`. It mirrors the Flutter `RouteMerger`: KMB/LWB
+service variants collapse by route and bound, compatible KMB/CTB destinations
+become a `JOINT` record with both constituent identities, and unrelated
+same-number routes remain separate.
+
+The generator fails the build when a single asset exceeds 32 KiB, the catalog
+exceeds 128 files, or the catalog exceeds 5.5 MiB. It reports missing stop
+metadata in the manifest and never removes a route to fit a limit. On P4, the
+`Catalog` reader loads one descriptor page, reads one matching
+JSON Lines data page, decodes one line at a time, copies only the bounded visible
+records, and releases each decoded record before continuing on a later scheduler
+tick. The generated route pages do not
+contain stop sequences: the selected provider remains authoritative for the
+current ordered sequence, while the bundled stop pages supply names and
+coordinates.
+
+### Stage C P4 reader implementation
+
+`examples/bus3p/main.lua` now connects the catalog to Search and the existing
+route/stop/ETA pages. `Catalog` reads only the small manifest and descriptor
+indexes at launch. Search creates a generation-tagged job; each 100 ms timer
+tick reads at most one matching JSON Lines page and decodes one record at a
+time. Results are deduplicated by their provider-qualified key, naturally
+sorted, and published through eight reusable route rows. A changed query,
+pause, Back action or route selection invalidates the generation before the
+next page can publish stale results.
+
+The selected route's complete provider stop response is retained in
+`stop_results`. Eight reusable stop rows expose Previous/Next pages, so the
+visible page size does not truncate a long route. Missing names start a second
+generation-tagged metadata job over the operator-qualified stop descriptors;
+rows remain visible as `Metadata unavailable - Retry` until a later refresh can
+fill them. Joint route records preserve their `parts` identities and display
+both operator labels while the current Stage C fixture request uses the first
+part for the stop sequence. Joint-provider live requests and ETA merging are
+reserved for Stage D.
+
+The same reusable 100 ms timer provides the two-tick (200 ms) search debounce
+and catalog continuation. It is created only when the filesystem API is
+available, keeping the fixture-only production-binding test compatible. The
+catalog path uses one additional callback, so the UI remains at the current
+64-callback limit. The source continues to fit the 64 KiB entry limit.
+
+The reproducible host checks are:
+
+```sh
+python3 tools/test_phase17_bus_catalog.py
+python3 tools/test_phase17_bus_package.py
+python3 tools/test_phase17_bus_render.py
+```
+
+`crystal.service.system.info()` now exposes an on-demand resource snapshot for
+the active Lua app. It includes Lua arena quota/current/high-water/largest-free
+block, internal and PSRAM free/largest blocks, app-lifetime native heap deltas
+and low-water samples, HTTP response/TLS high-water statistics, JSON parse
+allocation peaks, callback and tracked-resource counts, and app-storage bytes.
+The HTTP counters are service-global, and heap deltas combine all native app
+work; neither is a component-attributed allocator trace. The JSON counters
+measure cJSON parse-tree allocation, while the Lua arena fields capture the
+subsequent Lua conversion cost.
+
+The Bus fixture logs these snapshots only at named workflow checkpoints. Do not
+add an idle polling timer for diagnostics. Current package identity and its
+provider behavior remain fixture-only until the later live-provider stages are
+implemented. See the [P4 transformation plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md)
+and [Stage A board procedure](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md#7-stage-a-bus-baseline-and-resource-capture).
+
+
+### P4 Bus catalog quota regression (2026-11-16)
+
+Catalog-backed Bus 0.2.4 uses a provisional 512 KiB arena after the 160 KiB
+fixture quota failed on P4. Keep only eight matching records in the search
+buffer and rescan the sorted pages when paging. Preserve total match count
+separately. Numeric sort ranges are not lexical prefix ranges (1 also matches
+101); tests must compare total coverage against an independent source scan.
+Retain filenames/letters instead of provenance and full descriptor objects.
+Run tools/test_phase17_bus_render.py with real assets and production JSON
+conversion, not only table-valued fixture mocks. Host memory is supporting
+evidence; final quota requires board peak, fragmentation and native readings.
+
+### Catalog work per callback (Bus 0.2.5)
+
+A 16 KiB file cap alone does not bound CPU cost. The P4 0.2.4 test exceeded
+50 ms when decoding a full page. The cursor now performs one asset read OR
+one needed JSON conversion per 100 ms tick, with at most 16 cheap line checks.
+The canonical generator records exact route initials and provider stop ID
+ranges in runtime.txt; this compact directory replaces launch-time manifest
+JSON conversion. Test complete coverage against actual records and enforce
+read/decode counts per tick. Device timing remains an acceptance requirement.
+
+### Catalog-sized package removal (P4 board follow-up)
+
+A clean app resource ledger does not prove filesystem deletion fits the UI
+budget. The 117-file Bus package triggered the LVGL watchdog during recursive
+unlink after clean=1. Verified uninstall now detaches the app into hidden
+.trash, clears state/registry, then calls crystal_package_cleanup_step from a
+20 ms management timer. Each call performs one traversal/removal step; do not
+drain the entire cursor from a live UI callback. Wait for cleanup before new
+install admission; the error is retryable. Boot reclaims interrupted trash
+before app discovery. Keep leak-before-removal checks and watchdog limits.
