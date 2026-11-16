@@ -22,7 +22,7 @@ enum crystal_evt_t : uint8_t {
     UI_EVT_TIMER_EXPIRED,
     UI_EVT_BATTERY,
     UI_EVT_TOAST,
-    UI_EVT_WEATHER,
+    UI_EVT_WEATHER, // Reserved legacy value; no global Weather dispatch.
     UI_EVT_CRASH_RECOVERED,
     UI_EVT_OTA_CHANGED,
     UI_EVT_OTA_ROLLED_BACK,
@@ -64,14 +64,26 @@ struct CrystalTimerState {
 bool crystal_ui_post(crystal_evt_t type, const void *data = nullptr, size_t len = 0);
 // C-compatible bridge for background C workers that need to wake the LVGL task.
 extern "C" bool crystal_ui_post_ota_changed(void);
-void crystal_shell_weather_event(const CrystalWeatherReading *reading);
+
 void crystal_shell_control_action_event(const CrystalControlAction *action);
-// Requests one throttled Open-Meteo fetch on the crystal service task.
-void crystal_weather_request();
+
 bool crystal_weather_set_location(double latitude, double longitude, const char *city);
 void crystal_weather_set_automatic(bool automatic);
 bool crystal_weather_location_automatic();
 bool crystal_location_get(double *latitude, double *longitude, char *city, size_t city_size);
+
+// Cached configuration only; these APIs never initiate network requests.
+struct CrystalLocationSnapshot {
+    double latitude;
+    double longitude;
+    char city[24];
+    bool automatic;
+    bool resolved;
+    uint32_t revision;
+};
+CrystalLocationSnapshot crystal_location_snapshot();
+// Returns false if settings changed while an automatic lookup was in flight.
+bool crystal_location_accept(uint32_t revision, double latitude, double longitude, const char *city);
 
 // Called by the gesture arbiter on touch-down. Returns true exactly when that
 // touch must wake the display without being delivered as an app interaction.

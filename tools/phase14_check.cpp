@@ -272,7 +272,13 @@ int main(int argc, char **argv) {
     assert(fs::exists(root / "org.crystal.calculator/assets/catalog/116.jsonl"));
     assert(!fs::exists(root / ".trash/org.crystal.calculator"));
     assert(crystal_package_cleanup_step(&error));
+    static unsigned cleanup_wakes = 0;
+    crystal_package_set_cleanup_ready_hook([] { ++cleanup_wakes; });
+    assert(cleanup_wakes == 0);
     assert(crystal_package_remove("org.crystal.calculator", true, &error));
+    assert(cleanup_wakes == 1);
+    crystal_package_set_cleanup_ready_hook([] { ++cleanup_wakes; });
+    assert(cleanup_wakes == 2); // Registering with pending work must wake it.
     assert(!fs::exists(root / "org.crystal.calculator"));
     assert(fs::exists(root / ".trash/org.crystal.calculator/assets/catalog/116.jsonl"));
     FILE *blocked = fopen((fixtures / "calculator.capp").c_str(), "rb"); assert(blocked);
@@ -281,6 +287,9 @@ int main(int argc, char **argv) {
     assert(!crystal_package_cleanup_step(&error) && error.empty());
     assert(fs::exists(root / ".trash/org.crystal.calculator/assets/catalog/116.jsonl"));
     assert(drain_removals() > 117);
+    assert(cleanup_wakes == 2);
+    crystal_package_set_cleanup_ready_hook([] { ++cleanup_wakes; });
+    assert(cleanup_wakes == 2); // No wakeups while idle.
     assert(!fs::exists(root / ".trash/org.crystal.calculator"));
     // Power loss after detach must not resurrect app files or private state.
     assert(install("calculator.capp"));

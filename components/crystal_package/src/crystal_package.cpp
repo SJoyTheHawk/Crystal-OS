@@ -46,6 +46,7 @@ std::vector<RemovalFrame> s_removal_stack;
 // Install handlers may run on an HTTP/USB task. They only read this admission
 // flag, never the management task's queue or directory cursor.
 std::atomic<bool> s_removal_pending{false};
+crystal_package_cleanup_ready_t s_cleanup_ready = nullptr;
 void reset_removals() {
     for (auto &frame : s_removal_stack) if (frame.directory) closedir(frame.directory);
     s_removal_stack.clear(); s_removals.clear(); s_removal_pending = false;
@@ -612,9 +613,17 @@ bool crystal_package_remove(const std::string &id, bool cleanup_verified, std::s
         if (moved) (void)rename(detached.c_str(), source.c_str());
         return fail(error, "Could not prune registry; boot will reconcile");
     }
-    if (moved) { s_removals.push_back(detached); s_removal_pending = true; }
+    if (moved) {
+        s_removals.push_back(detached); s_removal_pending = true;
+        if (s_cleanup_ready) s_cleanup_ready();
+    }
     if (error) error->clear();
     return true;
+}
+
+void crystal_package_set_cleanup_ready_hook(crystal_package_cleanup_ready_t hook) {
+    s_cleanup_ready = hook;
+    if (hook && s_removal_pending.load()) hook();
 }
 
 bool crystal_package_cleanup_step(std::string *error) {

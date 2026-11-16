@@ -62,7 +62,7 @@ def main():
                ROOT / 'components/crystal_shell/src/crystal_ui_metrics.cpp',
                capture / 'package_stubs.cpp', capture / 'capture.cpp', capture / 'capture_shell.cpp', capture / 'services.cpp']
     for app in ('clock_app', 'weather_app', 'calculator_app', 'ethernet_app'):
-        sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.cpp')))
+        sources.extend(p for p in sorted((ROOT / f'components/{app}/src').glob('*.cpp')) if p.name != 'weather_request.cpp')
         sources.extend(sorted((ROOT / f'components/{app}/src').glob('*.c')))
     include_dirs = [brookesia, capture / 'stubs', work,
                     ROOT / 'components/crystal_shell/src', ROOT / 'components/crystal_shell/include',

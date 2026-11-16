@@ -55,6 +55,10 @@ bool crystal_package_remove(const std::string &id, bool cleanup_verified, std::s
 // Call only on the management task, between LVGL event/timer callbacks.
 // New installs are rejected while cleanup remains, preserving storage admission.
 bool crystal_package_cleanup_step(std::string *error = nullptr);
+// Management/LVGL task only. Hook fires on new work and immediately when
+// registered with work pending; it should resume the bounded cleanup timer.
+using crystal_package_cleanup_ready_t = void (*)();
+void crystal_package_set_cleanup_ready_hook(crystal_package_cleanup_ready_t hook);
 bool crystal_package_state_get(const std::string &id, const char *key, void *out, size_t *length);
 bool crystal_package_state_set(const std::string &id, const char *key, const void *value, size_t length);
 bool crystal_package_state_erase(const std::string &id, const char *key);

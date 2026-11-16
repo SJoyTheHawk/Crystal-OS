@@ -4,6 +4,7 @@
 #include "crystal_core.hpp"
 #include "lvgl.h"
 #include "weather_glyph.h"
+#include "weather_request.hpp"
 
 LV_IMG_DECLARE(weather_icon);
 extern "C" void weather_icon_prepare(void);
@@ -17,12 +18,12 @@ public:
     bool onDestroy() override;
     void onClearData() override;
 
-    // Called on the LVGL task when the service task finishes a fetch.
+    // Called on the LVGL task by this activation's request session.
     void update(const CrystalWeatherReading &reading);
     // Repaints from cache. Safe to call with no cache and while a fetch is out.
     void refresh();
     // Manual refresh, from the header button. Ignores the staleness threshold
-    // and the service's backoff; the user asking is reason enough. Public
+    // and the app's backoff; the user asking is reason enough. Public
     // because the LVGL event callback is a free function.
     void requestManual();
 
@@ -37,6 +38,8 @@ private:
         bool valid = false;
     };
 
+    bool activate();
+    void stop();
     Reading readCache() const;
     void request();
     void applyReading(const Reading &reading);
@@ -71,14 +74,15 @@ private:
     lv_obj_t *refresh_button_ = nullptr;
     lv_timer_t *timer_ = nullptr;
 
-    // Epoch second the outstanding request was made, or 0 when none is out.
-    // Doubles as the pending flag: the service task posts nothing at all when
-    // WiFi is down, so a request with no reply has to time out on its own.
-    int32_t requested_at_ = 0;
+    WeatherRequest request_;
+    bool active_ = false;
+    bool requested_ = false;
     bool last_fetch_failed_ = false;
-    bool discard_updates_until_open_ = false;
-    // Clock validity as of the last tick. SNTP can land at any moment, and the
-    // step it applies retroactively makes a cached reading datable; this is how
-    // the tick notices the transition and re-runs the staleness check once.
+    uint32_t location_revision_ = 0;
+    uint32_t network_revision_ = 0;
+    int64_t next_attempt_us_ = 0;
+    uint32_t retry_seconds_ = 60;
+    int64_t last_success_us_ = 0;
+    uint32_t last_paint_ms_ = 0;
     bool clock_was_valid_ = false;
 };

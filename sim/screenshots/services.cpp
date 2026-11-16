@@ -35,7 +35,16 @@ extern "C" time_t crystal_capture_time(time_t *out)
 }
 
 bool crystal_time_format_24() { return true; }
-void crystal_weather_request() {} // the runner supplies an explicitly sampled reading
+// Screenshot runner injects a sampled reading; no network is performed.
+#include "weather_request.hpp"
+#include "lvgl.h"
+int64_t esp_timer_get_time() { return static_cast<int64_t>(lv_tick_get()) * 1000; }
+uint32_t crystal_network_revision() { return 0; }
+CrystalLocationSnapshot crystal_location_snapshot() { return {22.3193, 114.1694, "Hong Kong", true, true, 1}; }
+WeatherRequest::~WeatherRequest() = default;
+bool WeatherRequest::start() { return false; }
+void WeatherRequest::cancel() {}
+bool WeatherRequest::poll(CrystalWeatherReading &) { return false; }
 void crystal_stopwatch_set_running(bool) {}
 uint8_t crystal_brightness_level() { return 72; }
 void crystal_brightness_set(uint8_t) {}

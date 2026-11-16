@@ -53,6 +53,7 @@ static const char *TAG = "crystal_boot";
 static int64_t s_boot_start_us;
 static bool s_boot_display_locked = false;
 static bool s_boot_ui_visible = false;
+static lv_timer_t *s_package_cleanup_timer = nullptr;
 
 static CrystalApp *make_dev_tester_app() { return new DevTesterApp(); }
 static CrystalApp *make_clock_app() { return new ClockApp(); }
@@ -270,7 +271,7 @@ extern "C" void app_main(void)
     // Package removal detaches the verified-clean app immediately. Reclaim
     // just one file/traversal step per tick so catalog-sized bundles cannot
     // block LVGL input or its watchdog heartbeat for several seconds.
-    require_boot_step(lv_timer_create([](lv_timer_t *) {
+    s_package_cleanup_timer = lv_timer_create([](lv_timer_t *timer) {
         static bool cleanup_failed = false, cleanup_pending = false;
         std::string error;
         const bool idle = crystal_package_cleanup_step(&error);
@@ -279,7 +280,14 @@ extern "C" void app_main(void)
         cleanup_failed = !error.empty();
         if (idle && cleanup_pending) ESP_LOGI(TAG, "App storage cleanup complete");
         cleanup_pending = !idle;
-    }, 20, nullptr) != nullptr, "Failed to schedule app storage cleanup");
+        if (idle) lv_timer_pause(timer);
+    }, 20, nullptr);
+    require_boot_step(s_package_cleanup_timer != nullptr, "Failed to schedule app storage cleanup");
+    lv_timer_pause(s_package_cleanup_timer);
+    crystal_package_set_cleanup_ready_hook([] {
+        lv_timer_resume(s_package_cleanup_timer);
+        lv_timer_ready(s_package_cleanup_timer);
+    });
 
     auto *phone = new ESP_Brookesia_Phone(display);
     require_boot_step(phone != nullptr, "Failed to create Brookesia phone");

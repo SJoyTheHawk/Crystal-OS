@@ -20,3 +20,6 @@ void crystal_network_set_callback(crystal_network_callback_t callback, void *con
 void crystal_network_policy_refresh();
 CrystalNetworkType crystal_network_active_type();
 const char *crystal_network_type_name(CrystalNetworkType type);
+
+// Route generation includes reconnects to the same interface.
+uint32_t crystal_network_revision();

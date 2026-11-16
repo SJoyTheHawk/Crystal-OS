@@ -50,6 +50,14 @@ Networks while it is retrying. Nearby networks should appear; leaving the
 saved credentials in place should still allow reconnection when that SSID
 returns. Also check scanning while connected and toggling Wi-Fi off mid-scan.
 
+## Backend lifecycle checks
+
+See [backend ownership and validation](../docs/BACKEND_LIFECYCLE_CLEANUP.md).
+Run tools/test_weather_requests.py for asynchronous request/location ownership,
+tools/test_weather_lifecycle.py for production native Weather and Brookesia
+lifecycle coverage, and tools/test_backend_idle.py for OTA notification/idle
+behavior. These use scripted transports, not live endpoints.
+
 ## USB recovery
 
 The recovery tool uses the ESP-IDF build metadata in `build/flasher_args.json`,

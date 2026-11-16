@@ -14,7 +14,6 @@
 #include "crystal_network_policy.hpp"
 #include "crystal_ethernet.hpp"
 #include "crystal_http.h"
-#include "crystal_core_http.hpp"
 #include "crystal_update_view.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -32,7 +31,6 @@
 
 extern void crystal_shell_wifi_event(uint8_t event);
 extern void crystal_shell_network_event();
-extern void crystal_shell_weather_event(const CrystalWeatherReading *reading);
 extern void crystal_shell_ota_event();
 extern void crystal_shell_update_failure_event(const char *message);
 extern void crystal_shell_update_success_event();
@@ -67,46 +65,6 @@ constexpr uint8_t kDimBrightnessMin = 5;
 #endif
 constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
-constexpr uint32_t kHttpFrameworkOwner = 0x4652414D; // "FRAM"
-std::atomic_bool s_http_smoke_requested{false};
-
-void crystal_http_phase1_callback(const crystal_http_response_t *response, void *)
-{
-    if (response == nullptr) return;
-    ESP_LOGI(TAG, "HTTPS smoke result id=%lu status=%d body=%u bytes elapsed=%u ms error=%s",
-             (unsigned long)response->request_id, response->status_code,
-             (unsigned)response->body_len, (unsigned)response->elapsed_ms,
-             esp_err_to_name(response->transport_error));
-    ESP_LOGI(TAG, "HTTPS smoke heap id=%lu before_internal=%lu before_largest=%lu before_psram=%lu tls_internal=%lu tls_largest=%lu tls_psram=%lu",
-             (unsigned long)response->request_id,
-             (unsigned long)response->internal_free_before,
-             (unsigned long)response->largest_internal_before,
-             (unsigned long)response->psram_free_before,
-             (unsigned long)response->tls_internal_free_min,
-             (unsigned long)response->tls_largest_internal_min,
-             (unsigned long)response->tls_psram_free_min);
-    if (response->transport_error == ESP_OK && response->status_code >= 200 &&
-            response->status_code < 300 && response->body_len > 0) ESP_LOGI(TAG, "HTTPS smoke test passed");
-    else ESP_LOGW(TAG, "HTTPS smoke test failed");
-    crystal_http_response_release(response);
-}
-
-void queue_https_smoke_test()
-{
-    if (s_http_smoke_requested.exchange(true)) return;
-    crystal_http_options_t options = {};
-    options.url = "https://example.com/";
-    options.timeout_ms = 15000;
-    options.max_attempts = 1;
-    options.max_body_bytes = 8192;
-    options.owner_id = kHttpFrameworkOwner;
-    ESP_LOGI(TAG, "Startup: weather step finished; queuing HTTPS smoke test");
-    if (crystal_http_get(&options, crystal_http_phase1_callback, nullptr) == 0) {
-        s_http_smoke_requested.store(false);
-        ESP_LOGW(TAG, "failed to queue HTTPS smoke test");
-    }
-}
-
 enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3, ApplySaving = 4 };
 
 struct EventMessage {
@@ -144,36 +102,6 @@ std::atomic<int64_t> s_timer_deadline_us{0};
 std::atomic<uint32_t> s_timer_duration{0};
 std::atomic<uint32_t> s_timer_paused_remaining{0};
 std::atomic_bool s_stopwatch_running{false};
-std::atomic_bool s_weather_request{false};
-std::atomic<int64_t> s_weather_last_fetch{0};
-// Retry pacing for automatic fetches. Ticks, not epoch seconds: the retry clock
-// must not jump when SNTP steps the wall clock mid-backoff.
-constexpr uint32_t kWeatherRetryMinMs = 60 * 1000;
-constexpr uint32_t kWeatherRetryMaxMs = 30 * 60 * 1000;
-constexpr uint32_t weather_retry_next(uint32_t wait_ms)
-{
-    // Keep automatic network work quiet for progressively longer periods:
-    // 1, 3, 5, 10, then 30 minutes (and remain capped there).
-    switch (wait_ms) {
-    case 1 * 60 * 1000: return 3 * 60 * 1000;
-    case 3 * 60 * 1000: return 5 * 60 * 1000;
-    case 5 * 60 * 1000: return 10 * 60 * 1000;
-    case 10 * 60 * 1000: return 30 * 60 * 1000;
-    default: return kWeatherRetryMaxMs;
-    }
-}
-std::atomic<uint32_t> s_weather_retry_ms{kWeatherRetryMinMs};
-std::atomic<TickType_t> s_weather_next_try{0};
-// Location resolution needs the same treatment: it is one TLS handshake per
-// attempt, and without pacing a failing endpoint is retried every loop pass.
-std::atomic<TickType_t> s_weather_next_locate{0};
-std::atomic<uint32_t> s_weather_locate_ms{kWeatherRetryMinMs};
-static char s_weather_response[1024];
-double s_weather_latitude = 22.3193;
-double s_weather_longitude = 114.1694;
-char s_weather_city[24] = "Hong Kong (fallback)";
-std::atomic_bool s_weather_location_ready{false};
-portMUX_TYPE s_weather_location_mux = portMUX_INITIALIZER_UNLOCKED;
 std::atomic<int> s_battery_percent{-1};
 std::atomic_bool s_battery_charging{false};
 
@@ -226,129 +154,6 @@ bool one_of(uint16_t value, const uint16_t *allowed, size_t count)
 {
     for (size_t i = 0; i < count; ++i) if (value == allowed[i]) return true;
     return false;
-}
-
-// Location and weather share the HTTP worker with the diagnostic request.
-// The service task sleeps while waiting; it no longer opens a parallel TLS
-// connection. Parsing and UI event delivery remain on the service task.
-bool http_get_json(const char *url)
-{
-    return crystal_core_http_get_json(url, s_weather_response, sizeof(s_weather_response));
-}
-
-bool load_weather_location()
-{
-    if (hal().storage == nullptr) return false;
-    double lat = 0.0, lon = 0.0; size_t n = sizeof(lat);
-    if (!hal().storage->get("weather.lat", &lat, &n) || n != sizeof(lat)) return false;
-    n = sizeof(lon);
-    if (!hal().storage->get("weather.lon", &lon, &n) || n != sizeof(lon)) return false;
-    // The stored blob includes its terminator, so a maximum-length city needs
-    // the full buffer capacity when it is read back.
-    n = sizeof(s_weather_city);
-    if (hal().storage->get("weather.city", s_weather_city, &n)) s_weather_city[n < sizeof(s_weather_city) ? n : sizeof(s_weather_city) - 1] = '\0';
-    s_weather_latitude = lat; s_weather_longitude = lon;
-    return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
-}
-
-void resolve_weather_location()
-{
-    if (s_weather_location_ready.load() || load_weather_location()) { s_weather_location_ready.store(true); return; }
-
-    // ipapi.co is behind a Cloudflare interstitial and answers 403 to a device,
-    // so it is not a usable fallback. ipwho.is answers 200; ?fields= trims the
-    // body from 957 bytes to ~106, well clear of the response buffer.
-    const char *endpoints[] = {
-        "https://ipwho.is/?fields=success,city,latitude,longitude",
-    };
-    for (const char *endpoint : endpoints) {
-        if (!http_get_json(endpoint)) continue;
-
-        double lat = 0.0, lon = 0.0; char city[24] = {};
-        const char *p = strstr(s_weather_response, "\"latitude\"");
-        const char *q = strstr(s_weather_response, "\"longitude\"");
-        const char *c = strstr(s_weather_response, "\"city\"");
-        // The body is pretty-printed, so a literal ":\"" does not match. Skip
-        // the key, then let %lf consume the whitespace and scan_quoted find the
-        // opening quote wherever it is.
-        if (p != nullptr && q != nullptr &&
-                sscanf(p + strlen("\"latitude\""), " :%lf", &lat) == 1 &&
-                sscanf(q + strlen("\"longitude\""), " :%lf", &lon) == 1 &&
-                lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0) {
-            if (c != nullptr) {
-                const char *open_quote = strchr(c + strlen("\"city\""), '"');
-                if (open_quote != nullptr) sscanf(open_quote + 1, "%23[^\"]", city);
-            }
-            if (!crystal_weather_location_automatic()) return;
-            taskENTER_CRITICAL(&s_weather_location_mux);
-            s_weather_latitude = lat; s_weather_longitude = lon;
-            if (city[0] != '\0') strlcpy(s_weather_city, city, sizeof(s_weather_city));
-            taskEXIT_CRITICAL(&s_weather_location_mux);
-            if (hal().storage != nullptr) {
-                (void)hal().storage->set("weather.lat", &lat, sizeof(lat));
-                (void)hal().storage->set("weather.lon", &lon, sizeof(lon));
-                (void)hal().storage->set("weather.city", s_weather_city, strlen(s_weather_city) + 1);
-            }
-            s_weather_location_ready.store(true);
-            ESP_LOGI(TAG, "weather location resolved: %.4f, %.4f (%s)", lat, lon, s_weather_city);
-            return;
-        }
-        ESP_LOGW(TAG, "weather location parse failed for %s", endpoint);
-    }
-    // Do not let an automatic lookup already in flight overwrite a manual
-    // location selected while the request was running.
-    if (!crystal_weather_location_automatic()) return;
-    // Do not retry every service tick; retain the compiled fallback.
-    s_weather_location_ready.store(true);
-    strlcpy(s_weather_city, "Hong Kong (fallback)", sizeof(s_weather_city));
-    ESP_LOGW(TAG, "weather location unavailable; using Hong Kong fallback");
-}
-
-bool weather_fetch(CrystalWeatherReading *out)
-{
-    if (out == nullptr || !crystal_network_has_ip()) return false;
-    double latitude = 0.0;
-    double longitude = 0.0;
-    char city[sizeof(s_weather_city)] = {};
-    taskENTER_CRITICAL(&s_weather_location_mux);
-    latitude = s_weather_latitude;
-    longitude = s_weather_longitude;
-    strlcpy(city, s_weather_city, sizeof(city));
-    taskEXIT_CRITICAL(&s_weather_location_mux);
-    char url[256];
-    snprintf(url, sizeof(url),
-             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
-             "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
-             latitude, longitude);
-    bool ok = false;
-    if (http_get_json(url)) {
-        // "current_units" precedes "current" in the body and repeats every key
-        // name with a string value. The closing quote in the pattern is what
-        // separates them; ':{' additionally pins this to the values object.
-        const char *current = strstr(s_weather_response, "\"current\":{");
-        const char *temp = current != nullptr ? strstr(current, "\"temperature_2m\":") : nullptr;
-        const char *humidity = current != nullptr ? strstr(current, "\"relative_humidity_2m\":") : nullptr;
-        const char *code = current != nullptr ? strstr(current, "\"weather_code\":") : nullptr;
-        const char *wind = current != nullptr ? strstr(current, "\"wind_speed_10m\":") : nullptr;
-        double t = 0.0, w = 0.0; int h = 0, c = 0;
-        if (temp != nullptr && humidity != nullptr && code != nullptr && wind != nullptr &&
-                sscanf(temp, "\"temperature_2m\":%lf", &t) == 1 &&
-                sscanf(humidity, "\"relative_humidity_2m\":%d", &h) == 1 &&
-                sscanf(code, "\"weather_code\":%d", &c) == 1 &&
-                sscanf(wind, "\"wind_speed_10m\":%lf", &w) == 1) {
-            out->temperature_c10 = static_cast<int16_t>(t * 10.0);
-            out->humidity = static_cast<uint8_t>(h < 0 ? 0 : h > 100 ? 100 : h);
-            out->weather_code = static_cast<uint8_t>(c);
-            out->wind_kmh10 = static_cast<uint16_t>(w * 10.0);
-            out->fetched_at = static_cast<int32_t>(time(nullptr));
-            out->success = true;
-            strlcpy(out->city, city, sizeof(out->city));
-            ok = true;
-            ESP_LOGI(TAG, "weather fetched: %.1f C, humidity %d%%, code %d, wind %.1f km/h", t, h, c, w);
-        }
-    }
-    if (!ok) ESP_LOGW(TAG, "weather parse failed; body: %.120s", s_weather_response);
-    return ok;
 }
 
 void update_connectivity(lv_timer_t *timer);
@@ -571,8 +376,6 @@ void drain_event_queue(lv_timer_t *)
                 crystal_shell_update_failure_event(snapshot.error_message);
             }
             crystal_shell_ota_event();
-        } else if (message.type == UI_EVT_WEATHER && message.length == sizeof(CrystalWeatherReading)) {
-            crystal_shell_weather_event(reinterpret_cast<const CrystalWeatherReading *>(message.data));
         } else if (message.type == UI_EVT_BATTERY &&
                    message.length == sizeof(int8_t) + sizeof(uint8_t) && s_battery_update != nullptr) {
             const int percent = static_cast<int8_t>(message.data[0]);
@@ -610,12 +413,6 @@ void update_connectivity(lv_timer_t *)
 void network_route_changed(CrystalNetworkType previous, CrystalNetworkType active, void *)
 {
     const bool online = active != CrystalNetworkType::None;
-    if (online) {
-        s_weather_retry_ms.store(kWeatherRetryMinMs);
-        s_weather_next_try.store(0);
-        s_weather_locate_ms.store(kWeatherRetryMinMs);
-        s_weather_next_locate.store(0);
-    }
     // Publish aggregate connectivity, including route switches. One interface
     // dropping must not claim the device is offline while the other is ready.
     s_sntp_sync_started = false;
@@ -851,71 +648,7 @@ void service_task(void *)
                 power_saving_apply(energy_saving_enabled());
             }
         }
-        const int64_t now_epoch = static_cast<int64_t>(time(nullptr));
-        const TickType_t tick_now = xTaskGetTickCount();
-        // has_ip(), not connected(). Association happens ~1 s before DHCP
-        // finishes, and a fetch in that window dies in getaddrinfo() with
-        // EAI_FAIL -- which then burned a backoff step on a failure that was
-        // only ever a race with the DHCP lease.
         crystal_network_policy_refresh();
-        const bool online = crystal_network_has_ip();
-
-        // Automatic refresh. The retry gate is what makes a failure survivable:
-        // last_fetch is only stored on success, so without it a failed fetch left
-        // this condition true and the branch ran every loop pass -- one DNS+TLS
-        // attempt per second, indefinitely. The `last_fetch > 0` guard used to
-        // sit here too, which meant a device that had never fetched successfully
-        // never auto-retried at all. Both directions were wrong.
-        const bool due = s_weather_last_fetch.load() == 0 ||
-                         (now_epoch > 0 && now_epoch - s_weather_last_fetch.load() >= 1800);
-        const TickType_t next_try = s_weather_next_try.load();
-        if (online && due && (next_try == 0 || tick_now >= next_try)) {
-            s_weather_request.store(true);
-        }
-        if (online && !s_weather_location_ready.load()) {
-            const TickType_t next_locate = s_weather_next_locate.load();
-            if (next_locate == 0 || tick_now >= next_locate) {
-                resolve_weather_location();
-                if (s_weather_location_ready.load()) {
-                    s_weather_locate_ms.store(kWeatherRetryMinMs);
-                }
-                else {
-                    const uint32_t wait = s_weather_locate_ms.load();
-                    s_weather_next_locate.store(tick_now + pdMS_TO_TICKS(wait));
-                    s_weather_locate_ms.store(weather_retry_next(wait));
-                    ESP_LOGW(TAG, "weather location retry in %u s", (unsigned)(wait / 1000));
-                }
-            }
-        }
-        if (s_weather_request.load()) {
-            s_weather_request.store(false);
-            CrystalWeatherReading reading = {};
-            // Answer even when offline. The request used to be left pending
-            // until WiFi came back, so a caller waiting on a result waited
-            // forever and had no way to tell a slow fetch from no network.
-            if (online && weather_fetch(&reading)) {
-                s_weather_last_fetch.store(reading.fetched_at);
-                s_weather_retry_ms.store(kWeatherRetryMinMs);
-                s_weather_next_try.store(0);
-            }
-            else {
-                reading.success = false;
-                // Back off only the automatic trigger. An app-initiated request
-                // still goes straight through, so pulling to refresh stays
-                // responsive while an idle device stops hammering the network.
-                const uint32_t wait = s_weather_retry_ms.load();
-                s_weather_next_try.store(tick_now + pdMS_TO_TICKS(wait));
-                s_weather_retry_ms.store(weather_retry_next(wait));
-                ESP_LOGW(TAG, "weather fetch failed; next automatic try in %u s",
-                         (unsigned)(wait / 1000));
-            }
-            (void)crystal_ui_post(UI_EVT_WEATHER, &reading, sizeof(reading));
-        }
-        // Give location/weather the first turn. Run the diagnostic once the
-        // initial attempt finishes (success or failure), or cached data is
-        // already fresh. The shared worker also serializes later refreshes.
-        // A rejected submission is retried on the next service tick.
-        if (online) queue_https_smoke_test();
         const TickType_t now_ticks = xTaskGetTickCount();
         if ((last_battery_poll == 0 || now_ticks - last_battery_poll >= pdMS_TO_TICKS(30000)) &&
                 hal().power != nullptr) {
@@ -949,63 +682,6 @@ void service_task(void *)
 } // namespace
 
 ESP_EVENT_DEFINE_BASE(CRYSTAL_NETWORK_EVENT);
-
-bool crystal_location_get(double *latitude, double *longitude, char *city, size_t city_size)
-{
-    if (latitude == nullptr || longitude == nullptr) return false;
-    taskENTER_CRITICAL(&s_weather_location_mux);
-    *latitude = s_weather_latitude;
-    *longitude = s_weather_longitude;
-    if (city != nullptr && city_size > 0) strlcpy(city, s_weather_city, city_size);
-    taskEXIT_CRITICAL(&s_weather_location_mux);
-    return *latitude >= -90.0 && *latitude <= 90.0 &&
-           *longitude >= -180.0 && *longitude <= 180.0;
-}
-
-void crystal_weather_request() { s_weather_request.store(true); }
-
-bool crystal_weather_set_location(double latitude, double longitude, const char *city)
-{
-    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
-            latitude < -90.0 || latitude > 90.0 || longitude < -180.0 ||
-            longitude > 180.0 || city == nullptr || city[0] == '\0') return false;
-    store_value<uint8_t>("loc.auto", 0);
-    taskENTER_CRITICAL(&s_weather_location_mux);
-    s_weather_latitude = latitude;
-    s_weather_longitude = longitude;
-    strlcpy(s_weather_city, city, sizeof(s_weather_city));
-    taskEXIT_CRITICAL(&s_weather_location_mux);
-    if (hal().storage != nullptr) {
-        (void)hal().storage->set("weather.lat", &latitude, sizeof(latitude));
-        (void)hal().storage->set("weather.lon", &longitude, sizeof(longitude));
-        (void)hal().storage->set("weather.city", s_weather_city, strlen(s_weather_city) + 1);
-    }
-    s_weather_next_try.store(0);
-    s_weather_retry_ms.store(kWeatherRetryMinMs);
-    s_weather_location_ready.store(true);
-    crystal_weather_request();
-    return true;
-}
-
-void crystal_weather_set_automatic(bool automatic)
-{
-    store_value<uint8_t>("loc.auto", automatic ? 1 : 0);
-    if (automatic) {
-        if (hal().storage != nullptr) {
-            (void)hal().storage->erase("weather.lat");
-            (void)hal().storage->erase("weather.lon");
-            (void)hal().storage->erase("weather.city");
-        }
-        s_weather_location_ready.store(false);
-        s_weather_next_locate.store(0);
-        s_weather_locate_ms.store(kWeatherRetryMinMs);
-    }
-}
-
-bool crystal_weather_location_automatic()
-{
-    return stored_value<uint8_t>("loc.auto", 1) != 0;
-}
 
 bool crystal_timezone_apply(const char *posix)
 {

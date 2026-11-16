@@ -359,7 +359,7 @@ static void ota_worker_task(void *arg)
     update_manifest_t cached_manifest = {};
     bool have_manifest = false;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (s_check_requested && !have_manifest) {
             s_check_requested = false;
             ESP_LOGI(TAG, "Processing update check request");
@@ -472,13 +472,18 @@ esp_err_t crystal_update_check(void)
     if (s_ota_worker_task == NULL) return ESP_ERR_INVALID_STATE;
     s_snapshot.state = UPDATE_STATE_CHECKING; s_cancel_requested = false;
     s_check_requested = true;
+    xTaskNotifyGive(s_ota_worker_task);
     return ESP_OK;
 }
-void crystal_update_cancel_check(void) { s_cancel_requested = true; }
+void crystal_update_cancel_check(void) {
+    s_cancel_requested = true;
+    if (s_ota_worker_task) xTaskNotifyGive(s_ota_worker_task);
+}
 esp_err_t crystal_update_start_download(void)
 {
     if (s_snapshot.state != UPDATE_STATE_AVAILABLE) return ESP_ERR_INVALID_STATE;
     s_download_requested = true;
+    xTaskNotifyGive(s_ota_worker_task);
     return ESP_OK;
 }
 esp_err_t crystal_update_install(void) { return crystal_update_start_download(); }

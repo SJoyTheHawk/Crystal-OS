@@ -55,6 +55,8 @@ static size_t heap_caps_get_free_size(int caps) {
     return caps & MALLOC_CAP_SPIRAM ? 3000000 : (opened == 1 ? 4000 : 16000);
 }
 static size_t heap_caps_get_largest_free_block(int caps) {return heap_caps_get_free_size(caps);}
+static void heap_caps_free(void *p) { free(p); }
+static void *heap_caps_calloc(size_t n, size_t s, int caps) { (void)caps; return calloc(n,s); }
 static void *heap_caps_malloc(size_t n, int caps) {(void)caps;return malloc(n);}
 static void *heap_caps_realloc(void *p, size_t n, int caps) {(void)caps;return realloc(p,n);}
 static int64_t esp_timer_get_time(void) {return ticks * 1000;}
@@ -87,6 +89,7 @@ typedef struct {
     const char *url;
     unsigned timeout_ms;
     bool keep_alive_enable;
+    bool disable_auto_redirect;
     int (*crt_bundle_attach)(void *);
     int buffer_size, buffer_size_tx;
 } esp_http_client_config_t;
@@ -97,6 +100,11 @@ static void *esp_http_client_init(const esp_http_client_config_t *c) {
     offset = 0;
     return (void *)1;
 }
+enum { HTTP_METHOD_GET, HTTP_METHOD_POST };
+static int esp_http_client_set_method(void *c, int m) { (void)c; (void)m; return ESP_OK; }
+static int esp_http_client_set_header(void *c, const char *n, const char *v) { (void)c; (void)n; (void)v; return ESP_OK; }
+static int esp_http_client_set_post_field(void *c, const char *b, int n) { (void)c; (void)b; (void)n; return ESP_OK; }
+static int esp_http_client_write(void *c, const char *b, int n) { (void)c; (void)b; return n; }
 static int esp_http_client_open(void *c,int n) {
     (void)c;(void)n;assert(opened < 3);return failures[opened++];
 }

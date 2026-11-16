@@ -4183,18 +4183,6 @@ void crystal_shell_network_event()
     ethernet_details_refresh(nullptr);
 }
 
-void crystal_shell_weather_event(const CrystalWeatherReading *reading)
-{
-    if (reading == nullptr) return;
-    for (size_t i = 0; i < crystal_registry_installed_count(); ++i) {
-        if (strcmp(crystal_registry_installed_id(i), "weather") == 0) {
-            auto *weather = static_cast<WeatherApp *>(crystal_registry_installed_app(i));
-            if (weather != nullptr) weather->update(*reading);
-            break;
-        }
-    }
-}
-
 // A paused app is not destroyed and a covered page is not deleted, so neither
 // fires DELETE and watched_object_deleted never runs. The outgoing layer's field
 // has to be released here instead.

@@ -1,3 +1,3 @@
-idf_component_register(SRCS "src/weather_app.cpp" "src/weather_glyph.c" "src/weather_icon.c"
+idf_component_register(SRCS "src/weather_app.cpp" "src/weather_request.cpp" "src/weather_glyph.c" "src/weather_icon.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES crystal_app crystal_core lvgl__lvgl)
+                       REQUIRES crystal_app crystal_core crystal_http esp_timer espressif__cjson lvgl__lvgl)

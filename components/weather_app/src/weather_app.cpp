@@ -5,6 +5,8 @@
 #include <time.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "crystal_network_policy.hpp"
 #include "weather_codes.h"
 
 namespace {
@@ -22,15 +24,12 @@ constexpr const char *kKeyCity = "city";
 
 // A reading older than this is refreshed on entry. Anything younger is shown as
 // it stands: a fifteen-minute-old temperature is information, not a blank page.
-constexpr int32_t kStaleSeconds = 15 * 60;
+constexpr int32_t kStaleSeconds = 30 * 60;
 // Past this the reading stops being presented as current. Weather has a diurnal
 // cycle, so a morning reading shown at night is not slightly stale -- it is a
 // different day's weather wearing a 48 px font. Six hours is the point where the
 // number is still worth keeping but must not look authoritative.
 constexpr int32_t kExpirySeconds = 6 * 60 * 60;
-// A request with no answer by then is treated as failed. The service task only
-// posts a result when WiFi is up, so without this the UI waits forever.
-constexpr int32_t kRequestTimeoutSeconds = 25;
 // 2020-01-01. The board's PCF85063 has no backup cell, so a cold boot starts the
 // clock near the epoch and stays there until SNTP lands. Anything below this is
 // not a time, it is an unset counter -- the same floor crystal_time_init() uses
@@ -38,7 +37,7 @@ constexpr int32_t kRequestTimeoutSeconds = 25;
 // fetched_at of a reading that was stamped while the clock was in that state.
 constexpr int32_t kMinPlausibleEpoch = 1577836800;
 // Drives the age line and the request timeout, so neither goes stale on screen.
-constexpr uint32_t kTickMs = 5000;
+constexpr uint32_t kTickMs = 250; // Active completion dispatch; no idle timer.
 
 // The tile palette. Dimming a value without dimming its caption would leave the
 // caption brighter than the number it labels, so both steps down together and the
@@ -83,19 +82,6 @@ constexpr const lv_font_t *kHeroFont = &lv_font_montserrat_48;
 constexpr const lv_font_t *kHeroConditionFont = &lv_font_montserrat_28;
 constexpr const lv_font_t *kTileValueFont = &lv_font_montserrat_28;
 #endif
-
-bool isLive(const CrystalApp *app)
-{
-    switch (app->lifecycle_state()) {
-    case CrystalApp::LifecycleState::Installed:
-    case CrystalApp::LifecycleState::Created:
-    case CrystalApp::LifecycleState::Started:
-    case CrystalApp::LifecycleState::Resumed:
-        return true;
-    default:
-        return false;
-    }
-}
 
 void tick(lv_timer_t *timer)
 {
@@ -176,7 +162,6 @@ WeatherApp::WeatherApp() : CrystalApp("Weather", &weather_icon)
 
 bool WeatherApp::onCreate()
 {
-    discard_updates_until_open_ = false;
     const lv_area_t area = getVisualArea();
     const lv_coord_t width = area.x2 - area.x1 + 1;
     const lv_coord_t height = area.y2 - area.y1 + 1;
@@ -186,6 +171,8 @@ bool WeatherApp::onCreate()
     // status bar height pushed a full-height root below the bottom edge -- which
     // is what made the page scroll and appear to have dropped down.
     root_ = lv_obj_create(lv_scr_act());
+    if (!root_) return false;
+    if (!trackObject(root_)) { lv_obj_del(root_); root_ = nullptr; return false; }
     lv_obj_set_size(root_, width, height);
     lv_obj_set_pos(root_, 0, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -276,53 +263,49 @@ bool WeatherApp::onCreate()
     status_ = makeLabel(root_, kStatusFont, 0x7C90A4);
     lv_obj_align(status_, LV_ALIGN_TOP_LEFT, 0, kStatusTop);
 
-    // Paint the cache before asking for anything. A stored reading appears on
-    // the first frame; the fetch then quietly replaces it.
-    const Reading cached = readCache();
-    applyReading(cached);
-    if (needsRefresh(cached)) {
-        request();
-    }
-
-    clock_was_valid_ = clockIsSet();
-    timer_ = lv_timer_create(tick, kTickMs, this);
-    return timer_ != nullptr;
+    return activate();
 }
 
-bool WeatherApp::onPause()
+bool WeatherApp::activate()
 {
-    if (timer_ != nullptr) {
-        lv_timer_del(timer_);
-        timer_ = nullptr;
-    }
+    stop();
+    active_ = true;
+    last_fetch_failed_ = false;
+    next_attempt_us_ = 0;
+    retry_seconds_ = 60;
+    location_revision_ = crystal_location_snapshot().revision;
+    network_revision_ = crystal_network_revision();
+    clock_was_valid_ = clockIsSet();
+    timer_ = lv_timer_create(tick, kTickMs, this);
+    if (!timer_) { active_ = false; return false; }
+    if (!resources().track(CrystalResourceKind::Timer, timer_)) { stop(); return false; }
+    const Reading cached = readCache();
+    applyReading(cached);
+    if (needsRefresh(cached)) request();
     return true;
 }
 
-bool WeatherApp::onResume()
+void WeatherApp::stop()
 {
-    const Reading cached = readCache();
-    applyReading(cached);
-    if (needsRefresh(cached)) {
-        request();
-    }
-    clock_was_valid_ = clockIsSet();
-    timer_ = lv_timer_create(tick, kTickMs, this);
-    return timer_ != nullptr;
-}
-
-bool WeatherApp::onDestroy()
-{
-    if (timer_ != nullptr) {
+    active_ = false;
+    request_.cancel();
+    requested_ = false;
+    next_attempt_us_ = 0;
+    if (timer_) {
         lv_timer_del(timer_);
+        resources().release(CrystalResourceKind::Timer, timer_);
         timer_ = nullptr;
     }
-    // The shell deletes the screen's children; these pointers must not survive
-    // it, because a late weather event would otherwise write to freed objects.
+}
+
+bool WeatherApp::onPause() { stop(); return true; }
+bool WeatherApp::onResume() { return activate(); }
+bool WeatherApp::onDestroy()
+{
+    stop();
     root_ = glyph_ = temperature_ = degree_ = condition_ = nullptr;
     humidity_ = wind_ = location_ = status_ = refresh_button_ = nullptr;
     humidity_caption_ = wind_caption_ = nullptr;
-    requested_at_ = 0;
-    clock_was_valid_ = false;
     return true;
 }
 
@@ -339,6 +322,18 @@ WeatherApp::Reading WeatherApp::readCache() const
     size_t city_size = sizeof(reading.city) - 1;
     if (state().get(kKeyCity, reading.city, &city_size) && city_size < sizeof(reading.city)) {
         reading.city[city_size] = '\0';
+    }
+    // Coordinates/mode let changed settings invalidate data across reboot.
+    const auto location = crystal_location_snapshot();
+    double lat = 0, lon = 0;
+    uint8_t automatic = 0;
+    const bool identity = readValue(state(), "lat", &lat) && readValue(state(), "lon", &lon) &&
+        readValue(state(), "auto", &automatic);
+    if (identity) {
+        if (lat != location.latitude || lon != location.longitude || automatic != location.automatic ||
+            strcmp(reading.city, location.city) != 0) reading.fetched_at = 0;
+    } else {
+        reading.fetched_at = 0; // Keep legacy readings visible pending confirmation.
     }
     return reading;
 }
@@ -366,60 +361,71 @@ bool WeatherApp::needsRefresh(const Reading &reading) const
     // An undatable reading is due. It may be four minutes old or four days; the
     // only way to find out is to fetch, and until then it cannot be presented as
     // current. Previously this comparison went negative and silently passed.
-    return age < 0 || age > kStaleSeconds;
+    return age < 0 || age >= kStaleSeconds;
 }
 
 void WeatherApp::request()
 {
-    requested_at_ = nowEpoch();
+    if (!active_ || requested_) return;
     last_fetch_failed_ = false;
-    crystal_weather_request();
+    requested_ = true;
+    if (crystal_network_active_type() == CrystalNetworkType::None || !request_.start()) {
+        CrystalWeatherReading failed{};
+        update(failed);
+    }
 }
 
 void WeatherApp::requestManual()
 {
-    // Ignore a double tap while a fetch is already out: a second request would
-    // reset the timeout clock and make the first one look like it never expired.
-    if (requested_at_ != 0) {
-        return;
-    }
     request();
-    // Repaint now so the status line acknowledges the tap in the same frame.
-    // Without this the label does not change until the 5 s tick, and the button
-    // feels dead.
-    applyReading(readCache());
+    if (active_) applyReading(readCache());
 }
 
 void WeatherApp::refresh()
 {
-    if (!isLive(this) || status_ == nullptr) {
-        return;
+    if (!active_ || !status_) return;
+    bool paint = false;
+    const bool repaint_due = lv_tick_elaps(last_paint_ms_) >= 5000;
+    const auto location = crystal_location_snapshot();
+    if (location.revision != location_revision_) {
+        request_.cancel(); requested_ = false;
+        location_revision_ = location.revision;
+        last_success_us_ = 0;
+        next_attempt_us_ = 0;
+        const int32_t invalid = 0;
+        state().set(kKeyFetched, &invalid, sizeof(invalid));
+        paint = true;
     }
-    // Nothing arrived in time. Say so once, and stop claiming to be busy.
-    if (requested_at_ != 0 && nowEpoch() - requested_at_ > kRequestTimeoutSeconds) {
-        requested_at_ = 0;
-        last_fetch_failed_ = true;
-        ESP_LOGW(TAG, "weather request timed out");
+    const uint32_t network = crystal_network_revision();
+    if (network != network_revision_) {
+        network_revision_ = network;
+        if (requested_) last_fetch_failed_ = true;
+        request_.cancel(); requested_ = false;
+        next_attempt_us_ = 0;
+        retry_seconds_ = 60;
+        paint = true;
     }
-
-    const Reading reading = readCache();
-    // SNTP just landed. Until this moment nothing on screen could be dated, so
-    // re-run the check the entry gate ran: either the reading turns out to be
-    // fresh and the status line stops hedging, or it is stale and we refetch.
-    // Only on the transition -- a permanently clockless device must not loop.
+    CrystalWeatherReading result{};
+    if (request_.poll(result)) {
+        update(result); paint = true;
+    }
+    // A completed location step may advance its own configuration revision.
+    location_revision_ = crystal_location_snapshot().revision;
     const bool clock_valid = clockIsSet();
-    if (clock_valid && !clock_was_valid_) {
-        clock_was_valid_ = true;
-        ESP_LOGI(TAG, "clock synchronized; re-checking weather freshness");
-        if (requested_at_ == 0 && needsRefresh(reading)) {
-            request();
-        }
+    const bool clock_synced = clock_valid && !clock_was_valid_;
+    clock_was_valid_ = clock_valid;
+    const int64_t now = esp_timer_get_time();
+    const bool due = last_fetch_failed_ || (last_success_us_
+        ? now - last_success_us_ >= 1800000000LL
+        : (repaint_due || paint) && needsRefresh(readCache()));
+    if (!requested_ && crystal_network_active_type() != CrystalNetworkType::None &&
+        now >= next_attempt_us_ && (due || (clock_synced && needsRefresh(readCache())))) {
+        request(); paint = true;
     }
-    else {
-        clock_was_valid_ = clock_valid;
+    if (paint || repaint_due) {
+        last_paint_ms_ = lv_tick_get();
+        applyReading(readCache());
     }
-
-    applyReading(reading);
 }
 
 void WeatherApp::applyReading(const Reading &reading)
@@ -428,7 +434,7 @@ void WeatherApp::applyReading(const Reading &reading)
         return;
     }
     if (!reading.valid) {
-        if (requested_at_ != 0) {
+        if (requested_) {
             showEmpty("--", "Checking weather", reading.city);
         }
         else if (last_fetch_failed_) {
@@ -509,7 +515,7 @@ void WeatherApp::showEmpty(const char *headline, const char *detail, const char 
     // dimmed reading hand its styling over to "--" at full contrast.
     setTileState(true);
     lv_label_set_text(location_, city != nullptr && city[0] != '\0' ? city : "Locating");
-    lv_label_set_text(status_, requested_at_ != 0 ? "Fetching" : "");
+    lv_label_set_text(status_, requested_ ? "Fetching" : "");
 }
 
 void WeatherApp::setStatus(const Reading &reading, bool unconfirmed, bool expired)
@@ -528,7 +534,7 @@ void WeatherApp::setStatus(const Reading &reading, bool unconfirmed, bool expire
     }
 
     char line[160];
-    if (requested_at_ != 0) {
+    if (requested_) {
         snprintf(line, sizeof(line), "Refreshing%s%s", text[0] != '\0' ? " - " : "", text);
     }
     else if (last_fetch_failed_) {
@@ -555,25 +561,36 @@ void WeatherApp::setStatus(const Reading &reading, bool unconfirmed, bool expire
 
 void WeatherApp::onClearData()
 {
-    // A queued service response must not repopulate the cleared cache.
-    discard_updates_until_open_ = true;
-    requested_at_ = 0;
+    stop();
     last_fetch_failed_ = false;
+    last_success_us_ = 0;
 }
 
 void WeatherApp::update(const CrystalWeatherReading &incoming)
 {
-    if (discard_updates_until_open_) return;
-    requested_at_ = 0;
+    if (!active_) return;
+    requested_ = false;
     if (!incoming.success) {
         last_fetch_failed_ = true;
-        // Keep whatever is cached on screen and let the status line explain.
-        if (isLive(this)) {
-            applyReading(readCache());
+        next_attempt_us_ = esp_timer_get_time() + static_cast<int64_t>(retry_seconds_) * 1000000;
+        switch (retry_seconds_) {
+        case 60: retry_seconds_ = 180; break;
+        case 180: retry_seconds_ = 300; break;
+        case 300: retry_seconds_ = 600; break;
+        default: retry_seconds_ = 1800; break;
         }
+        applyReading(readCache());
         return;
     }
     last_fetch_failed_ = false;
+    retry_seconds_ = 60;
+    next_attempt_us_ = 0;
+    last_success_us_ = esp_timer_get_time();
+    const auto location = crystal_location_snapshot();
+    const uint8_t automatic = location.automatic;
+    state().set("lat", &location.latitude, sizeof(location.latitude));
+    state().set("lon", &location.longitude, sizeof(location.longitude));
+    state().set("auto", &automatic, sizeof(automatic));
 
     bool ok = state().set(kKeyTemp, &incoming.temperature_c10, sizeof(incoming.temperature_c10));
     ok = state().set(kKeyHumidity, &incoming.humidity, sizeof(incoming.humidity)) && ok;
@@ -585,7 +602,5 @@ void WeatherApp::update(const CrystalWeatherReading &incoming)
         ESP_LOGW(TAG, "weather cache write failed");
     }
 
-    if (isLive(this)) {
-        applyReading(readCache());
-    }
+    applyReading(readCache());
 }

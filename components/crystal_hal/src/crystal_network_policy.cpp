@@ -9,6 +9,7 @@
 #include <mutex>
 
 namespace {
+std::atomic<uint32_t> s_revision{0};
 std::atomic<CrystalNetworkType> s_active{CrystalNetworkType::None};
 std::mutex s_refresh_lock;
 std::mutex s_policy_lock;
@@ -45,6 +46,7 @@ void crystal_network_policy_refresh()
             }
         }
         s_active.store(active);
+        ++s_revision;
         callback = s_callback;
         context = s_context;
     }
@@ -56,3 +58,5 @@ const char *crystal_network_type_name(CrystalNetworkType type)
 {
     return type == CrystalNetworkType::Ethernet ? "Ethernet" : type == CrystalNetworkType::WiFi ? "WiFi" : "Offline";
 }
+
+uint32_t crystal_network_revision() { return s_revision.load(); }
