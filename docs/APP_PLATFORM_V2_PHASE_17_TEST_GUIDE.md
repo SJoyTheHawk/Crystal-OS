@@ -264,15 +264,17 @@ Close any monitor using the native port and set `USB_PORT` to that endpoint:
 python3 tools/crystal.py install --usb --port "$USB_PORT" /tmp/phase17-runaway.capp
 ```
 
+Before the runaway test, turn **Settings → Developer Tools → Extended Lua Timeout** off (5 seconds). On selects 30 seconds and persists across reboot. The historical 50 ms result below does not certify either new timeout on hardware.
+
 For the native USB path, reboot the board and reopen IDF Monitor. For Wi-Fi,
 reboot only if the install response reports `restart_required: true`, then
 reopen Monitor as needed. Launch **Phase 17 Runaway Test** from
 the launcher and tap **Run forever**. Confirm the **App stopped** toast appears,
 the test app closes back to the launcher, and the serial log records the
-50 ms callback limit without a panic, watchdog reset, or board reboot. Remove
+5-second callback limit without a panic, watchdog reset, or board reboot. Remove
 the test package through **Settings → Manage Apps** after recording the result.
 
-**Board result (2026-11-15): PASS for the logged timeout/closure/no-reset
+**Historical board result (2026-11-15; 50 ms callback build): PASS for the logged timeout/closure/no-reset
 behavior.** The signed Wi-Fi install returned `installed: true`; after reboot,
 the P4 registered `com.example.phase17.runaway`. At 28,921 ms it logged
 `App stopped responding (50 ms callback limit)`, followed by the **App stopped**

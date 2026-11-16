@@ -18,6 +18,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote
 
 
 # Keep pages below the 32 KiB contract so one scheduler tick can decode a
@@ -344,9 +345,61 @@ def write_pages(output: Path, prefix: str, records: list[dict[str, Any]], key: s
     return pages, descriptors
 
 
-def write_runtime_directory(output: Path, letters: list[str]) -> None:
+def compact_route_line(record: dict[str, Any]) -> bytes:
+    parts = ";".join(":".join(str(part.get(key, "")) for key in
+                              ("operator", "route", "bound", "service_type"))
+                       for part in record.get("parts", []))
+    fields = [record.get("route", ""), record.get("operator", ""),
+              record.get("bound", ""), record.get("service_type", ""),
+              record.get("destination_en", ""), record.get("key", "")]
+    if parts:
+        fields.append(parts)
+    return ("\t".join(quote(str(value), safe="") for value in fields) + "\n").encode()
+
+
+def write_route_search_pages(output: Path, routes: list[dict[str, Any]]) -> list[str]:
+    """Write a compact startup index without requiring cJSON conversion."""
+    pages: list[str] = []
+    current: list[bytes] = []
+    current_size = 0
+    for record in routes:
+        line = compact_route_line(record)
+        if len(line) > PAGE_BYTES:
+            raise ValueError("compact route record exceeds page limit")
+        if current and current_size + len(line) > PAGE_BYTES:
+            name = f"route-search-{len(pages):03d}.txt"
+            (output / name).write_bytes(b"".join(current))
+            pages.append(name)
+            current, current_size = [], 0
+        current.append(line)
+        current_size += len(line)
+    if current:
+        name = f"route-search-{len(pages):03d}.txt"
+        (output / name).write_bytes(b"".join(current))
+        pages.append(name)
+    return pages
+
+
+def write_runtime_directory(output: Path, letters: list[str], route_count: int,
+                            search_pages: list[str]) -> None:
     """Small text directory: no provenance JSON conversion on app launch."""
-    lines = ["L " + "".join(letters)]
+    lines = ["L " + "".join(letters), "C " + str(route_count)]
+    prefixes: dict[str, set[str]] = {}
+    for name in search_pages:
+        raw = (output / name).read_bytes()
+        records = raw.decode().splitlines()
+        lines.append(f"Q {name} {len(raw)} {len(records)}")
+        for record in records:
+            route = record.split("\t", 1)[0]
+            for index, character in enumerate(route):
+                prefixes.setdefault(route[:index], set()).add(character)
+    prefix_data = ("\n" + "".join(
+        prefix + "\t" + "".join(sorted(keys)) + "\n"
+        for prefix, keys in sorted(prefixes.items()))).encode()
+    if len(prefix_data) > PAGE_BYTES:
+        raise ValueError("keypad prefix index exceeds catalog page limit")
+    (output / "keypad.txt").write_bytes(prefix_data)
+    lines.append(f"K keypad.txt {len(prefix_data)}")
     for path in sorted(output.glob("routes-*.jsonl")):
         initials = sorted({json.loads(line)["route"][0] for line in path.read_text().splitlines()})
         lines.append("R " + path.name + " " + "".join(initials))
@@ -409,6 +462,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     routes = route_records(kmb, ctb)
     route_letters = sorted({character for row in routes for character in row["route"] if character.isalpha()})
     route_pages, route_desc = write_pages(args.output, "routes", routes, "route")
+    route_search_pages = write_route_search_pages(args.output, routes)
     route_index_pages = write_descriptor_pages(args.output, "route-index", route_desc)
 
     stops_summary: dict[str, Any] = {}
@@ -445,6 +499,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "routes": {
             "records": len(routes),
             "pages": route_pages,
+            "search_pages": route_search_pages,
             "index_pages": route_index_pages,
             "kmb_records_before_merge": len(kmb),
             "ctb_records_before_merge": len(ctb),
@@ -467,7 +522,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "missing_stop_metadata": [provider for provider, summary in stops_summary.items() if summary.get("missing_source")],
         },
     }
-    write_runtime_directory(args.output, route_letters)
+    write_runtime_directory(args.output, route_letters, len(routes), route_search_pages)
     manifest_data = json_bytes(manifest)
     if len(manifest_data) > PAGE_BYTES:
         raise ValueError("manifest exceeds 32 KiB")

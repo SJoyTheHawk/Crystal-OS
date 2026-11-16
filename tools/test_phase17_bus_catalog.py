@@ -87,7 +87,23 @@ def main() -> None:
         assert sum(path.stat().st_size for path in catalog_files) == manifest["limits"]["total_bytes"]
 
         directory=(args.output/'runtime.txt').read_text()
-        assert 'L A' in directory and 'R routes-000.jsonl ' in directory
+        assert 'L A' in directory and 'C 3' in directory and 'Q route-search-000.txt' in directory
+        assert 'R routes-000.jsonl ' in directory
+        search_lines=(args.output/'route-search-000.txt').read_text().splitlines()
+        assert search_lines and search_lines[0].startswith('1A\t')
+        expected_prefixes = {}
+        for record in records:
+            for index, character in enumerate(record['route']):
+                expected_prefixes.setdefault(record['route'][:index], set()).add(character)
+        keypad = (args.output / 'keypad.txt').read_text()
+        actual_prefixes = dict(line.split('\t') for line in keypad.splitlines()[1:])
+        assert actual_prefixes == {prefix: ''.join(sorted(keys))
+                                   for prefix, keys in expected_prefixes.items()}
+        for line in directory.splitlines():
+            if line.startswith('Q '):
+                _, name, size, count = line.split()
+                raw = (args.output / name).read_bytes()
+                assert len(raw) == int(size) and len(raw.splitlines()) == int(count)
         assert 'S KMB stops-kmb-000.jsonl 0001 0002' in directory
         assert 'S CTB stops-ctb-000.jsonl 001 001' in directory
 

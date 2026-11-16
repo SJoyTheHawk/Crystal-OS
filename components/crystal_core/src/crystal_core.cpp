@@ -149,6 +149,7 @@ std::atomic<int32_t> s_cache_dim_seconds{-1};
 std::atomic<int32_t> s_cache_off_seconds{-1};
 std::atomic<int32_t> s_cache_saving{-1};
 std::atomic<int32_t> s_cache_format24{-1};
+std::atomic<int32_t> s_cache_lua_extended{-1};
 
 bool one_of(uint16_t value, const uint16_t *allowed, size_t count)
 {
@@ -779,6 +780,19 @@ void crystal_brightness_set(uint8_t level)
     }
 }
 uint8_t crystal_brightness_level() { return saved_brightness(); }
+uint32_t crystal_lua_callback_timeout_seconds()
+{
+    return cached_value<uint8_t>("dev.lua_long", 0, s_cache_lua_extended) == 1 ? 30 : 5;
+}
+
+bool crystal_lua_set_extended_timeout(bool enabled)
+{
+    const uint8_t value = enabled ? 1 : 0;
+    if (hal().storage == nullptr || !hal().storage->set("dev.lua_long", &value, sizeof(value))) return false;
+    s_cache_lua_extended.store(value, std::memory_order_relaxed);
+    return true;
+}
+
 bool crystal_sound_alerts_enabled() { return stored_value<uint8_t>("sound.alerts", 1) != 0; }
 void crystal_sound_set_alerts(bool enabled)
 {

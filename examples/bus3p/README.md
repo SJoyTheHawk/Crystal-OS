@@ -1,6 +1,25 @@
-# Bus Lite live-provider package (0.2.8)
+# Bus Lite live-provider package (0.2.14)
 
-Phase 1 uses the official KMB/LWB and Citybus HTTPS APIs for complete stop
+Current Lua quota: **4 MiB (4096 KiB)**, set on 2026-11-17. Version 0.2.14 removes the 64-record search batch and one-match-per-tick scan pauses. Each search scans the full resident route catalog in one callback; only the eight visible results are expanded. Result rows still publish over separate ticks.
+
+The firmware adds **Settings → Developer Tools → Extended Lua Timeout**: off is
+5 seconds (default), on is 30 seconds per Lua callback. It is saved across
+reboots and applies from the next invocation, including script entry loading.
+Flash the rebuilt firmware with idf.py app-flash, then install the new CAPP.
+The independent ESP-IDF task watchdog keeps its existing configuration; a long
+callback can still stall the UI and cause task-watchdog reports.
+
+At startup the app incrementally loads all 2,115 bundled route records into Lua
+memory as compact page strings; only visible results expand into tables.
+The search keypad stays disabled until loading completes. Numeric keys remain
+visible and disable when unavailable; alphabetic keys hide unless they continue
+a valid route prefix, then reappear when they become possible. Detailed stop metadata remains
+loaded on demand. The keypad prefix map is built on the host and retained as
+a 2.6 KiB string; startup no longer builds thousands of prefix keys in Lua.
+Host production-binding tests peak at about 0.7 MiB of the
+4 MiB arena; P4 startup time and resource headroom still require board testing.
+
+Phase 1 and Phase 2 use the official KMB/LWB and Citybus HTTPS APIs for complete stop
 sequences and ETA. Bundled catalogs provide offline route search and stop names;
 missing stop details are fetched sequentially. IDs remain strings, and repeated
 stop occurrences keep their sequence numbers. The accepted Favorites/Search,
@@ -20,11 +39,13 @@ board TLS, timing, resource headroom and touch acceptance remain pending.
 [BUS_APP_PHASE_1_RESULTS.md](../../docs/BUS_APP_PHASE_1_RESULTS.md) records the
 artifact hashes, official response provenance and separate host/P4 evidence.
 
-Joint-provider ETA merging is Phase 2. A joint route currently shows explicitly
-labelled partial arrivals from its primary provider. Persistence hardening and
-scheduled refresh/countdown remain Phases 3 and 4; existing manual refresh,
-saved-stop reopening and recent routes are retained. The final functional
-release remains 0.3.0 after acceptance.
+Joint-provider ETA merging is implemented in Phase 2. A JOINT catalog route
+uses the KMB sequence, matches the nearest CTB stop using the Flutter
+coordinate rule, then fetches and merges both providers sequentially. A failed
+source leaves successful arrivals visible with a partial-data status.
+Persistence hardening and scheduled refresh/countdown remain Phases 3 and 4;
+existing manual refresh, saved-stop reopening and recent routes are retained.
+The final functional release remains 0.3.0 after acceptance.
 
 The host fixture tool can still produce an explicitly named **Bus Lite
 (fixture)** package using provider-shaped synthetic responses. This is a test
@@ -49,13 +70,15 @@ runtime.txt directory avoids decoding provenance/index JSON on launch.
 
 Host tests enforce those per-tick work bounds and verify real catalog paging,
 repeated searches, metadata, cancellation and long stops. P4 timing still needs
-verification, including the earlier 870–919 ms startup warning. The 512 KiB
-quota is unchanged. Install /tmp/phase17-bus-stagec.capp through the Control
+verification, including the earlier 870–919 ms startup warning. At that
+historical milestone the 512 KiB quota was unchanged. Install
+/tmp/phase17-bus-stagec.capp through the Control
 Panel after uninstalling the previous version; no firmware flash is needed.
 
 ## Stage C memory correction (0.2.4)
 
-The catalog-enabled package uses a provisional 512 KiB Lua arena. The old
+At that historical milestone, the catalog-enabled package used a provisional
+512 KiB Lua arena. The old
 160 KiB fixture quota failed during P4 launch on 2026-11-16. Search now keeps
 only eight matching records and rescans the sorted catalog for another page;
 all matches remain reachable. Only index filenames and keypad letters stay
@@ -177,8 +200,8 @@ the board, with quieter remarks, a primary Save action and secondary Refresh.
 The empty state points to Search. Status belongs to its current page.
 
 This does not implement every native/design-document feature: nearest-stop
-lookup, provider-backed clock-time arrivals, joint-provider ETA merging and
-automatic refresh remain Stage D or later work.
+lookup and automatic refresh remain later work. Joint-provider ETA merging is
+implemented in 0.2.9 and remains pending live P4 acceptance.
 Screenshots from production UI bindings are available under
 `.cache/phase17-bus-render/renders/720/`.
 

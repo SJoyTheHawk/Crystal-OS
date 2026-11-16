@@ -4,7 +4,11 @@
 
 This directory contains the complete plan for transforming the **S3 native bus app** into a **working P4 Lua implementation** that replicates—not reinvents—the proven functionality.
 
-**Status**: Phase 1 implemented in Bus Lite 0.2.8; host checks and P4 build pass; board acceptance pending. See `BUS_APP_QUICK_START.md` for app-flash and Control Panel installation, and `BUS_APP_PHASE_1_RESULTS.md` for evidence.
+**Status**: Phases 1 and 2 implemented in Bus Lite 0.2.9; host checks pass and
+the P4 build remains valid. Board acceptance is pending. See
+`BUS_APP_QUICK_START.md` for app-flash and Control Panel installation, and
+`BUS_APP_PHASE_1_RESULTS.md` for Phase 1 evidence, and
+`BUS_APP_PHASE_2_RESULTS.md` for joint-route implementation evidence.
 
 **Goal**: Feature parity with S3 app using Flutter's proven data logic
 
@@ -86,7 +90,7 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ---
 
 ### Phase 2: Joint Routes
-**Status**: Not implemented
+**Status**: Implemented in 0.2.9; P4 acceptance pending
 
 **Goal**: Merged KMB+CTB ETA with provider labels  
 **Deliverable**: Route 101 (JOINT) displays combined arrivals
@@ -186,7 +190,7 @@ The functional 0.3.0 release remains gated on host and P4 acceptance.
 
 **Transformation status**:
 - ✅ Direct KMB/LWB and CTB provider adapters (board validation pending)
-- ❌ Joint route ETA merging
+- ✅ Joint route ETA merging with nearest CTB stop matching
 - ✅ Existing save/remove/reopen UI and recents retained; persistence hardening is Phase 3
 - ❌ ETA refresh timer
 - ✅ Bundled stop metadata plus sequential provider fallback and retry states
@@ -347,7 +351,9 @@ host real-catalog peak does not meet the 25% target; P4 measurements are pending
 **JSON decoding**: Frame at most 2,048 characters and decode one provider record per tick; catalog JSON Lines are also incremental
 
 **Timestamp parsing**: Manual (no `os.time` in sandbox)  
-**Distance calculation**: Joint matching is Phase 2; verify Flutter behavior first
+**Distance calculation**: Phase 2 follows Flutter's nearest-coordinate matching;
+no distance cutoff is applied, and missing primary coordinates use the first
+CTB stop as fallback. See `BUS_APP_PHASE_2_RESULTS.md`.
 
 ---
 
@@ -357,7 +363,7 @@ host real-catalog peak does not meet the 25% target; P4 measurements are pending
 - [x] Search works with full catalog (2115 routes)
 - [ ] KMB routes fetch real stops and ETA
 - [ ] CTB routes fetch real stops and ETA
-- [ ] Joint routes display merged ETA with provider labels
+- [x] Host checks cover joint matching, merged ETA labels and one-provider failure
 - [ ] Favorites persist across restarts (up to 8)
 - [ ] ETA refreshes every 20 seconds
 - [x] Host checks cover continuous stop-list scrolling and final-row selection
@@ -470,15 +476,14 @@ print("Peak:", info.lua_peak_kb, "KB")
 
 ## Next Steps
 
-### Immediate (Phase 1)
+### Immediate (Phases 1–2)
 1. Open `BUS_APP_QUICK_START.md`
-2. Install the firmware and signed 0.2.8 CAPP.
-3. Validate KMB 1A and CTB 2 live on P4 and record resource checkpoints.
+2. Install the signed 0.2.9 CAPP.
+3. Validate KMB 1A, CTB 2, and joint route 101 live on P4; record resource checkpoints.
 
-### Short-term (Phase 2-4)
-1. Add joint route support using verified Flutter stop-matching rules.
-2. Harden persistence validation and failed-write handling.
-3. Add scheduled refresh and live countdown.
+### Short-term (Phase 3-4)
+1. Harden persistence validation and failed-write handling.
+2. Add scheduled refresh and live countdown.
 4. **Result**: Complete bus app
 
 ### Long-term (Post-0.3.0)
@@ -495,7 +500,7 @@ This transformation is **achievable**. The S3 app proves the UX works. Flutter p
 
 **Critical success factor**: Follow the references. When Flutter does X, do X. When S3 does Y, do Y.
 
-**Next**: Follow `BUS_APP_QUICK_START.md` to install 0.2.8 and capture Phase 1 board acceptance.
+**Next**: Follow `BUS_APP_QUICK_START.md` to install 0.2.9 and capture Phase 1/2 board acceptance.
 
 The bus app **will work** on P4. Let's make it happen. 🚀
 

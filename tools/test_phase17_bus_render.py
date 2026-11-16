@@ -36,7 +36,10 @@ extern "C" {
 constexpr size_t kMaxFileBytes=64*1024;
 constexpr size_t kMaxLuaString=4096, kMaxJsonNodes=512, kMaxCallbacks=64;
 constexpr unsigned kMaxJsonDepth=16;
-static int64_t esp_timer_get_time() { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static uint32_t test_timeout_seconds=5;
+static uint32_t crystal_lua_callback_timeout_seconds() { return test_timeout_seconds; }
+static int64_t test_time_offset_us=0;
+static int64_t esp_timer_get_time() { return test_time_offset_us + std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 constexpr int MALLOC_CAP_INTERNAL=1, MALLOC_CAP_8BIT=2, MALLOC_CAP_SPIRAM=4;
 static size_t native_json_allocations=0;
 static void *json_allocate(size_t size) {void *ptr=malloc(size);if(ptr)++native_json_allocations;return ptr;}
@@ -52,7 +55,9 @@ public:
     void *arena_=nullptr; size_t arena_size_=256*1024, arena_used_=0, arena_peak_=0;
     bool runtime_failed_=false, deadline_exceeded_=false, in_destroy_=false;
     int hooks_ref_=LUA_NOREF; int64_t deadline_us_=0;
+    const char *timeout_message_="App stopped responding (5 s callback limit)";
     static void *lua_allocate(void*,void*,size_t,size_t);
+    static void instruction_hook(lua_State*,lua_Debug*);
     void *arena_allocate(size_t); void arena_release(void*);
     struct HttpResult {uint32_t id=0; int status=0; std::string body;};
     struct Invocation {ScriptApp *app; const char *hook=nullptr; int ref=LUA_NOREF; CrystalUI::Handle handle=0; const char *message=nullptr; const HttpResult *response=nullptr; bool required=false;};
@@ -86,6 +91,16 @@ MAIN = r'''
 static lua_State *L;
 static unsigned allocation_failures;
 static ScriptApp *test_app;
+static int run_callback(lua_State *state) {
+    luaL_checktype(state,1,LUA_TFUNCTION);lua_pushvalue(state,1);
+    const int ref=luaL_ref(state,LUA_REGISTRYINDEX);
+    *static_cast<ScriptApp **>(lua_getextraspace(state))=test_app;
+    lua_sethook(state,ScriptApp::instruction_hook,LUA_MASKCOUNT,10000);
+    const bool ok=test_app->call_ref(ref,0);
+    lua_sethook(state,nullptr,0,0);luaL_unref(state,LUA_REGISTRYINDEX,ref);
+    if(!ok)return luaL_error(state,"timer exceeded production callback budget");
+    return 0;
+}
 static std::string asset_root;
 static int read_asset(lua_State *state) {
     const char *path=luaL_checkstring(state,1);
@@ -125,8 +140,18 @@ static int click(lua_State *state) {
     auto *label=find_nth(lv_scr_act(),luaL_checkstring(state,1),remaining); assert(label);
     auto *target=lv_obj_get_parent(label);
     lv_obj_scroll_to_view(target,LV_ANIM_OFF); lv_obj_update_layout(lv_scr_act());
-    assert(!lv_obj_has_state(target,LV_STATE_DISABLED));
-    lv_event_send(target,LV_EVENT_CLICKED,nullptr); return 0;
+    if(lv_obj_has_state(target,LV_STATE_DISABLED)) return 0;
+    *static_cast<ScriptApp **>(lua_getextraspace(state))=test_app;
+    lua_sethook(state,ScriptApp::instruction_hook,LUA_MASKCOUNT,10000);
+    lv_event_send(target,LV_EVENT_CLICKED,nullptr);
+    lua_sethook(state,nullptr,0,0);
+    if(test_app->runtime_failed_)return luaL_error(state,"touch callback failed production guard");
+    return 0;
+}
+static int is_enabled(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *target=lv_obj_get_parent(label);
+    lua_pushboolean(state,!lv_obj_has_state(target,LV_STATE_DISABLED));return 1;
 }
 static int has_text(lua_State *state) {lua_pushboolean(state,find(lv_scr_act(),luaL_checkstring(state,1))!=nullptr);return 1;}
 static int list_scroll_y(lua_State *state) {
@@ -183,7 +208,9 @@ int main(int argc,char **argv) {
     lua_pushcfunction(L,read_asset);lua_setglobal(L,"read_asset");
     lua_pushlightuserdata(L,&app);lua_pushcclosure(L,ScriptApp::json_decode,1);lua_setglobal(L,"decode_json");
     lua_pushcfunction(L,memory_stats);lua_setglobal(L,"memory_stats");
+    lua_pushcfunction(L,run_callback);lua_setglobal(L,"run_callback");
     lua_pushcfunction(L,click);lua_setglobal(L,"click");
+    lua_pushcfunction(L,is_enabled);lua_setglobal(L,"is_enabled");
     lua_pushcfunction(L,has_text);lua_setglobal(L,"has_text");
     lua_pushcfunction(L,list_scroll_y);lua_setglobal(L,"list_scroll_y");
     lua_pushcfunction(L,snapshot);lua_setglobal(L,"snapshot");
@@ -203,6 +230,33 @@ int main(int argc,char **argv) {
     first=static_cast<ScriptApp::Block*>(app.arena_);
     *first={app.arena_size_-sizeof(ScriptApp::Block),nullptr,nullptr,true};
     L=app.lua_=lua_newstate(observed_allocate,&app);assert(L);luaL_openlibs(L);
+    // Exercise production invoke/hook using a simulated elapsed clock so both
+    // timeout modes and a live change are checked without waiting 70 seconds.
+    *static_cast<ScriptApp **>(lua_getextraspace(L))=&app;
+    lua_pushcfunction(L,[](lua_State *state) -> int {
+        test_time_offset_us += luaL_checkinteger(state,1);
+        return 0;
+    });lua_setglobal(L,"advance_time");
+    for (uint32_t seconds : {5u,30u,5u}) {
+        test_timeout_seconds=seconds;
+        for (bool over : {false,true}) {
+            app.runtime_failed_=false;
+            std::string code="return function() advance_time("+
+                std::to_string(static_cast<int64_t>(seconds)*1000000+(over?100000:-100000))+
+                "); local x=0; for i=1,20000 do x=x+1 end end";
+            assert(luaL_loadstring(L,code.c_str())==LUA_OK);
+            assert(lua_pcall(L,0,1,0)==LUA_OK);
+            const int timeout_ref=luaL_ref(L,LUA_REGISTRYINDEX);
+            lua_sethook(L,ScriptApp::instruction_hook,LUA_MASKCOUNT,10000);
+            assert(app.call_ref(timeout_ref,0)==!over);
+            lua_sethook(L,nullptr,0,0);
+            assert(app.deadline_exceeded_==over && lua_gettop(L)==0);
+            assert(std::strstr(app.timeout_message_,seconds==30?"30 s":"5 s"));
+            luaL_unref(L,LUA_REGISTRYINDEX,timeout_ref);
+        }
+    }
+    test_time_offset_us=0;app.runtime_failed_=false;
+    puts("PASS: production 5/30/5-second deadline boundaries and timeout messages");
     // Successful callbacks may force an emergency collection inside Lua.
     assert(luaL_dostring(L,"return function() for i=1,3000 do local t={string.rep('x',200)} end end")==LUA_OK);
     int ref=luaL_ref(L,LUA_REGISTRYINDEX);
@@ -258,6 +312,7 @@ def main():
     names=['void *ScriptApp::lua_allocate(', 'void *ScriptApp::arena_allocate(', 'void ScriptApp::arena_release(', 'int ScriptApp::protected_invoke(', 'bool ScriptApp::invoke(', 'bool ScriptApp::execute(', 'bool ScriptApp::call_ref(', 'const cJSON *json_field(', 'bool finite_integer(', 'bool json_int(', 'bool lua_uint(',
            'void ScriptApp::json_to_lua(', 'int ScriptApp::protected_json_value(', 'int ScriptApp::push_json_value(', 'int ScriptApp::json_decode(', 'cJSON *ScriptApp::lua_to_json(', 'ScriptApp::CallbackRef *ScriptApp::make_callback(',
            'void ScriptApp::ui_event(', 'lv_obj_t *ScriptApp::build_widget(', 'bool ScriptApp::apply_style(']
+    names += ['void ScriptApp::instruction_hook(']
     names += ['int ScriptApp::ui_'+name+'(' for name in ('create','screen','get_size','set_text','get_text',
               'set_hidden','set_enabled','set_style','scroll_to','delete','list_add','list_insert',
               'list_set_text','list_remove','list_clear','list_count')]

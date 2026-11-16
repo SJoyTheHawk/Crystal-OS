@@ -572,19 +572,19 @@ Three tiers, one ABI. Tiers differ in trust level, resource cost, and performanc
 
 ### 8.1 Responsiveness Watchdog (Script Tier)
 
-Script runs on the LVGL task. A runaway loop holds the LVGL lock and eventually trips the 5-second task watchdog. To prevent this:
+Script runs on the LVGL task. A runaway loop can hold the LVGL lock and starve its watchdog heartbeat. To contain script execution:
 
 1. **Count hook:** Lua VM calls a C function every ~10K instructions.
-2. **Deadline check:** Per-callback deadline of 50ms. If exceeded, raise a Lua error.
+2. **Deadline check:** Per-callback deadline of 5 seconds by default, or 30 seconds with Developer Tools → Extended Lua Timeout enabled. The persisted preference is sampled at each invocation. If exceeded, raise a Lua error. The independent ESP-IDF LVGL task watchdog also remains active and may report a timeout if a callback blocks the UI task for a similar duration.
 3. **Teardown:** Error bubbles up, app calls `onDestroy`, user sees toast: *"App stopped responding."*
-4. **OS stays up:** No watchdog reset; app is cleanly removed.
+4. **OS stays up:** The app is removed after the Lua error. The separate ESP-IDF task watchdog remains active and may report a timeout near the same interval; the current P4 configuration does not enable watchdog panic/reset.
 
 **Script behavior under watchdog stress test:**
 ```lua
--- This triggers the watchdog:
+-- This triggers the Lua callback deadline:
 while true do end
 
--- Result: Lua error raised after ~50ms, app destroyed.
+-- Result: Lua error raised after the selected ~5s/30s budget, app destroyed.
 ```
 
 ### 8.2 Memory Ceiling

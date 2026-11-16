@@ -1,16 +1,69 @@
-# Bus Phase 1 — install and board test
+# Bus Phases 1–2 — install and board test
 
-Updated 2026-11-16. Package **0.2.8** implements direct KMB/LWB and Citybus stop
-sequences, metadata fallback and single-provider ETA. Host checks and the P4
-firmware build pass. Physical-board acceptance is pending.
+Updated 2026-11-17. Package **0.2.14** implements direct KMB/LWB and Citybus stop
+sequences, metadata fallback, single-provider ETA and Phase 2 joint-provider
+ETA merging. Host checks and the P4 firmware build pass. Physical-board
+acceptance is pending.
+
+For 0.2.14, first flash the updated firmware using the app-flash command below,
+then uninstall the old Bus Lite package and install /tmp/phase17-bus-live.capp
+through the Control Panel (uninstall removes saved stops). Search now scans
+all resident routes in one callback, removing the 64-record batch and
+one-match-per-tick pauses. Result rows still publish over separate ticks.
+
+In **Settings → Developer Tools → Extended Lua Timeout**, off selects the
+5-second default; on selects 30 seconds. The setting survives reboot and takes
+effect at the next Lua invocation. Test off → on → leave/reopen → reboot → off,
+then search 1, 1A, 68X and 101, page results and change queries during publication.
+Capture BUS_SEARCH scan/render/ready timestamps for actual P4 latency.
+The separate task watchdog retains its existing settings; extended Lua time
+can still block the UI and produce task-watchdog reports.
+
+At launch, the app incrementally reads the complete bundled route
+catalog into its 4 MiB Lua arena. The signed catalog includes a compact startup
+route index retained as raw page strings; only visible results expand into
+tables. This avoids thousands of startup arena allocations.
+Search keys remain disabled during this load.
+After it completes, numeric keys remain visible and disable when unavailable;
+alphabetic keys hide unless they can continue the current prefix. Valid letters
+reappear as the prefix changes. Clear and backspace update the keypad immediately.
+Detailed stop metadata remains loaded on demand. The preload is incremental
+so `onCreate` returns without decoding the full catalog in one UI callback.
+
+Earlier package history (the package-only notes below refer to those versions):
+
+Version 0.2.10 still timed out on P4 during preload. Version 0.2.11 removes
+on-device prefix-map construction: the host bundles a small keypad index.
+Startup reads one compact file per callback without scanning its records.
+The readiness update, search-page update and resource checkpoint use separate ticks.
+Install `/tmp/phase17-bus-live.capp` through the Control Panel; this correction
+is package-only and does not require `app-flash`. Uninstalling the previous
+package removes saved stops. Expect `BUS_CATALOG read route-search-000.txt`
+through `route-search-008.txt`, then `read keypad.txt`, `keypad_ready 2115`
+and `BUS_RESOURCE catalog_loaded`. Confirm
+search keys enable, then search 1A/68X/101, change result pages and open
+stops/ETA. Capture startup and teardown logs for the P4 timing retest.
+The separate roughly 1.46-second `onCreate` warning remains a performance follow-up.
+
+P4 logs now confirm 0.2.11 preload succeeds; a later timeout occurs during
+typing. Version 0.2.12 skips unchanged keypad states, avoids search-scan string
+allocations and publishes one result row per tick. Retest repeated 1/1A, clear,
+68X/backspace and 101, including edits before results finish. Save the
+BUS_SEARCH key/key_ready/scan/render/ready markers if it stops again.
+
+Version 0.2.13 applies the S3 keypad visibility behavior on P4: impossible
+digits stay visible but disabled, while impossible letters hide and valid
+letters return. Install the rebuilt CAPP through the Control Panel; no firmware
+flash is needed.
 
 The stop picker is one continuous scrolling list. Progressive metadata updates
 change row labels in place, preserving the scroll position. There are no stop
 Previous/Next controls.
 
 The implementation is `examples/bus3p/main.lua`. Keep the accepted Favorites /
-Search / stop-picker / ETA layout. Joint-provider merging is Phase 2;
-persistence hardening is Phase 3; scheduled refresh/countdown is Phase 4.
+Search / stop-picker / ETA layout. Phase 2 implements joint-provider merging;
+Phase 3 covers persistence hardening, and Phase 4 covers scheduled
+refresh/countdown.
 Manual refresh, existing saved stops and recent routes remain available.
 
 ## 1. Install the firmware once
@@ -35,7 +88,7 @@ No flash has been performed as part of the implementation.
 
 ## 2. Install the live package through the Control Panel
 
-Use **`/tmp/phase17-bus-live.capp`**. It is the signed **Bus Lite 0.2.8** package,
+Use **`/tmp/phase17-bus-live.capp`**. It is the signed **Bus Lite 0.2.9** package,
 key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
@@ -46,7 +99,7 @@ key ID 240, with network permissions for `data.etabus.gov.hk` and
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.8**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.9**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the
@@ -65,7 +118,12 @@ python3 tools/crystal.py inspect /tmp/phase17-bus-live.capp
 
 1. Launch Bus Lite. Confirm Favorites/Search tabs, blank input, clear/backspace
    symbols and normal empty state. Stop the Mac fixture server if it is running.
-2. Select Search and type **1A**. Wait for catalog search to finish. Open the KMB
+2. Open Search immediately. While the route catalog loads, confirm route keys
+   are disabled. After the `BUS_RESOURCE catalog_loaded` checkpoint, confirm
+   keys become active. At an empty query only catalog-leading characters should
+   be enabled; after typing **1**, `A` and valid numeric continuations should be
+   enabled while unrelated letters stay disabled. Clear and backspace should
+   recompute the key state. Then type **1A** and open the KMB
    card **To STAR FERRY** (outbound). The opposite card is **To SAU MAU PING
    (CENTRAL)**. These destinations come from the packaged snapshot; provider
    sequence data is fetched live.
@@ -134,7 +192,7 @@ https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/<six-digit-stop-id>/2
 
 ## 6. Capture P4 resource evidence
 
-Capture `BUS_RESOURCE` lines for launch, catalog/search, stops, ETA and teardown.
+Capture `BUS_RESOURCE` lines for launch, catalog-loaded, search, stops, ETA and teardown.
 They are emitted at checkpoints once per app launch, without recurring idle
 logs. Compare with `BUS_APP_PHASE_1_RESULTS.md`; host memory figures and older
 S3 reports are not P4 measurements.
@@ -154,8 +212,8 @@ remain part of complete app-platform acceptance.
 Phase 1 board acceptance requires both providers, both directions, complete
 stop-list scrolling, selected-stop ETA, refresh, failure recovery and clean navigation
 without the Mac server. Confirm the P4 arena peak has at least 25% headroom
-before accepting the current 512 KiB quota. Record current readings before
-changing the quota.
+before accepting the current 4 MiB quota (4096 KiB, requested 2026-11-17).
+Earlier 512 KiB readings remain historical; measure this package on P4.
 
 ## Host checks and implementation contracts
 
@@ -182,10 +240,12 @@ per tick. Route/service path components are percent-encoded; `O`/`I` becomes
 retain their sequence positions. The single reusable timer and 64-callback
 limit remain unchanged.
 
-## After Phase 1 acceptance
+## Phase 2 joint-route acceptance
 
-Phase 2 adds CTB stop matching and merged arrivals for joint routes. Until then,
-a joint catalog selection uses its primary provider and explicitly shows
-**Partial arrivals: KMB only** (or the relevant provider). Phases 3 and 4 harden
+Phase 2 adds CTB stop matching and merged arrivals for joint routes. Search for
+**101**, select a **KMB/CTB** card, choose a stop and verify requests proceed
+through KMB ETA, CTB route-stop matching and CTB ETA. The arrival rows retain
+their **KMB** or **CTB** labels. If one source fails, successful arrivals remain
+visible with a partial-data status. Phases 3 and 4 harden
 persistence and implement scheduled refresh/countdown. Package **0.3.0** remains
 the later functional release after board acceptance.

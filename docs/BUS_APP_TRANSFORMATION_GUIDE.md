@@ -19,6 +19,17 @@ retained. Host package/catalog/production UI tests and the P4 build pass;
 physical-board acceptance remains pending. See `BUS_APP_QUICK_START.md` and
 `BUS_APP_PHASE_1_RESULTS.md` for the current install/test instructions and hashes.
 
+## Phase 2 implementation update — 2026-11-16
+
+Bus Lite **0.2.9** adds the Flutter-compatible joint-route ETA path. A JOINT
+catalog selection keeps the KMB stop sequence as the primary list, fetches the
+CTB route sequence, resolves coordinates from the bundled catalog or provider
+detail endpoint, chooses the nearest valid CTB stop, and then fetches CTB ETA
+sequentially. Arrivals retain their provider labels and are merged by timestamp
+with stable source order. If one source or the stop match fails, successful
+arrivals remain visible with an explicit partial-data status. Host joint-flow
+coverage passes; P4 joint-route acceptance remains pending.
+
 The original status/estimates below describe the planning baseline. S3 was
 resource limited and incomplete; its reports do not establish P4 capacity.
 Phase 1 uses the existing 512 KiB quota pending board measurements. The source
@@ -115,19 +126,28 @@ entries.indexed.toList()..sort((a, b) {
 
 **What works**:
 - Catalog-backed search with prefix matching and paging
+- Direct KMB/LWB and CTB provider requests with metadata fallback
+- Joint-route nearest-stop matching and sequential merged ETA in Bus Lite 0.2.9
 - Generation-based request invalidation
 - Resource measurement checkpoints
 - 512 KiB Lua arena with bounded JSON decoding
 
-**Gaps identified at planning time** (see the Phase 1 update above for current status):
+**Gaps identified at planning time** (the following list is historical; Phase 1
+and Phase 2 updates above supersede the provider and joint-route entries):
 1. **No live provider HTTP requests** — still uses fixture server at `http://phase17.bus.fixture:8000`
-2. **No joint route ETA** — catalog has JOINT records but no dual-provider fetching
+2. **No joint route ETA** — resolved in Bus Lite 0.2.9; P4 acceptance remains
+   pending
 3. **Incomplete stop metadata resolution** — async catalog lookup but no fallback to provider API
 4. **Persistence hardening** — save/remove/reopen UI already exists; validate stored records and write failures in Phase 3
 5. **No ETA refresh** — one-shot requests only, no 20s periodic refresh
-6. **Incomplete Flutter logic** — route merging is in Python catalog generator, but stop matching and ETA merging are not implemented
+6. **Incomplete Flutter logic at planning time** — route merging was in the
+   Python catalog generator; stop matching and ETA merging are implemented in
+   Bus Lite 0.2.9, with P4 acceptance pending.
 
-**Root cause**: Phase 17 focused on platform validation (Lua runtime, package format, catalog feasibility), not feature parity. The current implementation is a **technical prototype**, not a **functional replica**.
+**Root cause at planning time**: Phase 17 focused on platform validation (Lua
+runtime, package format, catalog feasibility), not feature parity. Phase 1 and
+Phase 2 now add direct providers and joint-route behavior; board acceptance is
+still pending.
 
 ---
 
@@ -161,9 +181,12 @@ entries.indexed.toList()..sort((a, b) {
 
 ### Phase 2: Joint Route Implementation
 
+**Status (2026-11-16)**: Implemented in Bus Lite 0.2.9; P4 acceptance pending.
+See `BUS_APP_PHASE_2_RESULTS.md` for the host checks and package digest.
+
 **Objective**: Implement Flutter's joint-route ETA logic
 
-**Changes**:
+**Implemented behavior**:
 1. Add `Arrivals` module
    ```lua
    Arrivals.match_joint_stop(primary_stop, secondary_stops)
@@ -585,10 +608,12 @@ assert(#arrivals > 0, "Reopened favorite returned no ETA")
 **Symptom**: Joint routes show wrong CTB stop
 
 **Mitigation**:
-- Flutter's StopMatcher is already battle-tested with real HK transit data
-- Copy the distance threshold (500m in Flutter)
-- Log matched pairs during development, validate against Flutter output
-- Fallback to "no match" is acceptable (show KMB only)
+- Flutter's StopMatcher is the reference for real HK transit data.
+- Select the nearest CTB stop with valid coordinates; Flutter has no distance
+  cutoff. Keep the first route stop as fallback when the primary has no valid
+  coordinates.
+- Log matched pairs during development and validate them against Flutter.
+- If no valid CTB match exists, keep usable KMB arrivals visible.
 
 ### Risk 4: Network Reliability
 
@@ -624,7 +649,7 @@ assert(#arrivals > 0, "Reopened favorite returned no ETA")
 - [ ] All modules documented with contracts
 - [ ] Python test harness covers Providers and Arrivals logic
 - [ ] Lua integration tests cover complete workflows
-- [ ] No magic numbers — all thresholds (20s refresh, 500m matching, 8 favorites) are named constants
+- [ ] No magic numbers — refresh interval and favorite limit are named constants
 
 ---
 

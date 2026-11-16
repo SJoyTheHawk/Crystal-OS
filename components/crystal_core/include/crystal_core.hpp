@@ -119,6 +119,10 @@ void crystal_power_set_dim_level(uint8_t level);
 void crystal_power_set_saving(bool enabled);
 void crystal_brightness_set(uint8_t level);
 uint8_t crystal_brightness_level();
+// Persistent developer preference; applies at the next Lua invocation.
+uint32_t crystal_lua_callback_timeout_seconds();
+bool crystal_lua_set_extended_timeout(bool enabled);
+
 bool crystal_sound_alerts_enabled();
 void crystal_sound_set_alerts(bool enabled);
 bool crystal_battery_cached(int *percent, bool *charging);

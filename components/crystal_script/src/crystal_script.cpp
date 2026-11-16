@@ -303,7 +303,7 @@ void ScriptApp::instruction_hook(lua_State *state, lua_Debug *)
     auto *app = *static_cast<ScriptApp **>(lua_getextraspace(state));
     if (app && esp_timer_get_time() > app->deadline_us_) {
         app->deadline_exceeded_ = true;
-        luaL_error(state, "App stopped responding (50 ms callback limit)");
+        luaL_error(state, "%s", app->timeout_message_);
     }
 }
 
@@ -509,13 +509,16 @@ bool ScriptApp::onCreate()
 
     std::string source;
     if (!crystal_package_read_file(manifest_.id, manifest_.entry, &source, kMaxSourceBytes)) return false;
-    deadline_us_ = esp_timer_get_time() + 50000;
+    const uint32_t timeout_seconds = crystal_lua_callback_timeout_seconds();
+    timeout_message_ = timeout_seconds == 30 ? "App stopped responding (30 s callback limit)" :
+                                             "App stopped responding (5 s callback limit)";
+    deadline_us_ = esp_timer_get_time() + static_cast<int64_t>(timeout_seconds) * 1000000;
     lua_sethook(lua_, instruction_hook, LUA_MASKCOUNT, 10000);
     deadline_exceeded_ = false;
     int status = luaL_loadbufferx(lua_, source.data(), source.size(), manifest_.entry.c_str(), "t");
     if (status == LUA_OK) status = lua_pcall(lua_, 0, 1, 0);
     if (status != LUA_OK || deadline_exceeded_) {
-        const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
+        const char *message = deadline_exceeded_ ? timeout_message_ :
             status == LUA_ERRMEM ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
         runtime_error(message);
         lua_pop(lua_, 1);
@@ -567,12 +570,15 @@ bool ScriptApp::invoke(Invocation &invocation)
     if (!lua_checkstack(lua_, 2)) { runtime_error("Per-app Lua memory quota exceeded"); return false; }
     lua_pushcfunction(lua_, protected_invoke); // Zero-upvalue C function: no allocation.
     lua_pushlightuserdata(lua_, &invocation);
-    deadline_us_ = esp_timer_get_time() + 50000;
+    const uint32_t timeout_seconds = crystal_lua_callback_timeout_seconds();
+    timeout_message_ = timeout_seconds == 30 ? "App stopped responding (30 s callback limit)" :
+                                             "App stopped responding (5 s callback limit)";
+    deadline_us_ = esp_timer_get_time() + static_cast<int64_t>(timeout_seconds) * 1000000;
     deadline_exceeded_ = false;
     const int status = lua_pcall(lua_, 1, 1, 0);
     const bool accepted = status == LUA_OK && lua_toboolean(lua_, -1);
     if (status != LUA_OK || deadline_exceeded_) {
-        const char *message = deadline_exceeded_ ? "App stopped responding (50 ms callback limit)" :
+        const char *message = deadline_exceeded_ ? timeout_message_ :
             status == LUA_ERRMEM ? "Per-app Lua memory quota exceeded" : lua_tostring(lua_, -1);
         runtime_error(message ? message : "Lua callback failed");
     }

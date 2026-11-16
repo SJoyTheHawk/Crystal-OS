@@ -516,18 +516,25 @@ esp_err_t crystal_http_fetch(const char *app_id, const char *url, ...) {
 
 ### 8.1 Count Hook: Responsiveness Watchdog
 
+Developer Tools → **Extended Lua Timeout** selects 5 seconds (off/default) or
+30 seconds (on). The preference persists across reboot and is sampled before
+each invocation and entry-script evaluation. Coroutines share that invocation
+deadline; the timeout message reports its selected duration.
+
+
 **Design pattern:** Lua VM calls a C function every ~10K instructions.
 
 ```c
 void script_count_hook(lua_State *L, lua_Debug *ar) {
-    uint32_t now_us = esp_timer_get_time();
-    if (now_us - callback_start_us > 50000) {  // 50ms
-        luaL_error(L, "Timeout: callback exceeded 50ms budget");
+    int64_t now_us = esp_timer_get_time();
+    // Set callback_budget_us and timeout_message at invocation start (5 or 30 s).
+    if (now_us - callback_start_us > callback_budget_us) {
+        luaL_error(L, "%s", timeout_message);
     }
 }
 ```
 
-**Consequence:** A runaway loop raises a Lua error after ~50ms, not a 5s watchdog reset.
+**Consequence:** A runaway loop raises a Lua error at a count-hook check after its selected 5- or 30-second deadline. The separate ESP-IDF task watchdog remains active and may report a timeout near the same interval if the UI task is blocked.
 
 **Trade-off:** Slight overhead per callback (check is fast, ~1 μs). Worth it for safety.
 

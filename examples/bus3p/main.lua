@@ -1,11 +1,11 @@
--- Bus package: native-reference layout with bounded catalog-backed search.
+-- Bus package: native-reference layout with a resident route catalog.
 local ui, http, state, json = crystal.ui, crystal.service.http, crystal.state, crystal.json
 local fs = crystal.fs
 local C = {bg=0x0F172A, card=0x1E293B, text=0xF8FAFC, muted=0x94A3B8, border=0x334155, accent=0x38BDF8}
 -- Built-in LVGL symbols, available in the firmware's Montserrat fonts.
 local ICON={clear=utf8.char(0xF00D),backspace=utf8.char(0xF55A),back=utf8.char(0xF053),refresh=utf8.char(0xF021)}
 local M, v = {}, {}
-local Catalog = {manifest=nil, route_pages=nil, stop_pages={}, available=false}
+local Catalog = {manifest=nil, route_pages=nil, route_index_pages=nil, stop_pages={}, routes={}, next_keys={}, available=false, ready=false}
 local favorites = state.get("favorites")
 if type(favorites)~="table" then favorites={} end
 local recents = {}
@@ -14,7 +14,8 @@ local selected, selected_stop, routes, stops = {}, nil, {}, {}
 local route_results, stop_results = {}, {}
 local route_page = 1
 local query, search_pending, return_page = "", false, "search"
-local search_routes, open_route, fetch_eta, render_favorites, show_page, refresh
+local search_routes, open_route, fetch_eta, fetch_joint_eta, render_favorites, show_page, refresh
+local apply_metadata, render_arrivals, render_route_rows, show_recent_routes
 local render_route_page, render_stop_row, begin_stop_metadata
 local status, resource_checkpoint
 local missing_metadata_stops
@@ -73,12 +74,15 @@ end
 local function catalog_load()
   if Catalog.manifest then return Catalog.available end
   local directory=fs and fs.read and fs.read("assets/catalog/runtime.txt")
-  Catalog.manifest={}; Catalog.route_pages={}; Catalog.stop_pages={}
-  if not directory then return false end
-  -- Retain strings, not decoded manifest/index trees. No catalog JSON at launch.
+  Catalog.manifest={}; Catalog.route_pages={}; Catalog.route_index_pages={}; Catalog.stop_pages={}
+  if not directory then Catalog.load_failed=true;return false end
+  -- Retain small descriptors, not decoded manifest/index trees.
   for line in directory:gmatch("[^\r\n]+") do
     local kind, rest=line:match("^(%u) (.+)$")
     if kind=="L" then Catalog.letters=rest
+    elseif kind=="C" then Catalog.expected_count=tonumber(rest)
+    elseif kind=="K" then Catalog.keypad_descriptor=rest
+    elseif kind=="Q" then Catalog.route_index_pages[#Catalog.route_index_pages+1]=rest
     elseif kind=="R" then Catalog.route_pages[#Catalog.route_pages+1]=rest
     elseif kind=="S" then
       local provider, descriptor=rest:match("^(%u+) (.+)$")
@@ -88,12 +92,206 @@ local function catalog_load()
       end
     end
   end
-  Catalog.available=#Catalog.route_pages>0
+  Catalog.available=#Catalog.route_index_pages>0 or #Catalog.route_pages>0
+  -- Keep compact pages resident; expand only visible records. Thousands of
+  -- record/field allocations make the PSRAM arena's first-fit scan expensive.
+  Catalog.ready=false
+  if Catalog.available then
+    Catalog.load_job={index=1,raw=nil,position=1,count=0,
+      compact=#Catalog.route_index_pages>0}
+  end
+  if not Catalog.available then Catalog.load_failed=true end
   return Catalog.available
 end
 
-local function catalog_letters()
-  return Catalog.letters or "ABCDEFGHKMNPRSTWX"
+local function catalog_next_characters(prefix)
+  if not Catalog.ready then return "" end
+  if Catalog.keypad then
+    local start=Catalog.keypad:find("\n"..prefix.."\t",1,true)
+    if not start then return "" end
+    start=start+#prefix+2
+    local finish=Catalog.keypad:find("\n",start,true)
+    return finish and Catalog.keypad:sub(start,finish-1) or ""
+  end
+  return Catalog.next_keys[prefix] or ""
+end
+
+local function catalog_unescape(value)
+  return (value:gsub("%%(%x%x)",function(hex)return string.char(tonumber(hex,16))end))
+end
+
+local function catalog_compact_record(line)
+  local fields={}
+  for field in (line.."\t"):gmatch("(.-)\t") do fields[#fields+1]=catalog_unescape(field) end
+  if #fields<6 or fields[1]=="" then return nil end
+  local record={route=fields[1],operator=fields[2],bound=fields[3],service_type=fields[4],
+    destination=fields[5],key=fields[6]}
+  if fields[7] and fields[7]~="" then
+    record.parts={}
+    for part in fields[7]:gmatch("[^;]+") do
+      local operator,route,bound,service=part:match("^([^:]+):([^:]+):([^:]+):([^:]+)$")
+      if operator then record.parts[#record.parts+1]={operator=operator,route=route,bound=bound,service_type=service} end
+    end
+  end
+  return record
+end
+
+local function catalog_add_next_keys(route)
+  for index=0,#route-1 do
+    local prefix=route:sub(1,index)
+    local character=route:sub(index+1,index+1)
+    local possible=Catalog.next_keys[prefix] or ""
+    if not possible:find(character,1,true) then
+      Catalog.next_keys[prefix]=possible..character
+    end
+  end
+end
+
+local function update_keypad_state()
+  if not v.key_buttons then return end
+  v.key_enabled=v.key_enabled or {}
+  v.key_hidden=v.key_hidden or {}
+  v.key_row_hidden=v.key_row_hidden or {}
+  local ready=Catalog.ready
+  local possible=catalog_next_characters(query)
+  for value,handle in pairs(v.key_buttons) do
+    local is_letter=#value==1 and value>="A" and value<="Z"
+    local is_possible=ready and possible:find(value,1,true)~=nil
+    local enabled=false
+    if ready then
+      enabled=value=="Clear" or (value=="<" and #query>0)
+        or (value~="Clear" and value~="<" and is_possible)
+    end
+    if v.key_enabled[value]~=enabled then
+      ui.set_enabled(handle,enabled);v.key_enabled[value]=enabled
+    end
+    if is_letter then
+      local hidden=not is_possible
+      if v.key_hidden[value]~=hidden then
+        ui.set_hidden(handle,hidden);v.key_hidden[value]=hidden
+      end
+    end
+  end
+  -- The letters are arranged in paired rows. Collapse rows with no valid
+  -- next characters so the scroll bank stays compact as the prefix narrows.
+  for row,values in pairs(v.key_rows or {}) do
+    local visible=false
+    for _,value in ipairs(values) do
+      if not v.key_hidden[value] then visible=true;break end
+    end
+    local hidden=not visible
+    if v.key_row_hidden[row]~=hidden then
+      ui.set_hidden(row,hidden);v.key_row_hidden[row]=hidden
+    end
+  end
+end
+
+local function catalog_load_step()
+  local job=Catalog.load_job
+  if not job then return true end
+  if job.publish then
+    print("BUS_CATALOG","keypad_ready",job.count)
+    Catalog.ready=true;Catalog.load_job=nil
+    update_keypad_state()
+    v.catalog_ready_notice=true
+    return true
+  end
+  -- New packages carry a host-built prefix map. Read one file per callback,
+  -- retain its string, and return without scanning or allocating route keys.
+  if job.compact and Catalog.keypad_descriptor then
+    local descriptor=Catalog.route_index_pages[job.index]
+    local is_keypad=not descriptor
+    descriptor=descriptor or Catalog.keypad_descriptor
+    local filename,bytes,count=descriptor:match("^(%S+) (%d+) ?(%d*)$")
+    if not job.announced then
+      print("BUS_CATALOG","read",filename or "invalid descriptor")
+      job.announced=true;return false
+    end
+    job.announced=nil
+    local raw=filename and fs.read("assets/catalog/"..filename)
+    if not raw or #raw~=tonumber(bytes) then
+      Catalog.load_failed=true;Catalog.available=false;Catalog.load_job=nil
+      print("BUS_CATALOG","invalid_file",filename or "descriptor")
+      return true
+    end
+    if is_keypad then
+      Catalog.keypad=raw
+      if job.count~=Catalog.expected_count then
+        Catalog.load_failed=true;Catalog.available=false;Catalog.load_job=nil
+        print("BUS_CATALOG","count_mismatch",job.count)
+      else job.publish=true end
+    else
+      Catalog.routes[#Catalog.routes+1]=raw
+      job.count=job.count+(tonumber(count) or 0);job.index=job.index+1
+    end
+    return false
+  end
+  if not job.raw then
+    local pages=job.compact and Catalog.route_index_pages or Catalog.route_pages
+    local descriptor=pages[job.index]
+    if not descriptor then
+      Catalog.ready=job.count>0 and
+        (not Catalog.expected_count or job.count==Catalog.expected_count)
+      Catalog.load_job=nil
+      if Catalog.ready then
+        update_keypad_state()
+        resource_checkpoint("catalog_loaded")
+        if v.page=="search" and query=="" then show_recent_routes() end
+      else
+        Catalog.load_failed=true
+        Catalog.available=false
+        if v.page=="search" then
+          render_route_rows({},"Catalog unavailable","Bundled route catalog is incomplete")
+        end
+      end
+      return true
+    end
+    job.index=job.index+1
+    local filename=descriptor:match("^(%S+)")
+    job.raw=filename and fs.read("assets/catalog/"..filename) or nil
+    job.position=1
+    if not job.raw then
+      Catalog.load_failed=true
+      Catalog.load_job=nil
+      Catalog.available=false
+      if v.page=="search" then
+        render_route_rows({},"Catalog unavailable","Could not read bundled route data")
+      end
+      return true
+    end
+    if job.compact then Catalog.routes[#Catalog.routes+1]=job.raw end
+    return false
+  end
+
+  -- Inspect route numbers only: no destination unescaping, record tables or
+  -- provider parts during preload. Repeated directions share a keypad prefix.
+  local batch=1
+  for _=1,batch do
+    local start=job.position
+    if start>#job.raw then
+      job.raw=nil
+      return false
+    end
+    local finish=job.raw:find("\n",start,true) or (#job.raw+1)
+    job.position=finish+1
+    if finish>start then
+      local route
+      if job.compact then
+        route=job.raw:match("([A-Z0-9]+)\t",start)
+      else
+        local record=catalog_normalize(catalog_decode(job.raw:sub(start,finish-1)))
+        if record then
+          Catalog.routes[#Catalog.routes+1]=record
+          route=record.route
+        end
+      end
+      if route then
+        if route~=job.last_route then catalog_add_next_keys(route);job.last_route=route end
+        job.count=job.count+1
+      end
+    end
+  end
+  return false
 end
 
 -- One file read OR one JSON record conversion per timer callback.
@@ -131,8 +329,8 @@ local function catalog_line(job, pages)
   end
   -- Cheap field checks are bounded too. Generated JSON uses canonical keys;
   -- provider parts preserve the same route number as their parent record.
-  -- Bound catalog scanning too; this callback shares the same 50 ms watchdog
-  -- as provider decoding and UI callbacks.
+  -- Legacy file-backed catalog work remains staged; current route searches
+  -- use resident compact pages in catalog_search_step instead.
   for _=1,4 do
     local start=job.position
     if start>#job.raw then job.raw=nil;return nil,false end
@@ -158,20 +356,52 @@ local function catalog_search_step(job)
     if v.catalog_job==job then v.catalog_job=nil end
     return true
   end
-  local line,done=catalog_line(job,Catalog.route_pages)
-  if done then
-    route_results=job.results; route_total=job.count; route_page=job.page
-    render_route_page()
+  if job.render then
+    render_route_page(job.render)
+    job.render=job.render+1
+    if job.render>9 then job.render=nil;job.finish=true end
+    return false
+  elseif job.finish then
     ui.set_text(v.results_hint,#route_results>0 and "Choose a route and direction" or "No matching routes")
     status(#route_results>0 and ("Catalog routes | "..route_total.." matches") or "No matching routes")
-    v.catalog_job=nil
-    resource_checkpoint("search_ready")
+    print("BUS_SEARCH","ready",job.prefix,job.count)
+    v.catalog_job=nil;v.search_checkpoint=true
     return true
   end
-  if line then
-    local record=catalog_normalize(catalog_decode(line))
-    if record then job.results[#job.results+1]=record end
+  -- Scan resident compact pages without allocating each skipped record.
+  -- Complete the resident scan in one callback; retain only the visible page.
+  while job.index<=#Catalog.routes do
+    local record=Catalog.routes[job.index]
+    local matches, line
+    if type(record)=="string" then
+      local start=job.position or 1
+      if start>#record then
+        job.index=job.index+1;job.position=1
+      else
+        local finish=record:find("\n",start,true) or (#record+1)
+        job.position=finish+1
+        matches=true
+        for offset=1,#job.prefix do
+          if record:byte(start+offset-1)~=job.prefix:byte(offset) then matches=false;break end
+        end
+        if matches and job.count>=job.offset and #job.results<8 then
+          line=record:sub(start,finish-1)
+        end
+      end
+    else
+      job.index=job.index+1
+      matches=record.route:sub(1,#job.prefix)==job.prefix
+    end
+    if matches then
+      job.count=job.count+1
+      if job.count>job.offset and #job.results<8 then
+        job.results[#job.results+1]=line and catalog_compact_record(line) or record
+      end
+    end
   end
+  route_results=job.results; route_total=job.count; route_page=job.page
+  routes={};job.render=1
+  print("BUS_SEARCH","render",job.prefix,job.count)
   return false
 end
 
@@ -321,6 +551,34 @@ function Arrivals.parse_timestamp(value)
   for i=1,m-1 do days=days+months[i] end
   return days*86400+h*3600+mi*60+s-offset
 end
+local function joint_distance(lat1,lon1,lat2,lon2)
+  local r=6371000
+  local p1=math.rad(lat1);local p2=math.rad(lat2)
+  local dp=math.rad(lat2-lat1);local dl=math.rad(lon2-lon1)
+  local a=math.sin(dp/2)^2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)^2
+  a=math.max(0,math.min(1,a))
+  return r*2*math.atan(math.sqrt(a),math.sqrt(1-a))
+end
+-- Flutter's reference matcher chooses the nearest valid CTB coordinate. It
+-- deliberately has no radius cutoff; a missing primary coordinate falls back
+-- to the first route stop so a usable provider can still supply arrivals.
+function Arrivals.match_joint_stop(primary,secondary)
+  if type(secondary)~="table" or #secondary==0 then return nil end
+  local plat=tonumber(primary and primary.lat);local plon=tonumber(primary and primary.lon)
+  local primary_valid=plat and plon and plat==plat and plon==plon
+    and plat>=-90 and plat<=90 and plon>=-180 and plon<=180
+  if not primary_valid then return secondary[1] end
+  local best,best_distance=nil,math.huge
+  for _,stop in ipairs(secondary) do
+    local lat=tonumber(stop.lat);local lon=tonumber(stop.lon)
+    if lat and lon and lat==lat and lon==lon
+        and lat>=-90 and lat<=90 and lon>=-180 and lon<=180 then
+      local distance=joint_distance(plat,plon,lat,lon)
+      if distance<best_distance then best,best_distance=stop,distance end
+    end
+  end
+  return best
+end
 function Arrivals.select(entries)
   -- Preserve all valid provider timestamps, including optional metadata
   -- disagreements. Accuracy filtering is a separate refinement milestone.
@@ -417,8 +675,9 @@ end
 local function invalidate_requests()
   v.generation=(v.generation or 0)+1
   v.catalog_generation=(v.catalog_generation or 0)+1
-  v.catalog_job=nil;v.stop_catalog_job=nil;v.stop_list_job=nil
-  v.decode_job=nil;v.metadata_job=nil;v.pending_request=nil
+  v.catalog_job=nil;v.stop_catalog_job=nil;v.joint_catalog_job=nil;v.joint_detail_job=nil;v.stop_list_job=nil
+  v.search_checkpoint=nil
+  v.decode_job=nil;v.metadata_job=nil;v.joint_completion=nil;v.pending_request=nil
   local old=v.request_id;v.request_id=nil
   if old then http.cancel(old) end
 end
@@ -471,10 +730,11 @@ local function remember_route(route)
   while #recents>5 do table.remove(recents) end
   save_recents()
 end
-render_route_page = function()
+render_route_page = function(slot)
   local first=1
-  routes={}
-  for i, row in ipairs(v.routes) do
+  if not slot then routes={} end
+  for i=slot or 1,slot and math.min(slot,8) or #v.routes do
+    local row=v.routes[i]
     local route=route_results[first+i-1]
     routes[i]=route
     ui.set_hidden(row.box, not route)
@@ -483,19 +743,20 @@ render_route_page = function()
       ui.set_text(row.destination, "To "..(route.destination or "selected destination"))
     end
   end
+  if slot and slot<=8 then return end
   local pages=math.max(1,math.ceil(route_total/8))
   ui.set_hidden(v.route_nav, route_total<=8)
   ui.set_hidden(v.route_prev, route_page<=1)
   ui.set_hidden(v.route_next, route_page>=pages)
   ui.set_text(v.route_page, #route_results>0 and ("Page "..route_page.." / "..pages) or "")
 end
-local function render_route_rows(rows, hint, message)
+render_route_rows = function(rows, hint, message)
   route_results=rows or {}; route_total=#route_results; route_page=math.max(1,math.min(route_page,math.max(1,math.ceil(route_total/8))))
   render_route_page()
   ui.set_text(v.results_hint,hint)
   status(message)
 end
-local function show_recent_routes()
+show_recent_routes = function()
   local rows={}
   for i=1,math.min(#recents,5) do rows[i]=recents[i] end
   render_route_rows(rows,#rows>0 and "Recent routes" or "Search by route number",
@@ -591,7 +852,7 @@ local function now_seconds()
   local clock=crystal.service.time
   return clock and clock.now and clock.now() or 0
 end
-local function render_arrivals()
+render_arrivals = function()
   local rows=v.current_arrivals or {}
   local now=now_seconds()
   for i,row in ipairs(v.arrivals) do
@@ -610,6 +871,7 @@ end
 fetch_eta = function()
   if not selected_stop then status("Choose a stop to see arrivals");return end
   local route,stop=selected,selected_stop
+  if route.operator=="JOINT" then fetch_joint_eta();return end
   local part=request_part(route)
   status("Loading arrivals...")
   request(Providers.eta_url(part,stop),function(body,err)
@@ -637,10 +899,110 @@ missing_metadata_stops=function(wanted)
   table.sort(rows,function(a,b) return a.seq<b.seq end)
   return rows
 end
-local function apply_metadata(target,source)
+apply_metadata = function(target,source)
   target.name_en=nonempty(target.name_en) or source.name_en
   target.name_tc=nonempty(target.name_tc) or source.name_tc
   target.lat=target.lat or source.lat;target.lon=target.lon or source.lon
+end
+local function finish_joint_eta(route,stop,kmb_rows,ctb_rows,kmb_failed,ctb_failed,matched)
+  local merged={}
+  for _,row in ipairs(kmb_rows or {}) do
+    row.source_order=#merged+1;merged[#merged+1]=row
+  end
+  for _,row in ipairs(ctb_rows or {}) do
+    row.source_order=#merged+1;merged[#merged+1]=row
+  end
+  v.current_arrivals=Arrivals.select(merged);v.eta_updated=now_seconds()
+  render_arrivals()
+  local kmb_ok=#kmb_rows>0
+  local ctb_ok=#ctb_rows>0
+  if kmb_failed and ctb_failed then
+    status("Unable to load arrivals - tap Refresh to retry")
+  elseif kmb_failed or ctb_failed or not matched then
+    if kmb_ok and not ctb_ok then status("Partial arrivals: KMB only")
+    elseif ctb_ok and not kmb_ok then status("Partial arrivals: CTB only")
+    else status("Some arrival data unavailable - tap Refresh to retry") end
+  elseif #merged>0 then
+    status("Updated just now")
+  else
+    status("No arrivals available")
+  end
+  resource_checkpoint("eta_complete")
+end
+local function joint_stop_details(rows,done)
+  local wanted=false
+  for _,stop in ipairs(rows) do
+    if not tonumber(stop.lat) or not tonumber(stop.lon) then wanted=true;break end
+  end
+  if not wanted then done(rows,false);return end
+  if Catalog.available and next(Catalog.stop_pages.CTB or {}) then
+    local by_id={}
+    for index,stop in ipairs(rows) do
+      if not tonumber(stop.lat) or not tonumber(stop.lon) then
+        by_id[stop.id]=by_id[stop.id] or {};by_id[stop.id][#by_id[stop.id]+1]=index
+      end
+    end
+    v.joint_catalog_job={provider="CTB",index=1,wanted=by_id,rows=rows,
+      generation=v.generation,done=function(found,missing)
+        if missing then
+          local unresolved={}
+          for _,stop in ipairs(found) do
+            if not tonumber(stop.lat) or not tonumber(stop.lon) then unresolved[#unresolved+1]=stop end
+          end
+          if #unresolved>0 then
+            v.joint_detail_job={rows=unresolved,index=1,generation=v.generation,
+              needs=function(item)return not tonumber(item.lat) or not tonumber(item.lon) end,
+              done=function(final,failed)done(final,failed)end}
+            return
+          end
+        end
+        done(found,false)
+      end}
+    return
+  end
+  v.joint_detail_job={rows=rows,index=1,generation=v.generation,
+    needs=function(item)return not tonumber(item.lat) or not tonumber(item.lon) end,
+    done=function(final,failed)done(final,failed)end}
+end
+fetch_joint_eta = function()
+  local route,stop=selected,selected_stop
+  local parts=type(route.parts)=="table" and route.parts or {}
+  local kmb_part,ctb_part=parts[1],parts[2]
+  if not kmb_part or not ctb_part then
+    status("Joint route data unavailable - tap Refresh to retry");return
+  end
+  local function fetch_part(part,target,done)
+    request(Providers.eta_url(part,target),function(body,err)
+      if err then done({},true);return end
+      Controller.decode_array(body,function(item,order)
+        return Providers.eta_record(part,target,item,order)
+      end,function(rows,failure)
+        done(failure and {} or Arrivals.select(rows),failure~=nil)
+      end)
+    end)
+  end
+  status("Loading KMB arrivals...")
+  fetch_part(kmb_part,stop,function(kmb_rows,kmb_failed)
+    status("Finding the matching CTB stop...")
+    request(Providers.route_stops_url(ctb_part),function(body,err)
+      if err then finish_joint_eta(route,stop,kmb_rows,{},kmb_failed,true,false);return end
+      Controller.decode_array(body,function(item)
+        return Providers.stop_record(ctb_part,item)
+      end,function(ctb_stops,failure)
+        if failure then finish_joint_eta(route,stop,kmb_rows,{},kmb_failed,true,false);return end
+        joint_stop_details(ctb_stops,function(resolved)
+          local matched=Arrivals.match_joint_stop(stop,resolved)
+          if not matched then
+            finish_joint_eta(route,stop,kmb_rows,{},kmb_failed,false,false);return
+          end
+          status("Loading CTB arrivals...")
+          fetch_part(ctb_part,matched,function(ctb_rows,ctb_failed)
+            finish_joint_eta(route,stop,kmb_rows,ctb_rows,kmb_failed,ctb_failed,matched~=nil)
+          end)
+        end)
+      end)
+    end)
+  end)
 end
 local function fetch_selected_stop()
   local stop=selected_stop
@@ -758,6 +1120,7 @@ open_route = function(route, favorite)
   else fetch_stops() end
 end
 catalog_search = function(page)
+  print("BUS_SEARCH","scan",query,page)
   v.catalog_generation=(v.catalog_generation or 0)+1
   v.catalog_job={prefix=query,index=1,results={},count=0,offset=(page-1)*8,
     page=page,generation=v.catalog_generation}
@@ -767,21 +1130,36 @@ catalog_search = function(page)
   status("Loading catalog...")
 end
 search_routes = function()
+  if not Catalog.ready then
+    if Catalog.load_failed then
+      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
+    else
+      render_route_rows({},"Loading route catalog...","Loading route catalog...")
+    end
+    return
+  end
   if query=="" then show_recent_routes(); return end
   if catalog_load() then
     route_results={}; route_total=0; route_page=1
     catalog_search(1)
-    resource_checkpoint("catalog_loaded")
     search_pending=false
     return
   end
   render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
 end
 local function key(value)
+  if not Catalog.ready then return end
+  if value~="Clear" and value~="<" and catalog_next_characters(query):find(tostring(value),1,true)==nil then
+    return
+  end
   if value=="Clear" then query=""
   elseif value=="<" then query=query:sub(1,-2)
   elseif tostring(value):match("^[A-Za-z0-9]$") and #query<6 then query=(query..value):upper() end
+  print("BUS_SEARCH","key",query)
+  routes={};v.search_checkpoint=nil
   ui.set_text(v.query,query)
+  update_keypad_state()
+  print("BUS_SEARCH","key_ready",query)
   if fs and fs.read then
     v.catalog_generation=(v.catalog_generation or 0)+1
     v.catalog_job=nil; v.stop_catalog_job=nil
@@ -792,25 +1170,99 @@ local function key(value)
 end
 local function search_tick()
   if v.paused then return end
-  if v.search_due and v.search_due>0 then
-    v.search_due=v.search_due-1
-    if v.search_due==0 and search_pending and v.page=="search" then
-      search_pending=false; search_routes()
+  if v.catalog_ready_notice then
+    v.catalog_ready_notice=nil
+    if v.page=="search" and query=="" then show_recent_routes() end
+    v.catalog_ready_checkpoint=true
+    return
+  elseif v.catalog_ready_checkpoint then
+    v.catalog_ready_checkpoint=nil;resource_checkpoint("catalog_loaded");return
+  elseif Catalog.load_failed and not v.catalog_failure_notice then
+    v.catalog_failure_notice=true
+    if v.page=="search" then
+      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
     end
+    return
   end
+  -- Keep an already-selected favorite responsive while the route catalog
+  -- preloads in the background. Network dispatch/response decoding takes the
+  -- timer slot first; catalog batches resume on the next tick.
   if v.pending_request then
     Controller.start_request(v.pending_request)
+    return
   elseif v.decode_job then
     local job=v.decode_job
     if job.generation~=(v.generation or 0) then v.decode_job=nil;return end
     local done,err=Providers.array_step(job)
     if done then v.decode_job=nil;job.body=nil;job.complete(err and nil or job.rows,err) end
-  elseif v.stop_list_job then
+    return
+  elseif Catalog.load_job then
+    catalog_load_step()
+    return
+  end
+  if v.search_due and v.search_due>0 then
+    v.search_due=v.search_due-1
+    if v.search_due==0 and search_pending and v.page=="search" then
+      search_pending=false; search_routes()
+      return
+    end
+  end
+  if v.stop_list_job then
     stop_list_step(v.stop_list_job)
   elseif v.catalog_job then
     catalog_search_step(v.catalog_job)
+  elseif v.search_checkpoint then
+    v.search_checkpoint=nil;resource_checkpoint("search_ready")
   elseif v.stop_catalog_job then
     catalog_stop_step(v.stop_catalog_job)
+  elseif v.joint_catalog_job then
+    local job=v.joint_catalog_job
+    if job.generation~=(v.generation or 0) then
+      v.joint_catalog_job=nil
+    else
+      local line,done
+      if not next(job.wanted) then done=true
+      else line,done=catalog_line(job,Catalog.stop_pages[job.provider] or {}) end
+      if done then
+        v.joint_catalog_job=nil
+        if job.done then job.done(job.rows, next(job.wanted)~=nil) end
+      elseif line then
+        local stop=catalog_decode(line)
+        local id=type(stop)=="table" and tostring(stop.id or "")
+        local wanted=id and job.wanted[id]
+        if wanted then
+          local targets=type(wanted)=="table" and wanted or {wanted}
+          for _,index in ipairs(targets) do
+            local target=job.rows[index]
+            if target then
+              target.name_en=target.name_en or stop.name_en;target.name_tc=target.name_tc or stop.name_tc
+              target.lat=target.lat or stop.lat;target.lon=target.lon or stop.lon
+            end
+          end
+          job.wanted[id]=nil
+        end
+      end
+    end
+  elseif v.joint_detail_job then
+    local job=v.joint_detail_job
+    if job.generation~=(v.generation or 0) then
+      v.joint_detail_job=nil
+    elseif not v.request_id and not v.pending_request then
+      local stop=job.rows[job.index]
+      while stop and not job.needs(stop) do
+        job.index=job.index+1;stop=job.rows[job.index]
+      end
+      if not stop then
+        v.joint_detail_job=nil
+        if job.done then job.done(job.rows,job.failed) end
+      else
+        job.index=job.index+1
+        request(Providers.stop_details_url(stop.operator,stop.id),function(body,err)
+          local details=not err and Providers.parse_stop_details(stop.operator,stop.id,json.decode(body))
+          if details then apply_metadata(stop,details) else job.failed=true end
+        end)
+      end
+    end
   elseif v.metadata_job then metadata_step(v.metadata_job)
   end
 end
@@ -826,8 +1278,14 @@ show_page = function(name)
   if name=="favorites" then
     render_favorites()
     status(#favorites>0 and "Tap a saved stop for live arrivals" or "")
-  elseif name=="search" and query=="" then
-    show_recent_routes()
+  elseif name=="search" then
+    if Catalog.ready then
+      if query=="" then show_recent_routes() end
+    elseif Catalog.load_failed then
+      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
+    else
+      render_route_rows({},"Loading route catalog...","Loading route catalog...")
+    end
   end
 end
 refresh = function()
@@ -848,7 +1306,8 @@ function M.onCreate()
       end
     end
   end
-  v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={}}
+  v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={},
+    key_buttons={}, key_rows={}, key_hidden={}, key_row_hidden={}}
   catalog_load()
   local screen=ui.screen()
   local size=ui.get_size(screen)
@@ -907,18 +1366,26 @@ function M.onCreate()
       local caption=value=="Clear" and ICON.clear or value=="<" and ICON.backspace or value
       local key_button=button(row,caption,(numeric_w-2*gap)//3,key_h,function() key(value) end)
       ui.set_style(key_button,{border_width=0})
+      v.key_buttons[value]=key_button
+      v.key_hidden[value]=false
     end
   end
-  local letters=catalog_letters()
+  local letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   local bank_w=keypad_w-numeric_w-gap
   local bank=assert(ui.scroll_view(keypad,{width=bank_w,height=4*key_h+3*gap,gap=gap}))
   for i=1,#letters,2 do
     local row=assert(ui.row(bank,{gap=gap}))
+    local row_keys={}
     for j=i,math.min(i+1,#letters) do
       local value=letters:sub(j,j)
       local key_button=button(row,value,(bank_w-gap)//2,key_h,function() key(value) end)
       ui.set_style(key_button,{border_width=0})
+      v.key_buttons[value]=key_button
+      v.key_hidden[value]=false
+      row_keys[#row_keys+1]=value
     end
+    v.key_rows[row]=row_keys
+    v.key_row_hidden[row]=false
   end
   v.results_hint=text(page,"Matching routes will appear here",width,"small",C.muted)
   for i=1,8 do
@@ -974,7 +1441,7 @@ function M.onCreate()
     v.status[name]=text(v.pages[name],"",width,"small",C.muted)
   end
   v.search_timer=ui.timer(100,search_tick)
-  update_actions(); show_page("favorites")
+  update_keypad_state(); update_actions(); show_page("favorites")
   resource_checkpoint("launch_ready")
   return true
 end

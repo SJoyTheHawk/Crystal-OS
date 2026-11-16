@@ -171,6 +171,7 @@ private:
     uint32_t json_largest_input_bytes_ = 0;
     int hooks_ref_ = LUA_NOREF;
     int64_t deadline_us_ = 0;
+    const char *timeout_message_ = "App stopped responding (5 s callback limit)";
     bool deadline_exceeded_ = false;
     bool runtime_failed_ = false;
     bool in_destroy_ = false;

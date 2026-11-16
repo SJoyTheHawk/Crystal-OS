@@ -23,22 +23,33 @@ def function(source, signature):
 
 FIXTURE = r'''
 #include <cassert>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include "lvgl.h"
 struct TestStorage {
     uint8_t value = 1;
+    uint8_t lua_value = 0;
+    bool lua_present = false, fail_lua_write = false;
     size_t length = 1;
     bool present = false;
     unsigned writes = 0;
     bool get(const char *key, void *out, size_t *size) {
+        if (!std::strcmp(key, "dev.lua_long")) {
+            if (!lua_present) return false;
+            assert(*size >= 1); *static_cast<uint8_t *>(out)=lua_value; *size=1; return true;
+        }
         assert(!std::strcmp(key, "dev.resources"));
         if (!present) return false;
         if (*size >= length) std::memcpy(out, &value, length);
         *size = length; return true;
     }
     bool set(const char *key, const void *data, size_t size) {
+        if (!std::strcmp(key, "dev.lua_long")) {
+            assert(size==1); if(fail_lua_write)return false;
+            lua_value=*static_cast<const uint8_t *>(data);lua_present=true;return true;
+        }
         assert(!std::strcmp(key, "dev.resources") && size == 1);
         value = *static_cast<const uint8_t *>(data); length = size;
         present = true; ++writes; return true;
@@ -63,6 +74,8 @@ struct Hal { IWifi *wifi; TestStorage *storage; };
 static IWifi wifi;
 static Hal services{&wifi, &storage};
 Hal &hal() { return services; }
+static std::string toast;
+void crystal_core_show_toast(const char *message) { toast=message; }
 struct EthernetInfo { bool has_ip=false; unsigned ip=2; };
 static EthernetInfo ethernet;
 enum class CrystalNetworkType { None, WiFi, Ethernet };
@@ -122,6 +135,21 @@ static lv_obj_t *resources_switch() {
         }
     }
     assert(false); return nullptr;
+}
+static lv_obj_t *timeout_switch() {
+    for(uint32_t i=0;i<lv_obj_get_child_cnt(content);++i) {
+        auto *row=lv_obj_get_child(content,i);
+        if(lv_obj_check_type(row,&lv_btn_class) &&
+           !std::strcmp(lv_label_get_text(lv_obj_get_child(row,0)),"Extended Lua Timeout"))
+            return lv_obj_get_child(row,-1);
+    }
+    assert(false);return nullptr;
+}
+static void timeout_toggle(bool on) {
+    auto *control=timeout_switch();
+    if(on)lv_obj_add_state(control,LV_STATE_CHECKED);
+    else lv_obj_clear_state(control,LV_STATE_CHECKED);
+    lv_event_send(control,LV_EVENT_VALUE_CHANGED,nullptr);
 }
 static void resources_toggle(bool on) {
     auto *control = resources_switch();
@@ -193,6 +221,17 @@ int main() {
     assert(!lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
     assert(storage.writes == 0); // Restoring never writes flash.
     reset();
+    assert(crystal_lua_callback_timeout_seconds()==5);
+    assert(!lv_obj_has_state(timeout_switch(),LV_STATE_CHECKED));
+    timeout_toggle(true);assert(crystal_lua_callback_timeout_seconds()==30 && storage.lua_value==1);
+    reset();assert(lv_obj_has_state(timeout_switch(),LV_STATE_CHECKED));
+    s_cache_lua_extended=-1;assert(crystal_lua_callback_timeout_seconds()==30);
+    storage.fail_lua_write=true;timeout_toggle(false);
+    assert(lv_obj_has_state(timeout_switch(),LV_STATE_CHECKED));
+    assert(crystal_lua_callback_timeout_seconds()==30 && toast=="Could not save Lua timeout");
+    storage.fail_lua_write=false;timeout_toggle(false);
+    s_cache_lua_extended=-1;assert(crystal_lua_callback_timeout_seconds()==5 && storage.lua_value==0);
+    reset();assert(!lv_obj_has_state(timeout_switch(),LV_STATE_CHECKED));
     assert(!lv_obj_has_state(resources_switch(), LV_STATE_CHECKED));
     resources_toggle(true);
     assert(lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
@@ -301,6 +340,14 @@ def main():
         if (match := re.match(r"constexpr .*[* ](kSettings\w+)\s*=", line))
         and re.search(r"\b" + match[1] + r"\b", functions)
     )
+    core = (ROOT / 'components/crystal_core/src/crystal_core.cpp').read_text()
+    timeout_code = 'std::atomic<int32_t> s_cache_lua_extended{-1};\n'
+    for signature in ('T stored_value(const char *key, T fallback)',
+                      'T cached_value(const char *key, T fallback, std::atomic<int32_t> &cache)',
+                      'uint32_t crystal_lua_callback_timeout_seconds()',
+                      'bool crystal_lua_set_extended_timeout(bool enabled)'):
+        if signature.startswith('T '): timeout_code += 'template <typename T>\n'
+        timeout_code += function(core, signature)
     with tempfile.TemporaryDirectory(prefix='crystal-developer-tools-') as directory:
         temp = Path(directory)
         (temp / 'lv_conf.h').write_text(CONF + '\n#define LV_USE_PERF_MONITOR 1\n')
@@ -308,7 +355,7 @@ def main():
         (temp / 'esp_log.h').write_text('#pragma once\n')
         (temp / 'crystal_hal.hpp').write_text('#pragma once\n')
         metrics = ROOT / 'components/crystal_shell/src/crystal_ui_metrics.cpp'
-        (temp / 'check.cpp').write_text(FIXTURE + f'\n#include "{metrics}"\n' + constants + functions + CHECK)
+        (temp / 'check.cpp').write_text(FIXTURE + f'\n#include "{metrics}"\n' + constants + timeout_code + functions + CHECK)
         (temp / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)
 project(developer_tools_test LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)

@@ -44,6 +44,7 @@ def main():
             assert len(raw) == row["bytes"]
             assert hashlib.sha256(raw).hexdigest() == row["sha256"]
         live = crystal.pack(root / "examples/bus3p", Path(temp) / "live.capp")
+        assert live["memory_kb"] == 4096
         assert live["permissions"]["network_hosts"] == ["data.etabus.gov.hk", "rt.data.gov.hk"]
         assert "phase17.bus.fixture" not in (root / "examples/bus3p/main.lua").read_text()
         phase17_bus_fixture.OUTPUT = Path(temp) / "package"
@@ -54,11 +55,15 @@ def main():
         assert manifest["id"] == "com.example.bus3p"
         assert manifest["runtime"] == "lua"
         assert "fixture" in manifest["name"]
-        assert manifest["version"] == "0.2.8"
-        assert manifest["memory_kb"] == 512 and manifest["worker_threads"] == 1
+        assert manifest["version"] == "0.2.14"
+        assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
         assert "catalog_search_step" in source
+        assert "catalog_load_step" in source
+        assert "catalog_add_next_keys(route)" in source
+        assert "Catalog.ready" in source and "update_keypad_state" in source
+        assert "possible:find(value,1,true)" in source
         assert "catalog_stop_step" in source
         assert "assets/catalog/runtime.txt" in source
         assert "v.catalog_job" in source and "v.stop_catalog_job" in source
@@ -88,6 +93,9 @@ def main():
         assert catalog_manifest["limits"]["file_count"] <= 128
         assert catalog_manifest["limits"]["total_bytes"] <= 5_632 * 1024
         assert catalog_manifest["routes"]["records"] == 2115
+        assert catalog_manifest["routes"]["search_pages"]
+        assert all((phase17_bus_fixture.OUTPUT / "assets/catalog" / name).stat().st_size <= 16 * 1024
+                   for name in catalog_manifest["routes"]["search_pages"])
         assert catalog_manifest["routes"]["joint_records"] == 160
         assert catalog_manifest["stops"]["KMB"]["records"] == 6753
         assert catalog_manifest["stops"]["CTB"]["records"] == 2586
@@ -102,9 +110,24 @@ def main():
         # Runtime filters must be derived from actual records, never numeric
         # first/last ranges that can omit lexical prefix matches such as 101.
         directory = phase17_bus_fixture.OUTPUT / "assets/catalog/runtime.txt"
+        expected_keys = {}
+        for row in route_records:
+            for index, character in enumerate(row['route']):
+                expected_keys.setdefault(row['route'][:index], set()).add(character)
+        keypad = (directory.parent / 'keypad.txt').read_text()
+        assert dict(line.split('\t') for line in keypad.splitlines()[1:]) == {
+            prefix: ''.join(sorted(keys)) for prefix, keys in expected_keys.items()}
+        compact_count = 0
         for line in directory.read_text().splitlines():
             fields = line.split()
-            if fields[0] == "R":
+            if fields[0] == "Q":
+                raw = (directory.parent / fields[1]).read_bytes()
+                assert len(raw) == int(fields[2])
+                assert len(raw.splitlines()) == int(fields[3])
+                compact_count += int(fields[3])
+            elif fields[0] == "K":
+                assert len((directory.parent / fields[1]).read_bytes()) == int(fields[2])
+            elif fields[0] == "R":
                 rows = [json.loads(item) for item in (directory.parent / fields[1]).read_text().splitlines()]
                 assert fields[2] == "".join(sorted({row["route"][0] for row in rows}))
                 assert all(row["route"].isalnum() and row["route"].isascii() for row in rows)
@@ -112,6 +135,7 @@ def main():
             elif fields[0] == "S":
                 rows = [json.loads(item) for item in (directory.parent / fields[2]).read_text().splitlines()]
                 assert fields[3:] == [rows[0]["id"], rows[-1]["id"]]
+        assert compact_count == len(route_records)
         one_a = [row for row in route_records if row["route"].startswith("1A")]
         assert one_a and len(route_records) > 8
         for checkpoint in ("launch_begin", "launch_ready", "catalog_loaded",

@@ -1064,19 +1064,30 @@ lua_setallocf(L, script_alloc, allocator);
 
 ### 5.3 Count Hook: Watchdog
 
+Developer Tools → **Extended Lua Timeout** selects 5 seconds (off/default) or
+30 seconds (on). The preference persists across reboot and is sampled before
+each invocation and entry-script evaluation. Coroutines share that invocation
+deadline; the timeout message reports its selected duration.
+
+
 ```cpp
 // script_watchdog.h
 static uint64_t g_callback_start_us = 0;
-static const uint64_t CALLBACK_BUDGET_US = 50000;  // 50ms
+static uint64_t callback_budget_us = 5000000;  // Default; refreshed per invocation
+static const char *timeout_message = "App stopped responding (5 s callback limit)";
 
 static void script_count_hook(lua_State *L, lua_Debug *ar) {
     uint64_t now_us = esp_timer_get_time();
-    if (now_us - g_callback_start_us > CALLBACK_BUDGET_US) {
-        luaL_error(L, "Timeout: callback exceeded 50ms budget");
+    if (now_us - g_callback_start_us > callback_budget_us) {
+        luaL_error(L, "%s", timeout_message);
     }
 }
 
 void script_start_callback(lua_State *L) {
+    const uint32_t seconds = crystal_lua_callback_timeout_seconds();
+    callback_budget_us = static_cast<uint64_t>(seconds) * 1000000;
+    timeout_message = seconds == 30 ? "App stopped responding (30 s callback limit)" :
+                                     "App stopped responding (5 s callback limit)";
     g_callback_start_us = esp_timer_get_time();
     lua_sethook(L, script_count_hook, LUA_MASKCOUNT, 10000);
 }
@@ -1495,7 +1506,7 @@ and recorded A–F/G–M/N–R hardware evidence before repeating older checks.
 ### Phase 17 Code Checklist
 
 - [x] Lua 5.4 sandbox removes host file/process/module loading access and keeps a separate VM per app
-- [x] Count hook applies a 50ms callback deadline, including protected coroutines; a caught timeout still fails the app callback
+- [x] Count hook applies a 5-second default / 30-second developer callback deadline, including protected coroutines; a caught timeout still fails the app callback
 - [x] Allocator hook enforces the manifest memory ceiling from a PSRAM arena
 - [x] Async `http.fetch`: returns a request ID and dispatches its callback on the LVGL task
 - [x] Worker quota: excess concurrent fetch returns `nil, "worker quota exceeded"`

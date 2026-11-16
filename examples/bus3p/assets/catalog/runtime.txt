@@ -1,4 +1,15 @@
 L ABCDEFGHKMNPRSTWX
+C 2115
+Q route-search-000.txt 16330 281
+Q route-search-001.txt 16328 288
+Q route-search-002.txt 16349 297
+Q route-search-003.txt 16376 212
+Q route-search-004.txt 16315 260
+Q route-search-005.txt 16335 210
+Q route-search-006.txt 16338 231
+Q route-search-007.txt 16382 244
+Q route-search-008.txt 5920 92
+K keypad.txt 2672
 R routes-000.jsonl 12345
 R routes-001.jsonl 156789
 R routes-002.jsonl 1

@@ -2,10 +2,10 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1 contract (0.2.8, 2026-11-16)
+## Verified Phase 1/2 contract (0.2.9, 2026-11-16)
 
-Phase 1 is implemented in `examples/bus3p/main.lua`; use that tested source for
-working API calls. The remaining Phase 2–4 snippets below are design sketches,
+Phases 1 and 2 are implemented in `examples/bus3p/main.lua`; use that tested
+source for working API calls. The remaining Phase 3–4 snippets below are design sketches,
 not a replacement entry file. Some use conceptual UI helpers that the current
 ABI does not expose (`container`, `align`, `remove_children`, `timer_stop`).
 Reuse the existing controls and one 100 ms timer through the real API instead.
@@ -39,12 +39,31 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
 - The real-catalog harness registers 62 callbacks;
   repeated refresh/paging must not grow that count. First launch initializes in
   `onCreate`; pause cancels work, resume refreshes the visible selection.
+- Startup incrementally reads the compact route-search pages into a resident
+  collection of raw page strings, reading one file per callback. The host
+  generates keypad.txt; exact-prefix lookup uses that resident string without
+  building prefix tables on P4. Readiness/UI/checkpoint work uses separate ticks.
+  Only visible results expand into tables. Legacy JSONL
+  fallback packages decode one record per tick. Keep the keypad disabled until
+  this preload finishes. Derive the next-character mask
+  from the loaded route numbers after each key edit; enable only characters
+  that continue at least one route prefix. Search scans at most 64 resident
+  records and expands at most one visible result per tick, without rereading
+  route files. Compare prefix bytes without allocating per-record substrings.
+  Cache keypad states to avoid redundant native writes. Publish one result
+  row per tick, then navigation/status; resource diagnostics use another tick.
+  Invalidate clickable result mappings immediately on query changes.
+  Stop metadata pages remain on demand. The 4 MiB
+  quota is configured for this workload; host arena results do not replace P4
+  heap, callback-time or startup measurements.
 - JSON conversion is protected so native cJSON trees are released before Lua
   allocation errors propagate. `test_phase17_bus_render.py` exercises the actual
   production binding, including repeated forced OOM.
 
-See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2 joint
-matching, Phase 3 persistence hardening and Phase 4 periodic refresh remain open.
+See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2
+joint matching and sequential ETA merging are implemented in the production
+entry file. Phase 3 persistence hardening and Phase 4 periodic refresh remain
+open.
 
 
 ## 1. Provider Module Implementation
@@ -203,14 +222,25 @@ end
 
 ### 2.2 Stop Matching (Haversine Distance)
 
+The Flutter `StopMatcher` selects the nearest CTB stop with valid coordinates;
+it does not apply a maximum-distance cutoff. Equal distances keep the first
+stop in route order. If the primary stop has no valid coordinates, it falls
+back to the first CTB stop. The P4 implementation follows those rules and
+rejects coordinates outside valid latitude/longitude ranges.
+
 ```lua
+local function valid_coordinate(lat, lon)
+  return lat and lon and lat == lat and lon == lon
+    and lat >= -90 and lat <= 90 and lon >= -180 and lon <= 180
+end
+
 -- Match a KMB stop to the nearest CTB stop in a list
--- Returns matched stop or nil if no valid match within 500m
+-- Returns the nearest stop with valid coordinates, with no distance cutoff.
 function Arrivals.match_joint_stop(primary_stop, secondary_stops)
   local primary_lat = tonumber(primary_stop.lat)
   local primary_lon = tonumber(primary_stop.lon)
   
-  if not primary_lat or not primary_lon then
+  if not valid_coordinate(primary_lat, primary_lon) then
     -- Flutter's fallback: if no coordinates, use first secondary stop
     if type(secondary_stops) == "table" and #secondary_stops > 0 then
       return secondary_stops[1]
@@ -219,16 +249,16 @@ function Arrivals.match_joint_stop(primary_stop, secondary_stops)
   end
   
   local best_match = nil
-  local best_distance = 500  -- 500m threshold (Flutter's default)
+  local best_distance = math.huge
   
   for _, stop in ipairs(secondary_stops) do
     local lat = tonumber(stop.lat)
     local lon = tonumber(stop.lon)
     
-    if lat and lon then
+    if valid_coordinate(lat, lon) then
       local distance = haversine(primary_lat, primary_lon, lat, lon)
       
-      if distance < best_distance then
+      if distance < best_distance then -- strict comparison keeps first on ties
         best_distance = distance
         best_match = stop
       end
@@ -250,7 +280,7 @@ local function haversine(lat1, lon1, lat2, lon2)
             math.cos(phi1) * math.cos(phi2) *
             math.sin(delta_lambda / 2) * math.sin(delta_lambda / 2)
   
-  local c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+  local c = 2 * math.atan(math.sqrt(a), math.sqrt(1 - a))
   
   return R * c
 end
@@ -965,9 +995,9 @@ end
 - [x] Host integration checks for route 1A/2 and recorded official responses
 - [x] Implement exact timezone-aware `Arrivals.parse_timestamp()`
 - [ ] Validate live stop fetching and ETA on P4 (both providers/directions)
-- [ ] Implement `Arrivals.match_joint_stop()` with haversine
-- [ ] Implement `Controller.fetch_joint_eta()` with sequential flow
-- [ ] Test joint-route ETA (route 101, 101R)
+- [x] Implement `Arrivals.match_joint_stop()` with the Flutter nearest-coordinate rule
+- [x] Implement `Controller.fetch_joint_eta()` with sequential KMB/CTB flow
+- [x] Host-test joint-route ETA (route 101)
 - [ ] Implement `Store.add_favorite()` and `load_favorites()`
 - [x] Retain existing Favorites/save/remove UI and recent routes
 - [ ] Test save/exit/relaunch persistence
@@ -986,4 +1016,5 @@ end
 
 These patterns replicate the S3 C++ implementation and Flutter Dart logic in P4 Lua. Follow them faithfully — they're proven to work in production mobile apps and native MCU apps. The adaptation is straightforward: Lua has the necessary primitives (HTTP, JSON, state, timers), and the memory constraints are manageable with bounded processing.
 
-**Next step**: Complete the continuous stop-list and live-provider P4 checks before starting Phase 2 joint-provider integration.
+**Next step**: Install 0.2.9 and complete the P4 joint-route acceptance before
+starting Phase 3 persistence hardening.

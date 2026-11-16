@@ -3669,6 +3669,23 @@ void settings_push_developer_tools()
         crystal_resources_monitor_set_enabled(visible);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
+    const bool extended_timeout = crystal_lua_callback_timeout_seconds() == 30;
+    lv_obj_t *timeout_row = settings_row(content, "Extended Lua Timeout",
+        extended_timeout ? "30 seconds per callback" : "5 seconds per callback (default)");
+    lv_obj_t *timeout_switch = settings_switch(timeout_row, extended_timeout);
+    lv_obj_add_event_cb(timeout_switch, [](lv_event_t *event) {
+        auto *control = static_cast<lv_obj_t *>(lv_event_get_target(event));
+        auto *row = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+        const bool extended = lv_obj_has_state(control, LV_STATE_CHECKED);
+        if (!crystal_lua_set_extended_timeout(extended)) {
+            if (crystal_lua_callback_timeout_seconds() == 30) lv_obj_add_state(control, LV_STATE_CHECKED);
+            else lv_obj_clear_state(control, LV_STATE_CHECKED);
+            crystal_core_show_toast("Could not save Lua timeout");
+            return;
+        }
+        settings_row_set_summary(row, extended ? "30 seconds per callback" : "5 seconds per callback (default)");
+    }, LV_EVENT_VALUE_CHANGED, timeout_row);
+
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);
     lv_label_set_text(note, "Use the Wi-Fi panel to install and manage apps. Developers can also install using the USB command-line tool.");

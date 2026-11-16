@@ -9,11 +9,17 @@ end
 local kmb='https://data.etabus.gov.hk/v1/transport/kmb'
 local ctb='https://rt.data.gov.hk/v2/transport/citybus'
 local assets={
-  ['assets/catalog/runtime.txt']='L A\nR routes.jsonl 12\n',
+  ['assets/catalog/runtime.txt']='L A\nC 5\nQ route-search.txt\nR routes.jsonl 12\n',
+  ['assets/catalog/route-search.txt']='1A\tKMB\tO\t1\tStar%20Ferry\tKMB%7C1A%7CO%7C1\t\n'..
+    '1A\tKMB\tI\t2\tSau%20Mau%20Ping\tKMB%7C1A%7CI%7C2\t\n'..
+    '2\tCTB\tO\t1\tCentral\tCTB%7C2%7CO%7C1\t\n'..
+    '2\tCTB\tI\t1\tShau%20Kei%20Wan\tCTB%7C2%7CI%7C1\t\n'..
+    '101\tJOINT\tI\t1\tKwun%20Tong\tJOINT%7CKMB%3A101%3AI%3A1%7CCTB%3A101%3AO%3A2\tKMB%3A101%3AI%3A1%3BCTB%3A101%3AO%3A2\n',
   ['assets/catalog/routes.jsonl']='{"route":"1A","operator":"KMB","bound":"O","service_type":"1","destination_en":"Star Ferry"}\n'..
     '{"route":"1A","operator":"KMB","bound":"I","service_type":"2","destination_en":"Sau Mau Ping"}\n'..
     '{"route":"2","operator":"CTB","bound":"O","service_type":"1","destination_en":"Central"}\n'..
-    '{"route":"2","operator":"CTB","bound":"I","service_type":"1","destination_en":"Shau Kei Wan"}\n'
+    '{"route":"2","operator":"CTB","bound":"I","service_type":"1","destination_en":"Shau Kei Wan"}\n'..
+    '{"route":"101","operator":"JOINT","bound":"I","service_type":"1","destination_en":"Kwun Tong","parts":[{"operator":"KMB","route":"101","bound":"I","service_type":"1"},{"operator":"CTB","route":"101","bound":"O","service_type":"2"}]}\n'
 }
 crystal={ui=ui,json={decode=decode_json},fs={read=function(path)return assets[path]end},
   state={get=function(k)return saved[k]end,set=function(k,value)saved[k]=value;return true end,flush=function()return true end},
@@ -56,10 +62,19 @@ assert(ui.list_clear(list));assert(ui.delete(list))
 
 local app=assert(loadfile(package_path))()
 assert(app.onCreate() and timer);assert(has_text('No saved stops yet'))
-snapshot('favorites-empty.ppm');click('Search');assert(has_text('Search by route number'))
+snapshot('favorites-empty.ppm');click('Search');click('1')
+assert(not has_text('1A   KMB'),'keypad must ignore input before route preload finishes')
+assert(not is_enabled('1'),'numeric keypad must remain disabled while catalog loads')
+ticks(10);assert(has_text('Search by route number'))
+assert(is_enabled('1') and has_text('9') and not is_enabled('9'),'numeric keys stay visible and disable when unavailable')
+assert(not has_text('A') and not has_text('Z'),'letters without a matching route prefix must be hidden')
 assert(not has_text('Route number'));snapshot('search-empty.ppm')
 click('1');ticks(1);assert(not has_text('1A   KMB'),'debounce fired early')
+assert(is_enabled('A') and is_enabled('0') and has_text('9') and not is_enabled('9'),
+  'after prefix 1 only characters present in route numbers should be enabled')
+assert(has_text('A') and not has_text('Z'),'valid letters reappear after the prefix changes')
 click('A');ticks();assert(has_text('1A   KMB'));assert(not pending)
+assert(not has_text('A'),'letter keys hide when the completed route has no next character')
 snapshot('search.ppm');click('1A   KMB');url(kmb..'/route-stop/1A/outbound/1')
 assert(#saved.recent_routes==1)
 -- Provider sequence strings, repeated ID occurrences and metadata API fallback.
@@ -142,6 +157,38 @@ wait_url(ctb..'/stop/003155');complete(read_asset(sample..'ctb_detail.json'))
 assert(has_text('1. Sai Wan Ho (Grand Promenade)'))
 click('1. Sai Wan Ho (Grand Promenade)');ticks(3);url(ctb..'/eta/CTB/003155/2')
 complete(read_asset(sample..'ctb_eta.json'));assert(has_text('Updated just now'))
+-- Phase 2 joint route: KMB is the primary stop sequence, then the nearest
+-- CTB stop is selected (even when it is over 500m away) and both provider ETA
+-- lists are merged by timestamp.
+click(back);click(back);click(clear);click('1');click('0');click('1');ticks();assert(has_text('101   KMB/CTB'))
+click('101   KMB/CTB');url(kmb..'/route-stop/101/inbound/1')
+complete('{"data":[{"stop":"KMB-101-001","seq":1},{"stop":"KMB-101-002","seq":2}]}')
+wait_url(kmb..'/stop/KMB-101-001');complete('{"data":{"stop":"KMB-101-001","name_en":"Joint KMB One","lat":"22.3000","long":"114.1000"}}')
+wait_url(kmb..'/stop/KMB-101-002');complete('{"data":{"stop":"KMB-101-002","name_en":"Joint KMB Two","lat":"22.3100","long":"114.1100"}}');ticks()
+click('1. Joint KMB One');url(kmb..'/eta/KMB-101-001/101/1')
+complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00","co":"KMB","rmk_en":"KMB scheduled"}]}')
+url(ctb..'/route-stop/CTB/101/outbound');complete('{"data":[{"stop":"CTB-101-001","seq":1},{"stop":"CTB-101-002","seq":2}]}')
+url(ctb..'/stop/CTB-101-001');complete('{"data":{"stop":"CTB-101-001","name_en":"Joint CTB One","lat":"22.3300","long":"114.1300"}}')
+url(ctb..'/stop/CTB-101-002');complete('{"data":{"stop":"CTB-101-002","name_en":"Joint CTB Two","lat":"22.3100","long":"114.1100"}}')
+url(ctb..'/eta/CTB/CTB-101-002/101');complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00","co":"CTB","rmk_en":"CTB scheduled"}]}')
+assert(has_text('KMB | KMB scheduled') and has_text('CTB | CTB scheduled'))
+-- A failed KMB ETA must leave CTB arrivals usable after matching metadata is
+-- loaded through the provider fallback path.
+click(refresh);url(kmb..'/eta/KMB-101-001/101/1');complete('{}',503)
+url(ctb..'/route-stop/CTB/101/outbound');complete('{"data":[{"stop":"CTB-101-001","seq":1},{"stop":"CTB-101-002","seq":2}]}')
+url(ctb..'/stop/CTB-101-001');complete('{"data":{"stop":"CTB-101-001","name_en":"Joint CTB One","lat":"22.3300","long":"114.1300"}}')
+url(ctb..'/stop/CTB-101-002');complete('{"data":{"stop":"CTB-101-002","name_en":"Joint CTB Two","lat":"22.3100","long":"114.1100"}}')
+url(ctb..'/eta/CTB/CTB-101-002/101');complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00","co":"CTB","rmk_en":"CTB partial"}]}')
+assert(has_text('CTB | CTB partial') and has_text('Partial arrivals: CTB only'))
+-- The other single-source failure direction preserves KMB results; two failed
+-- sources produce a retryable combined error.
+click(refresh);url(kmb..'/eta/KMB-101-001/101/1')
+complete('{"data":[{"eta":"2026-11-16T14:34:00+08:00","co":"KMB","rmk_en":"KMB partial"}]}')
+url(ctb..'/route-stop/CTB/101/outbound');complete('{}',503)
+assert(has_text('KMB | KMB partial') and has_text('Partial arrivals: KMB only'))
+click(refresh);url(kmb..'/eta/KMB-101-001/101/1');complete('{}',503)
+url(ctb..'/route-stop/CTB/101/outbound');complete('{}',503)
+assert(has_text('Unable to load arrivals - tap Refresh to retry'))
 -- Direction and actual service identity survive selecting the second variant.
 click(back);click(back);click(clear);click('1');click('A');ticks();click('1A   KMB',2)
 url(kmb..'/route-stop/1A/inbound/2')

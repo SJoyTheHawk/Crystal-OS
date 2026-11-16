@@ -46,7 +46,7 @@ static void deadline_hook(lua_State *state, lua_Debug *debug) {
     if (now.tv_sec > deadline.tv_sec ||
         (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
         timed_out = 1;
-        luaL_error(state, "App stopped responding (50 ms callback limit)");
+        luaL_error(state, "App stopped responding (5 s callback limit)");
     }
 }
 
@@ -161,8 +161,7 @@ int main(int argc, char **argv) {
             "local ok = coroutine.resume(co); assert(not ok)"))
         return fail(state, "coroutine load");
     clock_gettime(CLOCK_MONOTONIC, &deadline);
-    deadline.tv_nsec += 50 * 1000 * 1000;
-    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    deadline.tv_sec += 5;
     timed_out = 0;
     lua_sethook(state, deadline_hook, LUA_MASKCOUNT, 1000);
     if (lua_pcall(state, 0, 0, 0) != LUA_OK || !timed_out)
@@ -172,8 +171,7 @@ int main(int argc, char **argv) {
             "local ok = pcall(function() while true do end end); assert(not ok)"))
         return fail(state, "caught deadline load");
     clock_gettime(CLOCK_MONOTONIC, &deadline);
-    deadline.tv_nsec += 50 * 1000 * 1000;
-    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    deadline.tv_sec += 5;
     timed_out = 0;
     if (lua_pcall(state, 0, 0, 0) != LUA_OK || !timed_out)
         return fail(state, "caught deadline enforcement");
@@ -182,8 +180,7 @@ int main(int argc, char **argv) {
             "local run = coroutine.wrap(function() while true do end end); run()"))
         return fail(state, "wrapped coroutine load");
     clock_gettime(CLOCK_MONOTONIC, &deadline);
-    deadline.tv_nsec += 50 * 1000 * 1000;
-    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    deadline.tv_sec += 5;
     timed_out = 0;
     if (lua_pcall(state, 0, 0, 0) == LUA_OK || !timed_out)
         return fail(state, "wrapped coroutine deadline");
@@ -199,11 +196,7 @@ int main(int argc, char **argv) {
     if (luaL_loadstring(state, "while true do end") != LUA_OK)
         return fail(state, "loop load");
     clock_gettime(CLOCK_MONOTONIC, &deadline);
-    deadline.tv_nsec += 50 * 1000 * 1000;
-    if (deadline.tv_nsec >= 1000000000L) {
-        deadline.tv_sec++;
-        deadline.tv_nsec -= 1000000000L;
-    }
+    deadline.tv_sec += 5;
     timed_out = 0;
     lua_sethook(state, deadline_hook, LUA_MASKCOUNT, 1000);
     const int status = lua_pcall(state, 0, 0, 0);
