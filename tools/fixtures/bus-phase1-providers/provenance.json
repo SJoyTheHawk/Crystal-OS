@@ -1,0 +1,49 @@
+{
+  "recorded_date": "2026-11-16",
+  "timezone": "Asia/Hong_Kong",
+  "purpose": "Official responses captured on the host; replay fixtures, never presented as fresh device ETA.",
+  "responses": [
+    {
+      "file": "kmb_stops.json",
+      "url": "https://data.etabus.gov.hk/v1/transport/kmb/route-stop/1A/outbound/1",
+      "sha256": "2606fda96377f6cad527014db06cbce0c4b5c4a7b05ec495c55bdc41c7d787c7",
+      "bytes": 2991,
+      "generated_timestamp": "2026-11-16T17:29:11+08:00"
+    },
+    {
+      "file": "kmb_detail.json",
+      "url": "https://data.etabus.gov.hk/v1/transport/kmb/stop/A3ADFCDF8487ADB9",
+      "sha256": "f0e0fc8c86efb553b37d809c1518cc863ea0fc22f891e6273d123661f56c386b",
+      "bytes": 239,
+      "generated_timestamp": "2026-11-16T17:29:11+08:00"
+    },
+    {
+      "file": "kmb_eta.json",
+      "url": "https://data.etabus.gov.hk/v1/transport/kmb/eta/A3ADFCDF8487ADB9/1A/1",
+      "sha256": "09bcb595ccb54c8fe157e00723de867442c9586e4c0a7a77792e89027b5d6eb6",
+      "bytes": 1823,
+      "generated_timestamp": "2026-11-16T17:29:11+08:00"
+    },
+    {
+      "file": "ctb_stops.json",
+      "url": "https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/2/outbound",
+      "sha256": "863a0cb1c9b930edd95bde9dc56edbc8240cfed32fda0e56871bf587f1436be2",
+      "bytes": 3953,
+      "generated_timestamp": "2026-11-16T17:29:12+08:00"
+    },
+    {
+      "file": "ctb_detail.json",
+      "url": "https://rt.data.gov.hk/v2/transport/citybus/stop/003155",
+      "sha256": "0862202486f7cc227f139ce5a88563dc6b12afbd6494d1d60002c7ad78883fc8",
+      "bytes": 329,
+      "generated_timestamp": "2026-11-16T17:29:13+08:00"
+    },
+    {
+      "file": "ctb_eta.json",
+      "url": "https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/003155/2",
+      "sha256": "bf75c1dbc5650209d57d4b80e780048d70bb2a9cedd21fc643d98acdd5b3455e",
+      "bytes": 1681,
+      "generated_timestamp": "2026-11-16T17:29:13+08:00"
+    }
+  ]
+}

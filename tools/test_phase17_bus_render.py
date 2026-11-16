@@ -33,9 +33,15 @@ extern "C" {
 #include "lualib.h"
 #include "cJSON.h"
 }
+constexpr size_t kMaxFileBytes=64*1024;
 constexpr size_t kMaxLuaString=4096, kMaxJsonNodes=512, kMaxCallbacks=64;
 constexpr unsigned kMaxJsonDepth=16;
 static int64_t esp_timer_get_time() { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+constexpr int MALLOC_CAP_INTERNAL=1, MALLOC_CAP_8BIT=2, MALLOC_CAP_SPIRAM=4;
+static size_t native_json_allocations=0;
+static void *json_allocate(size_t size) {void *ptr=malloc(size);if(ptr)++native_json_allocations;return ptr;}
+static void json_release(void *ptr) {if(ptr)--native_json_allocations;free(ptr);}
+static size_t heap_caps_get_free_size(int) {return 1024*1024;}
 class ScriptApp {
 public:
     CrystalResources resources_;
@@ -63,13 +69,17 @@ public:
     bool call_ref(int,CrystalUI::Handle,const char * = nullptr);
     cJSON *lua_to_json(int,unsigned=0,unsigned * = nullptr);
     void json_to_lua(const cJSON*,unsigned=0);
+    static int protected_json_value(lua_State*),json_decode(lua_State*);
+    int push_json_value(const cJSON*);
+    uint32_t json_decode_count_=0,json_largest_input_bytes_=0;
+    size_t json_peak_internal_bytes_=0,json_peak_psram_bytes_=0;
     static lv_obj_t *build_widget(const cJSON*,lv_obj_t*,void*);
     static bool apply_style(lv_obj_t*,const cJSON*);
     bool load_image(lv_obj_t*,const char*) { return false; }
     static int ui_create(lua_State*),ui_screen(lua_State*),ui_get_size(lua_State*),ui_set_text(lua_State*),
         ui_get_text(lua_State*),ui_set_hidden(lua_State*),ui_set_enabled(lua_State*),ui_set_style(lua_State*),
         ui_scroll_to(lua_State*),ui_delete(lua_State*),ui_list_add(lua_State*),ui_list_insert(lua_State*),
-        ui_list_clear(lua_State*),ui_list_count(lua_State*);
+        ui_list_set_text(lua_State*),ui_list_remove(lua_State*),ui_list_clear(lua_State*),ui_list_count(lua_State*);
 };
 '''
 MAIN = r'''
@@ -83,17 +93,6 @@ static int read_asset(lua_State *state) {
     if(!file){lua_pushnil(state);return 1;}
     std::ostringstream bytes;bytes<<file.rdbuf();const auto value=bytes.str();
     lua_pushlstring(state,value.data(),value.size());return 1;
-}
-static int convert_json(lua_State *state) {
-    test_app->json_to_lua(static_cast<cJSON*>(lua_touserdata(state,1)));return 1;
-}
-static int decode_json(lua_State *state) {
-    size_t length=0;const char *text=luaL_checklstring(state,1,&length);
-    lua_pushcfunction(state,convert_json);
-    cJSON *root=cJSON_ParseWithLength(text,length);
-    if(!root){lua_pop(state,1);lua_pushnil(state);return 1;}
-    lua_pushlightuserdata(state,root);const int status=lua_pcall(state,1,1,0);
-    cJSON_Delete(root);if(status!=LUA_OK)return lua_error(state);return 1;
 }
 static int memory_stats(lua_State *state) {
     auto &app=*test_app;size_t largest=0,occupied=0;
@@ -114,20 +113,28 @@ static bool visible(lv_obj_t *obj) {
     for(auto *p=obj;p;p=lv_obj_get_parent(p)) if(lv_obj_has_flag(p,LV_OBJ_FLAG_HIDDEN)) return false;
     return true;
 }
-static lv_obj_t *find(lv_obj_t *obj,const char *text) {
+static lv_obj_t *find_nth(lv_obj_t *obj,const char *text,int &remaining) {
     if(!visible(obj)) return nullptr;
-    if(lv_obj_check_type(obj,&lv_label_class) && !strcmp(lv_label_get_text(obj),text)) return obj;
-    for(unsigned i=0;i<lv_obj_get_child_cnt(obj);++i) if(auto *p=find(lv_obj_get_child(obj,i),text)) return p;
+    if(lv_obj_check_type(obj,&lv_label_class) && !strcmp(lv_label_get_text(obj),text) && --remaining==0) return obj;
+    for(unsigned i=0;i<lv_obj_get_child_cnt(obj);++i) if(auto *p=find_nth(lv_obj_get_child(obj,i),text,remaining)) return p;
     return nullptr;
 }
+static lv_obj_t *find(lv_obj_t *obj,const char *text) {int remaining=1;return find_nth(obj,text,remaining);}
 static int click(lua_State *state) {
-    auto *label=find(lv_scr_act(),luaL_checkstring(state,1)); assert(label);
+    int remaining=luaL_optinteger(state,2,1);assert(remaining>0);
+    auto *label=find_nth(lv_scr_act(),luaL_checkstring(state,1),remaining); assert(label);
     auto *target=lv_obj_get_parent(label);
     lv_obj_scroll_to_view(target,LV_ANIM_OFF); lv_obj_update_layout(lv_scr_act());
     assert(!lv_obj_has_state(target,LV_STATE_DISABLED));
     lv_event_send(target,LV_EVENT_CLICKED,nullptr); return 0;
 }
 static int has_text(lua_State *state) {lua_pushboolean(state,find(lv_scr_act(),luaL_checkstring(state,1))!=nullptr);return 1;}
+static int list_scroll_y(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *row=lv_obj_get_parent(label);auto *list=row?lv_obj_get_parent(row):nullptr;assert(list);
+    lv_obj_scroll_to_view(row,LV_ANIM_OFF);lv_obj_update_layout(lv_scr_act());
+    lua_pushinteger(state,lv_obj_get_scroll_y(list));return 1;
+}
 static void flush(lv_disp_drv_t *d,const lv_area_t*,lv_color_t*) {lv_disp_flush_ready(d);}
 static int snapshot(lua_State *state) {
     lv_obj_update_layout(lv_scr_act());
@@ -142,6 +149,7 @@ static int snapshot(lua_State *state) {
 }
 int main(int argc,char **argv) {
     assert(argc==6); int width=atoi(argv[3]);
+    cJSON_Hooks hooks{json_allocate,json_release};cJSON_InitHooks(&hooks);
     lv_init(); static lv_color_t pixels[720*20];static lv_disp_draw_buf_t buf;
     lv_disp_draw_buf_init(&buf,pixels,nullptr,720*20);lv_disp_drv_t drv;lv_disp_drv_init(&drv);
     drv.hor_res=width;drv.ver_res=width-40;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);
@@ -164,23 +172,26 @@ int main(int argc,char **argv) {
         {"screen",ScriptApp::ui_screen},{"get_size",ScriptApp::ui_get_size},{"set_text",ScriptApp::ui_set_text},
         {"get_text",ScriptApp::ui_get_text},{"set_hidden",ScriptApp::ui_set_hidden},{"set_enabled",ScriptApp::ui_set_enabled},
         {"set_style",ScriptApp::ui_set_style},{"scroll_to",ScriptApp::ui_scroll_to},{"delete",ScriptApp::ui_delete},
-        {"list_add",ScriptApp::ui_list_add},{"list_insert",ScriptApp::ui_list_insert},{"list_count",ScriptApp::ui_list_count},
-        {"list_clear",ScriptApp::ui_list_clear},{nullptr,nullptr}};
+        {"list_add",ScriptApp::ui_list_add},{"list_insert",ScriptApp::ui_list_insert},
+        {"list_set_text",ScriptApp::ui_list_set_text},{"list_remove",ScriptApp::ui_list_remove},
+        {"list_count",ScriptApp::ui_list_count},{"list_clear",ScriptApp::ui_list_clear},{nullptr,nullptr}};
     for(auto *m=methods;m->name;++m){lua_pushlightuserdata(L,&app);lua_pushcclosure(L,m->func,1);lua_setfield(L,-2,m->name);}
     for(auto type:{"col","row","scroll_view","label","button","list"}){
         lua_pushlightuserdata(L,&app);lua_pushstring(L,type);lua_pushcclosure(L,ScriptApp::ui_create,2);lua_setfield(L,-2,type);
     }
     lua_setglobal(L,"ui");
     lua_pushcfunction(L,read_asset);lua_setglobal(L,"read_asset");
-    lua_pushcfunction(L,decode_json);lua_setglobal(L,"decode_json");
+    lua_pushlightuserdata(L,&app);lua_pushcclosure(L,ScriptApp::json_decode,1);lua_setglobal(L,"decode_json");
     lua_pushcfunction(L,memory_stats);lua_setglobal(L,"memory_stats");
     lua_pushcfunction(L,click);lua_setglobal(L,"click");
     lua_pushcfunction(L,has_text);lua_setglobal(L,"has_text");
+    lua_pushcfunction(L,list_scroll_y);lua_setglobal(L,"list_scroll_y");
     lua_pushcfunction(L,snapshot);lua_setglobal(L,"snapshot");
     lua_pushstring(L,argv[5]);lua_setglobal(L,"expected_counts");
     lua_pushstring(L,argv[1]);lua_setglobal(L,"package_path");
     if(luaL_dofile(L,argv[2])){fprintf(stderr,"%s; arena used=%zu/%zu\n",lua_tostring(L,-1),app.arena_used_,app.arena_size_);return 1;}
     assert(app.callbacks_.size()<=64);
+    assert(native_json_allocations==0);
     printf("PASS: production Lua/UI and LVGL at %dpx; %zu callbacks (limit 64)\n",width,app.callbacks_.size());
     assert(!app.runtime_failed_ && lua_gettop(L)==0);
     app.ui_.reset(); lv_obj_del(app.root_);app.ui_.reset();lua_close(L);
@@ -201,6 +212,18 @@ int main(int argc,char **argv) {
     assert(allocation_failures>before && !app.runtime_failed_);
     lua_gc(L,LUA_GCRESTART,0);
     luaL_unref(L,LUA_REGISTRYINDEX,ref);
+    // Repeat a real json.decode conversion that cannot fit the Lua arena.
+    // Every native cJSON allocation must be freed before Lua rethrows OOM.
+    lua_pushlightuserdata(L,&app);lua_pushcclosure(L,ScriptApp::json_decode,1);lua_setglobal(L,"decode_json");
+    std::string large_json="[";
+    for(int i=0;i<2000;++i) {if(i)large_json+=",";large_json+="{\"stop\":\"000001\",\"seq\":1}";}
+    large_json+="]";assert(large_json.size()<kMaxFileBytes);
+    lua_pushlstring(L,large_json.data(),large_json.size());lua_setglobal(L,"large_json");
+    for(int i=0;i<10;++i) {
+        assert(luaL_dostring(L,"local ok=pcall(decode_json,large_json);assert(not ok)")==LUA_OK);
+        assert(native_json_allocations==0);lua_gc(L,LUA_GCCOLLECT,0);
+    }
+    lua_pushnil(L);lua_setglobal(L,"large_json");lua_gc(L,LUA_GCCOLLECT,0);
     // Actual callback exhaustion is contained and teardown hooks are skipped.
     assert(luaL_dostring(L,"return {onDestroy=function() error('must not run') end}")==LUA_OK);
     app.hooks_ref_=luaL_ref(L,LUA_REGISTRYINDEX);
@@ -233,10 +256,11 @@ def main():
     work.mkdir(parents=True,exist_ok=True)
     (work/'lv_conf.h').write_text(CONF+'\n#define LV_FONT_MONTSERRAT_48 1\n')
     names=['void *ScriptApp::lua_allocate(', 'void *ScriptApp::arena_allocate(', 'void ScriptApp::arena_release(', 'int ScriptApp::protected_invoke(', 'bool ScriptApp::invoke(', 'bool ScriptApp::execute(', 'bool ScriptApp::call_ref(', 'const cJSON *json_field(', 'bool finite_integer(', 'bool json_int(', 'bool lua_uint(',
-           'void ScriptApp::json_to_lua(', 'cJSON *ScriptApp::lua_to_json(', 'ScriptApp::CallbackRef *ScriptApp::make_callback(',
+           'void ScriptApp::json_to_lua(', 'int ScriptApp::protected_json_value(', 'int ScriptApp::push_json_value(', 'int ScriptApp::json_decode(', 'cJSON *ScriptApp::lua_to_json(', 'ScriptApp::CallbackRef *ScriptApp::make_callback(',
            'void ScriptApp::ui_event(', 'lv_obj_t *ScriptApp::build_widget(', 'bool ScriptApp::apply_style(']
     names += ['int ScriptApp::ui_'+name+'(' for name in ('create','screen','get_size','set_text','get_text',
-              'set_hidden','set_enabled','set_style','scroll_to','delete','list_add','list_insert','list_clear','list_count')]
+              'set_hidden','set_enabled','set_style','scroll_to','delete','list_add','list_insert',
+              'list_set_text','list_remove','list_clear','list_count')]
     (work/'check.cpp').write_text(PREFIX+'\n'.join(function(name) for name in names)+MAIN)
     lua=ROOT/'managed_components/georgik__lua'
     lua_sources=[p for p in (lua/'lua').glob('*.c') if p.name not in ('lua.c','luac.c','onelua.c','ltests.c')]

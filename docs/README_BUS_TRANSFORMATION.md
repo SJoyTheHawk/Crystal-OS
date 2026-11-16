@@ -4,7 +4,7 @@
 
 This directory contains the complete plan for transforming the **S3 native bus app** into a **working P4 Lua implementation** that replicates—not reinvents—the proven functionality.
 
-**Status**: Documentation complete, implementation ready to start
+**Status**: Phase 1 implemented in Bus Lite 0.2.8; host checks and P4 build pass; board acceptance pending. See `BUS_APP_QUICK_START.md` for app-flash and Control Panel installation, and `BUS_APP_PHASE_1_RESULTS.md` for evidence.
 
 **Goal**: Feature parity with S3 app using Flutter's proven data logic
 
@@ -44,15 +44,14 @@ This directory contains the complete plan for transforming the **S3 native bus a
 
 ---
 
-### 3. **BUS_APP_QUICK_START.md** (First milestone)
-**Purpose**: Get to "working" in one focused session
+### 3. **BUS_APP_QUICK_START.md** (Phase 1 board acceptance)
+**Purpose**: Install and validate the live-provider milestone
 
 **Contains**:
-- Step-by-step Phase 1 implementation (4-6 hours)
-- Provider integration with real API calls
-- Basic ETA display (no joint routes yet)
-- Test procedures and success criteria
-- Troubleshooting guide
+- Firmware app-flash and signed CAPP installation through the Control Panel
+- KMB 1A and Citybus 2 live stop/ETA checks
+- Navigation, saved-stop and network recovery checks
+- P4 resource capture and acceptance criteria
 
 **Start here**: If you want immediate progress, follow this guide first
 
@@ -70,7 +69,8 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ## Implementation Roadmap
 
 ### Phase 1: Provider Integration (Quick Start)
-**Time**: 4-6 hours  
+**Status**: Implemented in 0.2.8; P4 acceptance pending
+
 **Goal**: Real KMB/CTB API calls, stop lists, basic ETA  
 **Deliverable**: Route 1A and route 2 work end-to-end without fixture server
 
@@ -86,7 +86,8 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ---
 
 ### Phase 2: Joint Routes
-**Time**: 2-3 hours  
+**Status**: Not implemented
+
 **Goal**: Merged KMB+CTB ETA with provider labels  
 **Deliverable**: Route 101 (JOINT) displays combined arrivals
 
@@ -101,7 +102,8 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ---
 
 ### Phase 3: Persistence
-**Time**: 2 hours  
+**Status**: Persistence hardening remains; existing save/reopen/remove UI is retained
+
 **Goal**: Save/restore favorites across app restarts  
 **Deliverable**: Favorites tab with 8 saved stops
 
@@ -116,7 +118,8 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ---
 
 ### Phase 4: Refresh & Polish
-**Time**: 1-2 hours  
+**Status**: Scheduled refresh and live countdown remain
+
 **Goal**: Auto-refresh ETA, live countdown, complete UX  
 **Deliverable**: Full S3 feature parity
 
@@ -131,8 +134,9 @@ This directory contains the complete plan for transforming the **S3 native bus a
 
 ---
 
-**Total time estimate**: 8-12 hours development  
-**Result**: Complete working bus app on P4 with Lua
+Existing manual refresh, recents and saved-stop controls are retained. The
+follow-up phases extend their behavior rather than rebuilding those pages.
+The functional 0.3.0 release remains gated on host and P4 acceptance.
 
 ---
 
@@ -165,7 +169,7 @@ This directory contains the complete plan for transforming the **S3 native bus a
 
 **What to reference**:
 - Route merging rules (`collapseKmbVariants`, `similar` matching)
-- Stop matching algorithm (haversine, 500m threshold)
+- Stop matching algorithm (haversine, matching policy (verify against the actual Flutter source before Phase 2))
 - ETA sorting (timestamp first, source order breaks ties)
 - Response parsing (handling both KMB and CTB shapes)
 
@@ -180,12 +184,12 @@ This directory contains the complete plan for transforming the **S3 native bus a
 - ✅ Generation-based request invalidation
 - ✅ Resource checkpoints
 
-**Missing features** (to be added):
-- ❌ Real provider API calls (still uses fixture)
+**Transformation status**:
+- ✅ Direct KMB/LWB and CTB provider adapters (board validation pending)
 - ❌ Joint route ETA merging
-- ❌ Favorites persistence UI
+- ✅ Existing save/remove/reopen UI and recents retained; persistence hardening is Phase 3
 - ❌ ETA refresh timer
-- ❌ Complete stop metadata resolution
+- ✅ Bundled stop metadata plus sequential provider fallback and retry states
 
 ---
 
@@ -218,9 +222,11 @@ This directory contains the complete plan for transforming the **S3 native bus a
 - Stop details: `/stop/{stop_id}`
 - ETA: `/eta/CTB/{stop_id}/{route}`
 
-**Response format**: Same as KMB
+**Response format**: Route-stop/ETA use a `data` array; stop details use a `data` object, as with KMB.
 
 ---
+
+Directions in URLs are `outbound`/`inbound`, mapped from identity `O`/`I`. Path components are percent-encoded.
 
 ### Common Fields
 
@@ -259,36 +265,39 @@ This directory contains the complete plan for transforming the **S3 native bus a
 ## Testing Strategy
 
 ### Unit Tests (Host)
-**Tool**: Python test harnesses in `tools/`
+**Tool**: Existing production-binding host harnesses in `tools/`
 
 **Coverage**:
 - Provider URL building
 - Response parsing
 - Timestamp conversion
-- Stop matching (haversine)
+- Metadata fallback, complete paging and stop occurrences
 - ETA sorting
 
 **Run**:
 ```bash
-python3 tools/test_phase17_bus_providers.py
-python3 tools/test_phase17_bus_arrivals.py
+python3 tools/test_phase17_bus_package.py
+python3 tools/test_phase17_bus_catalog.py
+python3 tools/test_phase17_bus_render.py
+python3 tools/test_phase17_bindings.py
+python3 tools/test_phase17_runtime.py
 ```
 
 ---
 
-### Integration Tests (Device)
-**Tool**: Lua test scripts via serial console
+### Integration Tests
+**Tool**: Production Lua/UI/JSON bindings with LVGL at 480/720 pixels
 
 **Coverage**:
 - KMB route flow (search → stops → ETA)
 - CTB route flow
-- Joint route flow
-- Favorites persistence
+- Recorded official responses and partial-provider indication
+- Existing favorite save/reopen/remove behavior
 - Refresh and cancellation
 
 **Run**:
 ```bash
-python3 tools/test_phase17_bus_ui.lua
+python3 tools/test_phase17_bus_render.py
 ```
 
 ---
@@ -298,13 +307,13 @@ python3 tools/test_phase17_bus_ui.lua
 
 **Checklist**:
 1. Search "1A" → see KMB routes
-2. Select "1A to Chuk Yuen Estate"
+2. Select KMB 1A "To STAR FERRY"
 3. See stop list with names
 4. Tap first stop → see ETA (e.g., "3 min", "8 min")
 5. Search "2" → see CTB routes
 6. Repeat stop → ETA flow
-7. Search "101" → see JOINT route
-8. Verify ETA shows both "KMB • 3 min" and "CTB • 5 min"
+7. Repeat both directions and scroll through the complete stop list
+8. Navigate away during a request and verify stale callbacks are ignored
 9. Save a favorite → exit → relaunch → tap favorite → ETA loads
 10. Repeat 10 install/uninstall cycles → no crash or leak
 
@@ -313,30 +322,32 @@ python3 tools/test_phase17_bus_ui.lua
 ## Resource Requirements
 
 ### Memory
-**Lua arena**: 512 KB (current), may need 640 KB for joint routes  
-**Peak usage target**: <400 KB (25% headroom)  
-**Current baseline**: 379 KB (Stage C catalog search)
+**Lua arena**: 512 KiB; change only after measuring the P4 workload
 
-**Checkpoints**:
-- `launch_ready`: ~180 KB
-- `search_ready`: ~235 KB
-- `stops_loaded`: ~250 KB
-- `eta_complete`: ~250 KB (estimated with provider parsers)
+**Peak usage target**: At least 25% arena headroom, with fragmentation checked separately
+
+**Baseline**: Stage C P4 reported 248/512 KiB peak. Host figures use different pointer/header sizes; current Phase 1 P4 measurements remain pending.
+
+**Checkpoints**: `launch_ready`, `search_ready`, `stops_loaded`, `eta_complete`
+and teardown. See `BUS_APP_PHASE_1_RESULTS.md` for measured host results. The
+host real-catalog peak does not meet the 25% target; P4 measurements are pending.
 
 ---
 
 ### Network
 **Concurrent requests**: 1 (queue others)  
 **Timeout**: 15 seconds per request  
-**TLS**: mbedTLS with session reuse  
-**Typical request size**: 2-5 KB response body
+**TLS**: Existing ESP-IDF HTTPS client; device validation is pending
+
+**Response sizing**: Record actual HTTP body peaks; do not assume a fixed size
 
 ---
 
 ### Computation
-**JSON decoding**: Bounded to 512-node limit (use JSON Lines)  
+**JSON decoding**: Frame at most 2,048 characters and decode one provider record per tick; catalog JSON Lines are also incremental
+
 **Timestamp parsing**: Manual (no `os.time` in sandbox)  
-**Distance calculation**: Haversine formula with `math` library
+**Distance calculation**: Joint matching is Phase 2; verify Flutter behavior first
 
 ---
 
@@ -349,16 +360,19 @@ python3 tools/test_phase17_bus_ui.lua
 - [ ] Joint routes display merged ETA with provider labels
 - [ ] Favorites persist across restarts (up to 8)
 - [ ] ETA refreshes every 20 seconds
-- [ ] Stops paginate (8 per page, all reachable)
+- [x] Host checks cover continuous stop-list scrolling and final-row selection
 - [ ] Network errors show user-friendly messages
-- [ ] No fixture server dependency
+- [x] Live package uses official provider hosts without the fixture server
+
+Unchecked live-provider criteria require P4 evidence. Host implementation and
+recorded-response checks pass; they do not establish device TLS or resource safety.
 
 ---
 
 ### Performance
 - [ ] onCreate completes in <1 second
 - [ ] ETA fetch completes in <3 seconds
-- [ ] Peak Lua usage <400 KB
+- [ ] P4 Lua arena has at least 25% measured headroom
 - [ ] No memory leaks in 10-cycle test
 - [ ] Callback deadlines not exceeded (<50ms per tick)
 
@@ -387,11 +401,11 @@ python3 tools/test_phase17_bus_ui.lua
 
 **Issue**: "Lua allocation failed"  
 **Cause**: Arena exhausted  
-**Fix**: Increase quota in `app.yaml`, check peak usage in checkpoints
+**Fix**: Capture arena usage, peak and largest free block; fix retained allocations or paging first, then size the quota from measured P4 workload
 
 **Issue**: "Invalid JSON"  
 **Cause**: Response truncated or malformed  
-**Fix**: Print raw body, check `json_largest_input_bytes` in checkpoint
+**Fix**: Check response status, body size and bounded parser diagnostics; do not log full provider payloads by default
 
 ---
 
@@ -410,7 +424,7 @@ resource_checkpoint("my_stage")  -- Logs memory, HTTP, callbacks
 **HTTP request trace**:
 ```lua
 print("HTTP GET", url)
--- Check log for: I (timestamp) crystal_http: GET https://...
+-- Development-only URL trace; normal HTTP logs identify requests/status.
 ```
 
 **Lua memory dump**:
@@ -436,8 +450,8 @@ print("Peak:", info.lua_peak_kb, "KB")
 4. Test on device frequently (don't code blind)
 
 ### After Each Phase
-1. Run Python tests: `python3 tools/test_phase17_bus_*.py`
-2. Run device acceptance: manual checklist + Lua test script
+1. Run the host commands in Testing Strategy above.
+2. Follow the phase-specific manual P4 checklist in Quick Start.
 3. Document peak memory usage in checkpoint logs
 4. Commit with clear phase marker:
    ```
@@ -458,13 +472,13 @@ print("Peak:", info.lua_peak_kb, "KB")
 
 ### Immediate (Phase 1)
 1. Open `BUS_APP_QUICK_START.md`
-2. Follow Step 1-6 (4-6 hours)
-3. Get KMB route 1A working end-to-end with real API
+2. Install the firmware and signed 0.2.8 CAPP.
+3. Validate KMB 1A and CTB 2 live on P4 and record resource checkpoints.
 
 ### Short-term (Phase 2-4)
-1. Add joint route support (2-3 hours)
-2. Implement favorites (2 hours)
-3. Add refresh timer (1 hour)
+1. Add joint route support using verified Flutter stop-matching rules.
+2. Harden persistence validation and failed-write handling.
+3. Add scheduled refresh and live countdown.
 4. **Result**: Complete bus app
 
 ### Long-term (Post-0.3.0)
@@ -481,9 +495,7 @@ This transformation is **achievable**. The S3 app proves the UX works. Flutter p
 
 **Critical success factor**: Follow the references. When Flutter does X, do X. When S3 does Y, do Y.
 
-**Estimated effort**: 8-12 development hours for a complete, working bus app on P4.
-
-**Start now**: Open `BUS_APP_QUICK_START.md` and begin Phase 1.
+**Next**: Follow `BUS_APP_QUICK_START.md` to install 0.2.8 and capture Phase 1 board acceptance.
 
 The bus app **will work** on P4. Let's make it happen. 🚀
 
@@ -492,9 +504,11 @@ The bus app **will work** on P4. Let's make it happen. 🚀
 ## Document Maintenance
 
 **Last updated**: 2026-11-16  
-**Version**: 1.0  
+**Version**: 1.1
+
 **Authors**: User (system architect), Claude Fable 5 (documentation)  
-**Status**: Documentation complete, ready for implementation
+**Status**: Phase 1 implemented; physical P4 acceptance pending
 
 **Change log**:
 - 2026-11-16: Initial creation, all guides completed
+- 2026-11-16: Phase 1 status, actual host commands and P4 installation/acceptance links

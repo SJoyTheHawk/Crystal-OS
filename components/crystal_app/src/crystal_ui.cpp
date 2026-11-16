@@ -242,6 +242,15 @@ void CrystalUI::event_cb(lv_event_t *event) {
     if (listener.callback && (!owner->paused_ || code == LV_EVENT_DELETE || code == LV_EVENT_DEFOCUSED))
         listener.callback(id, listener.user);
 }
+void CrystalUI::list_item_event_cb(lv_event_t *event) {
+    auto *list = static_cast<Node *>(lv_event_get_user_data(event));
+    auto *item = lv_event_get_target(event);
+    if (!list || !list->owner || !list->object || !item ||
+        lv_event_get_code(event) != LV_EVENT_CLICKED || lv_obj_get_parent(item) != list->object ||
+        !list->list_item_click.callback) return;
+    const int32_t index = lv_obj_get_index(item);
+    if (index >= 0) list->list_item_click.callback(static_cast<Handle>(index + 1), list->list_item_click.user);
+}
 bool CrystalUI::list_count(Handle id, unsigned *count) const {
     if (!count || !valid_type(id, &lv_list_class)) return false;
     *count = lv_obj_get_child_cnt(node(id)->object); return true;
@@ -258,11 +267,13 @@ bool CrystalUI::list_set_item_height(Handle id, unsigned height) {
 }
 bool CrystalUI::list_insert(Handle id, unsigned index, const ListItem &item) {
     unsigned count;
-    if (!list_count(id, &count) || index > count || count >= 64 || !bounded_text(item.primary, 96) ||
+    auto *list_node = node(id);
+    const unsigned limit = list_node && list_node->list_item_click.callback ? 256U : 64U;
+    if (!list_node || !list_count(id, &count) || index > count || count >= limit || !bounded_text(item.primary, 96) ||
         (item.secondary && !bounded_text(item.secondary, 96)) || (item.icon && (!image_ || !bounded_text(item.icon, 160)))) return false;
-    auto *list = node(id)->object; auto *row = lv_btn_create(list);
+    auto *list = list_node->object; auto *row = lv_btn_create(list);
     if (!row) return false;
-    lv_obj_set_width(row, LV_PCT(100)); lv_obj_set_height(row, node(id)->item_height ? node(id)->item_height : LV_SIZE_CONTENT);
+    lv_obj_set_width(row, LV_PCT(100)); lv_obj_set_height(row, list_node->item_height ? list_node->item_height : LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(row, 44, 0); lv_obj_set_style_bg_color(row, lv_color_hex(0x1C2733), 0);
     lv_obj_set_style_bg_color(row, lv_color_hex(0x344553), LV_STATE_PRESSED);
     lv_obj_set_style_text_color(row, lv_color_hex(0xE6EDF5), 0);
@@ -275,10 +286,29 @@ bool CrystalUI::list_insert(Handle id, unsigned index, const ListItem &item) {
     if (!label) { lv_obj_del(row); return false; }
     std::string text(item.primary); if (item.secondary) { text += "\n"; text += item.secondary; }
     lv_label_set_text(label, text.c_str()); lv_obj_set_flex_grow(label, 1);
-    auto row_id = adopt(row, label);
-    if (!row_id) { lv_obj_del(row); return false; }
-    if (item.on_click) on(row_id, "click", item.on_click, item.user);
+    if (list_node->list_item_click.callback && !item.on_click) {
+        if (!lv_obj_add_event_cb(row, list_item_event_cb, LV_EVENT_CLICKED, list_node)) { lv_obj_del(row); return false; }
+    } else {
+        auto row_id = adopt(row, label);
+        if (!row_id) { lv_obj_del(row); return false; }
+        if (item.on_click) on(row_id, "click", item.on_click, item.user);
+    }
     lv_obj_move_to_index(row, static_cast<int32_t>(index)); return true;
+}
+bool CrystalUI::list_set_text(Handle id, unsigned index, const char *text) {
+    unsigned count;
+    if (!list_count(id, &count) || index >= count || !bounded_text(text, 96)) return false;
+    auto *row = lv_obj_get_child(node(id)->object, static_cast<int32_t>(index));
+    auto *label = row ? lv_obj_get_child(row, 0) : nullptr;
+    if (!label || !lv_obj_check_type(label, &lv_label_class)) return false;
+    lv_label_set_text(label, text);
+    return true;
+}
+bool CrystalUI::list_on_click(Handle id, Callback callback, void *user) {
+    if (!valid_type(id, &lv_list_class) || !callback) return false;
+    auto *list = node(id);
+    list->list_item_click = {callback, user};
+    return true;
 }
 bool CrystalUI::list_remove(Handle id, unsigned index) {
     unsigned count; if (!list_count(id, &count) || index >= count) return false;

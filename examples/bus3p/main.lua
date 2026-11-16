@@ -1,22 +1,23 @@
 -- Bus package: native-reference layout with bounded catalog-backed search.
 local ui, http, state, json = crystal.ui, crystal.service.http, crystal.state, crystal.json
 local fs = crystal.fs
-local BASE = "http://phase17.bus.fixture:8000"
 local C = {bg=0x0F172A, card=0x1E293B, text=0xF8FAFC, muted=0x94A3B8, border=0x334155, accent=0x38BDF8}
 -- Built-in LVGL symbols, available in the firmware's Montserrat fonts.
 local ICON={clear=utf8.char(0xF00D),backspace=utf8.char(0xF55A),back=utf8.char(0xF053),refresh=utf8.char(0xF021)}
 local M, v = {}, {}
 local Catalog = {manifest=nil, route_pages=nil, stop_pages={}, available=false}
-local favorites = state.get("favorites") or {}
+local favorites = state.get("favorites")
+if type(favorites)~="table" then favorites={} end
 local recents = {}
 local metric_marks = {}
 local selected, selected_stop, routes, stops = {}, nil, {}, {}
 local route_results, stop_results = {}, {}
-local route_page, stop_page = 1, 1
+local route_page = 1
 local query, search_pending, return_page = "", false, "search"
 local search_routes, open_route, fetch_eta, render_favorites, show_page, refresh
-local render_route_page, render_stop_page
+local render_route_page, render_stop_row, begin_stop_metadata
 local status, resource_checkpoint
+local missing_metadata_stops
 local route_total=0
 local catalog_search
 
@@ -107,16 +108,32 @@ local function catalog_line(job, pages)
       if not rest:find(job.prefix:sub(1,1),1,true) then return nil,false end
     else
       local first,last=rest:match("^(%S+) (%S+)$")
-      local needed=false
-      for id in pairs(job.wanted) do if id>=first and id<=last then needed=true;break end end
-      if not needed then return nil,false end
+      job.ids={};job.id_index=1
+      for id in pairs(job.wanted) do
+        if id>=first and id<=last and not id:find('["\\%c]') then job.ids[#job.ids+1]=id end
+      end
+      if #job.ids==0 then return nil,false end
     end
     job.raw=fs.read("assets/catalog/"..filename);job.position=1
     return nil,false
   end
+  if not job.prefix then
+    -- Generated pages have canonical, unescaped ID keys. A bounded native
+    -- string search avoids scanning thousands of unrelated stop lines in Lua.
+    local id=job.ids[job.id_index];job.id_index=job.id_index+1
+    if not id then job.raw=nil;return nil,false end
+    local position=job.raw:find('"id":"'..id..'"',1,true)
+    if not position then return nil,false end
+    local first=position
+    while first>1 and job.raw:sub(first-1,first-1)~="\n" do first=first-1 end
+    local last=job.raw:find("\n",position,true) or (#job.raw+1)
+    return job.raw:sub(first,last-1),false
+  end
   -- Cheap field checks are bounded too. Generated JSON uses canonical keys;
   -- provider parts preserve the same route number as their parent record.
-  for _=1,16 do
+  -- Bound catalog scanning too; this callback shares the same 50 ms watchdog
+  -- as provider decoding and UI callbacks.
+  for _=1,4 do
     local start=job.position
     if start>#job.raw then job.raw=nil;return nil,false end
     local finish=job.raw:find("\n",start,true) or (#job.raw+1)
@@ -163,11 +180,13 @@ local function catalog_stop_step(job)
     if v.stop_catalog_job==job then v.stop_catalog_job=nil end
     return true
   end
-  local line,done=catalog_line(job,Catalog.stop_pages[job.provider] or {})
+  local line,done
+  if not next(job.wanted) then done=true
+  else line,done=catalog_line(job,Catalog.stop_pages[job.provider] or {}) end
   if done then
-    render_stop_page(); v.stop_catalog_job=nil
-    status(#stop_results>0 and "Tap a stop for arrivals" or "No stops found for this route")
-    resource_checkpoint("stops_loaded")
+    v.stop_catalog_job=nil
+    v.metadata_job={stops=missing_metadata_stops(job.wanted),all_stops=stop_results,index=1}
+    status("Checking stop names...")
     return true
   end
   if line then
@@ -181,6 +200,7 @@ local function catalog_stop_step(job)
         if target then
           target.name_en=target.name_en or stop.name_en;target.name_tc=target.name_tc or stop.name_tc
           target.lat=target.lat or stop.lat;target.lon=target.lon or stop.lon
+          render_stop_row(index)
         end
       end
       job.wanted[id]=nil
@@ -237,8 +257,142 @@ status = function(message)
   local label=v.status and v.status[v.page]
   if label then ui.set_text(label,message); ui.set_hidden(label,message=="") end
 end
+-- Provider records stay operator-qualified; IDs are strings, never numbers.
+local Providers, Arrivals, Controller = {}, {}, {}
+local KMB_BASE = "https://data.etabus.gov.hk/v1/transport/kmb"
+local CTB_BASE = "https://rt.data.gov.hk/v2/transport/citybus"
 local function escape(value)
-  return (tostring(value or ""):gsub("[^%w%-_.]", ""))
+  return (tostring(value or ""):gsub("[^%w%-_.~]", function(c)
+    return string.format("%%%02X",string.byte(c))
+  end))
+end
+function Providers.route_stops_url(part)
+  local direction=part.bound=="I" and "inbound" or "outbound"
+  if part.operator=="CTB" then
+    return CTB_BASE.."/route-stop/CTB/"..escape(part.route).."/"..direction
+  end
+  return KMB_BASE.."/route-stop/"..escape(part.route).."/"..direction.."/"..escape(part.service_type or "1")
+end
+function Providers.stop_details_url(operator,id)
+  return (operator=="CTB" and CTB_BASE or KMB_BASE).."/stop/"..escape(id)
+end
+function Providers.eta_url(part,stop)
+  if part.operator=="CTB" then return CTB_BASE.."/eta/CTB/"..escape(stop.id).."/"..escape(part.route) end
+  return KMB_BASE.."/eta/"..escape(stop.id).."/"..escape(part.route).."/"..escape(part.service_type or "1")
+end
+local function nonempty(value)
+  return type(value)=="string" and value~="" and value or nil
+end
+function Providers.stop_record(part,item)
+  if type(item)~="table" or type(item.stop)~="string" or item.stop=="" then return nil end
+  local seq=tonumber(item.seq)
+  if not seq or seq<1 or seq%1~=0 then return nil end
+  return {operator=part.operator,id=item.stop,seq=seq,
+    name_en=nonempty(item.name_en),name_tc=nonempty(item.name_tc),
+    lat=tonumber(item.lat),lon=tonumber(item.long or item.lon)}
+end
+function Providers.parse_stop_details(operator,id,decoded)
+  local data=type(decoded)=="table" and decoded.data
+  if type(data)~="table" or data.stop~=id then return nil end
+  if not nonempty(data.name_en) and not nonempty(data.name_tc) then return nil end
+  return {operator=operator,id=id,name_en=nonempty(data.name_en),name_tc=nonempty(data.name_tc),
+    lat=tonumber(data.lat),lon=tonumber(data.long)}
+end
+-- Exact epoch seconds for the firmware's signed 32-bit Lua integer/time range.
+-- No os library or epoch milliseconds; validate dates and explicit offsets.
+function Arrivals.parse_timestamp(value)
+  if type(value)~="string" then return nil end
+  local y,m,d,h,mi,s,zone=value:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)(.*)$")
+  y,m,d,h,mi,s=tonumber(y),tonumber(m),tonumber(d),tonumber(h),tonumber(mi),tonumber(s)
+  if not y or y<1970 or y>2037 or m<1 or m>12 or h>23 or mi>59 or s>59 then return nil end
+  zone=zone:gsub("^%.%d+","")
+  local offset=0
+  if zone~="Z" then
+    local sign,zh,zm=zone:match("^([+-])(%d%d):(%d%d)$")
+    zh,zm=tonumber(zh),tonumber(zm)
+    if not sign or zh>23 or zm>59 then return nil end
+    offset=(zh*3600+zm*60)*(sign=="-" and -1 or 1)
+  end
+  local function leaps(year) return year//4-year//100+year//400 end
+  local months={31,28,31,30,31,30,31,31,30,31,30,31}
+  if y%4==0 and (y%100~=0 or y%400==0) then months[2]=29 end
+  if d<1 or d>months[m] then return nil end
+  local days=(y-1970)*365+leaps(y-1)-leaps(1969)+d-1
+  for i=1,m-1 do days=days+months[i] end
+  return days*86400+h*3600+mi*60+s-offset
+end
+function Arrivals.select(entries)
+  -- Preserve all valid provider timestamps, including optional metadata
+  -- disagreements. Accuracy filtering is a separate refinement milestone.
+  table.sort(entries,function(a,b)
+    if a.epoch_sec~=b.epoch_sec then return a.epoch_sec<b.epoch_sec end
+    return a.source_order<b.source_order
+  end)
+  local result={}
+  for i=1,math.min(3,#entries) do result[i]=entries[i] end
+  return result
+end
+function Arrivals.format_minutes(epoch,now)
+  if not now or now<=0 then return "Time unavailable" end
+  local seconds=epoch-now
+  return seconds<30 and "Arriving" or tostring((seconds+30)//60).." min"
+end
+function Providers.eta_record(part,stop,item,order)
+  if type(item)~="table" then return nil end
+  local epoch=Arrivals.parse_timestamp(item.eta)
+  if not epoch then return nil end
+  return {operator=item.co=="LWB" and "LWB" or part.operator,stop_id=stop.id,
+    epoch_sec=epoch,remark_en=tostring(item.rmk_en or ""),remark_tc=tostring(item.rmk_tc or ""),source_order=order}
+end
+-- Retain the small HTTP body, frame one object and decode one record per tick.
+-- This avoids building the full provider response tree in the Lua arena.
+function Providers.array_job(body,normalize,complete)
+  if type(body)~="string" then return nil end
+  local _,first=body:find('"data"%s*:%s*%[')
+  if not first then return nil end
+  return {body=body,pos=first+1,first=first,mode="first",normalize=normalize,complete=complete,rows={},order=0}
+end
+function Providers.array_step(job)
+  local body=job.body
+  -- Keep framing work well below the 50 ms callback watchdog on P4.  A
+  -- response record is still decoded one scheduler tick at a time.
+  for _=1,512 do
+    local c=body:sub(job.pos,job.pos)
+    if c=="" then return true,"Invalid provider response" end
+    if job.mode=="record" then
+      if job.quoted then
+        if job.escaped then job.escaped=false
+        elseif c=="\\" then job.escaped=true
+        elseif c=='"' then job.quoted=false end
+      elseif c=='"' then job.quoted=true
+      elseif c=="{" or c=="[" then job.depth=job.depth+1
+      elseif c=="}" or c=="]" then
+        job.depth=job.depth-1
+        if job.depth==0 then
+          local item=json.decode(body:sub(job.start,job.pos))
+          if type(item)~="table" then return true,"Invalid provider record" end
+          job.order=job.order+1
+          local row=job.normalize(item,job.order)
+          if row then job.rows[#job.rows+1]=row end
+          job.mode="separator";job.pos=job.pos+1
+          return false
+        end
+      end
+    elseif c:match("%s") then -- whitespace
+    elseif (job.mode=="first" or job.mode=="value") and c=="{" then
+      job.mode="record";job.start=job.pos;job.depth=1;job.quoted=false;job.escaped=false
+    elseif job.mode=="separator" and c=="," then job.mode="value"
+    elseif (job.mode=="first" or job.mode=="separator") and c=="]" then
+      -- Validate the envelope and any trailing fields without decoding data.
+      local envelope=json.decode(body:sub(1,job.first).."]"..body:sub(job.pos+1))
+      if type(envelope)~="table" or type(envelope.data)~="table" or next(envelope.data) then
+        return true,"Invalid provider response"
+      end
+      return true
+    else return true,"Invalid provider response" end
+    job.pos=job.pos+1
+  end
+  return false
 end
 local function identity(route)
   if type(route.parts)=="table" then
@@ -260,35 +414,42 @@ local function operator_label(route)
   end
   return tostring((type(route) == "table" and route.operator) or "KMB")
 end
-local function parameters()
-  local part=request_part(selected)
-  return "route=" .. escape(part.route) .. "&operator=" .. escape(part.operator) ..
-    "&bound=" .. escape(part.bound or "O") .. "&service_type=" .. escape(part.service_type or "1")
+local function invalidate_requests()
+  v.generation=(v.generation or 0)+1
+  v.catalog_generation=(v.catalog_generation or 0)+1
+  v.catalog_job=nil;v.stop_catalog_job=nil;v.stop_list_job=nil
+  v.decode_job=nil;v.metadata_job=nil;v.pending_request=nil
+  local old=v.request_id;v.request_id=nil
+  if old then http.cancel(old) end
 end
-local function request(path, callback, checkpoint)
-  if v.request_id then status("Please wait for the current request"); return false end
-  local id, err = http.fetch(BASE .. path, {timeout_sec=15}, function(req, code, body)
-    if req ~= v.request_id then return end
-    v.request_id = nil
-    if code ~= 200 then
-      if checkpoint then resource_checkpoint(checkpoint) end
-      status("Network error " .. tostring(code) .. " - tap Refresh to retry")
-    else
-      local data = json.decode(body)
-      if type(data) ~= "table" then
-        if checkpoint then resource_checkpoint(checkpoint) end
-        status("Invalid bus response")
-      else
-        if checkpoint then resource_checkpoint(checkpoint) end
-        callback(data)
-      end
-    end
-    if search_pending and v.page == "search" then search_pending=false; search_routes() end
+-- Cancellation is asynchronous: the native worker slot is released only after
+-- its completion is dispatched. Retain one current foreground job while waiting.
+function Controller.start_request(job)
+  if job.generation~=(v.generation or 0) or v.paused then return false end
+  local id,err=http.fetch(job.url,{timeout_sec=15},function(req,code,body)
+    if job.generation~=(v.generation or 0) or req~=v.request_id or v.paused then return end
+    v.request_id=nil
+    local failure=code~=200 and ("Network error "..tostring(code).." - tap Refresh to retry") or nil
+    job.callback(failure and nil or body,failure)
+    if job.checkpoint then resource_checkpoint(job.checkpoint) end
   end)
-  if not id then status("Request refused: " .. tostring(err)); return false end
-  v.request_id = id
-  status("Loading...")
-  return true
+  if id then v.request_id=id;v.pending_request=nil;return true end
+  if err=="worker quota exceeded" and job.wait_ticks<160 then
+    job.wait_ticks=job.wait_ticks+1;v.pending_request=job;return true
+  end
+  v.pending_request=nil
+  job.callback(nil,"Request refused: "..tostring(err).." - tap Refresh to retry")
+  return false
+end
+local function request(url,callback,checkpoint)
+  if v.request_id or v.pending_request then return false end
+  return Controller.start_request({url=url,callback=callback,checkpoint=checkpoint,
+    generation=v.generation or 0,wait_ticks=0})
+end
+function Controller.decode_array(body,normalize,complete)
+  local job=Providers.array_job(body,normalize,complete)
+  if not job then complete(nil,"Invalid provider response");return end
+  job.generation=v.generation or 0;v.decode_job=job
 end
 local function save_state()
   state.set("favorites", favorites)
@@ -348,14 +509,6 @@ local function card(parent, callback)
   return assert(ui.col(parent, {gap=6, on_click=callback, style={padding=16, radius=8,
     bg_color=C.card, bg_opa=255, border_width=1, border_color=C.border}}))
 end
-local function eta_summary(rows)
-  local result = {}
-  for i=1, math.min(#rows, 3) do
-    result[#result+1] = tonumber(rows[i].minutes) and
-      (tonumber(rows[i].minutes)<1 and "Due" or tostring(rows[i].minutes).." min") or "--"
-  end
-  return #result>0 and table.concat(result, "  |  ") or "No arrivals available"
-end
 render_favorites = function()
   for i, row in ipairs(v.favorites) do
     local favorite = favorites[i]
@@ -364,14 +517,15 @@ render_favorites = function()
       ui.set_text(row.route, (favorite.route or "?").."   "..(favorite.operator or "KMB"))
       ui.set_text(row.destination, "To "..(favorite.destination or "selected destination"))
       ui.set_text(row.stop, favorite.stop_name or "Choose a stop for this saved route")
-      ui.set_text(row.eta, favorite.eta_text or "Tap to load arrivals")
+      ui.set_text(row.eta, "Tap to load live arrivals")
     end
   end
   ui.set_hidden(v.empty, #favorites>0)
 end
 local function is_saved()
   for i, favorite in ipairs(favorites) do
-    if selected_stop and identity(favorite)==identity(selected) and favorite.stop_id==selected_stop.id then return i end
+    if selected_stop and identity(favorite)==identity(selected) and favorite.stop_id==selected_stop.id and
+        tonumber(favorite.stop_seq)==tonumber(selected_stop.seq) then return i end
   end
 end
 local function update_actions()
@@ -386,33 +540,46 @@ local function save_stop()
   if #favorites>=8 then status("Eight saved stops maximum"); return end
   favorites[#favorites+1] = {route=selected.route, operator=selected.operator, bound=selected.bound,
     service_type=selected.service_type, destination=selected.destination, stop_id=selected_stop.id,
-    stop_name=selected_stop.name_en or selected_stop.name_tc, eta_text=v.eta_text, parts=selected.parts}
+    stop_name=selected_stop.name_en or selected_stop.name_tc,stop_seq=selected_stop.seq,
+    stop_operator=selected_stop.operator,stop_lat=selected_stop.lat,stop_lon=selected_stop.lon,parts=selected.parts}
   save_state(); render_favorites(); update_actions(); status("Stop saved to Favorites")
 end
 local function remove_stop()
   local index = is_saved()
   if index then table.remove(favorites, index); save_state(); render_favorites(); update_actions(); status("Removed from Favorites") end
 end
-render_stop_page = function()
-  local first=(stop_page-1)*8+1
-  stops={}
-  for i, row in ipairs(v.stops) do
-    local stop=stop_results[first+i-1]
-    stops[i]=stop
-    ui.set_hidden(row, not stop)
-    ui.set_style(row, {border_color=C.border, border_width=1})
-    if stop then
-      local label=stop.name_en or stop.name_tc or "Metadata unavailable"
-      if label=="" then label="Metadata unavailable" end
-      if not stop.name_en and not stop.name_tc then label=label.." - Retry" end
-      ui.set_text(row, tostring(stop.seq or first+i-1)..". "..label)
-    end
+render_stop_row = function(index)
+  local stop=stop_results[index]
+  if not stop then return false end
+  local name=stop.name_en or stop.name_tc or (stop.id.." - Retry name")
+  return ui.list_set_text(v.stop_list,index-1,tostring(stop.seq or index)..". "..name)
+end
+local function stop_list_step(job)
+  if not job or job.generation~=(v.catalog_generation or 0) then
+    if v.stop_list_job==job then v.stop_list_job=nil end
+    return true
   end
-  local pages=math.max(1,math.ceil(#stop_results/8))
-  ui.set_hidden(v.stop_nav, #stop_results<=8)
-  ui.set_hidden(v.stop_prev, stop_page<=1)
-  ui.set_hidden(v.stop_next, stop_page>=pages)
-  ui.set_text(v.stop_page, #stop_results>0 and ("Page "..stop_page.." / "..pages) or "")
+  local index=job.index
+  local stop=stop_results[index]
+  if not stop then
+    v.stop_list_job=nil
+    begin_stop_metadata()
+    return true
+  end
+  local name=stop.name_en or stop.name_tc or (stop.id.." - Retry name")
+  if not ui.list_add(v.stop_list,tostring(stop.seq or index)..". "..name) then
+    v.stop_list_job=nil
+    v.stop_list_error="Stop list reached its display limit at "..tostring(index-1).." of "..tostring(#stop_results)
+    begin_stop_metadata()
+    return true
+  end
+  job.index=index+1
+  if job.index>#stop_results then
+    v.stop_list_job=nil
+    begin_stop_metadata()
+    return true
+  end
+  return false
 end
 local function move_route_page(delta)
   local pages=math.max(1,math.ceil(route_total/8))
@@ -420,94 +587,157 @@ local function move_route_page(delta)
   if Catalog.available and query~="" then catalog_search(target)
   else route_page=target; render_route_page() end
 end
-local function move_stop_page(delta)
-  local pages=math.max(1,math.ceil(#stop_results/8))
-  stop_page=math.max(1,math.min(pages,stop_page+delta)); render_stop_page()
+local function now_seconds()
+  local clock=crystal.service.time
+  return clock and clock.now and clock.now() or 0
+end
+local function render_arrivals()
+  local rows=v.current_arrivals or {}
+  local now=now_seconds()
+  for i,row in ipairs(v.arrivals) do
+    local item=rows[i];ui.set_hidden(row.box,not item)
+    if item then
+      ui.set_text(row.minutes,Arrivals.format_minutes(item.epoch_sec,now))
+      local remark=item.remark_en~="" and item.remark_en or "Scheduled"
+      ui.set_text(row.remark,item.operator.." | "..remark)
+    end
+  end
+  ui.set_hidden(v.no_eta,#rows>0)
+  local summary={}
+  for _,item in ipairs(rows) do summary[#summary+1]=Arrivals.format_minutes(item.epoch_sec,now) end
+  v.eta_text=#summary>0 and table.concat(summary,"  |  ") or "No arrivals available"
 end
 fetch_eta = function()
-  if not selected_stop then status("Choose a stop to see arrivals"); return end
-  request("/api/eta?"..parameters().."&stop="..escape(selected_stop.id), function(data)
-    if type(data.etas)~="table" then status("Invalid arrival response"); return end
-    for _, row in ipairs(v.arrivals) do ui.set_hidden(row.box,true) end
-    local rows = data.etas
-    for i=1, math.min(#rows, 3) do
-      local item = rows[i]
-      local row=v.arrivals[i]
-      ui.set_hidden(row.box,false)
-      ui.set_text(row.minutes,eta_summary({item}))
-      ui.set_text(row.remark,tostring(item.remark or "Scheduled"))
+  if not selected_stop then status("Choose a stop to see arrivals");return end
+  local route,stop=selected,selected_stop
+  local part=request_part(route)
+  status("Loading arrivals...")
+  request(Providers.eta_url(part,stop),function(body,err)
+    if err then status(err);return end
+    Controller.decode_array(body,function(item,order) return Providers.eta_record(part,stop,item,order) end,
+      function(rows,failure)
+        if failure then status(failure);return end
+        v.current_arrivals=Arrivals.select(rows);v.eta_updated=now_seconds()
+        render_arrivals()
+        status(route.operator=="JOINT" and ("Partial arrivals: "..part.operator.." only") or
+          (#rows>0 and "Updated just now" or "No arrivals available"))
+        resource_checkpoint("eta_complete")
+      end)
+  end)
+end
+local function metadata_missing(stop)
+  return not nonempty(stop.name_en) and not nonempty(stop.name_tc)
+end
+missing_metadata_stops=function(wanted)
+  local rows={}
+  for _,indices in pairs(wanted) do
+    local index=type(indices)=="table" and indices[1] or indices
+    if index and stop_results[index] then rows[#rows+1]=stop_results[index] end
+  end
+  table.sort(rows,function(a,b) return a.seq<b.seq end)
+  return rows
+end
+local function apply_metadata(target,source)
+  target.name_en=nonempty(target.name_en) or source.name_en
+  target.name_tc=nonempty(target.name_tc) or source.name_tc
+  target.lat=target.lat or source.lat;target.lon=target.lon or source.lon
+end
+local function fetch_selected_stop()
+  local stop=selected_stop
+  if not metadata_missing(stop) then fetch_eta();return end
+  status("Loading stop name...")
+  request(Providers.stop_details_url(stop.operator,stop.id),function(body,err)
+    local details=not err and Providers.parse_stop_details(stop.operator,stop.id,json.decode(body))
+    if details then
+      apply_metadata(stop,details)
+      if v.selected_stop_index then render_stop_row(v.selected_stop_index) end
+      ui.set_text(v.stop_name,stop.name_en or stop.name_tc or stop.id)
     end
-    ui.set_hidden(v.no_eta,#rows>0)
-    -- Arrival minutes are transient. Do not write state or rebuild the
-    -- Favorites page from inside the HTTP callback; both operations can
-    -- exceed the 50 ms app callback budget on the P4.
-    v.eta_text = eta_summary(rows)
-    status(#rows>0 and "Updated just now | fixture data" or "No arrivals available")
-  end, "eta_complete")
+    fetch_eta()
+  end)
 end
 local function select_stop(index)
-  if v.request_id then status("Please wait for the current request"); return end
-  local absolute=(stop_page-1)*8+index
-  selected_stop=stop_results[absolute]
+  invalidate_requests()
+  selected_stop=stop_results[index]
   if not selected_stop then return end
-  for i, row in ipairs(v.stops) do
-    ui.set_style(row, {border_color=i==index and C.accent or C.border, border_width=i==index and 2 or 1})
-  end
-  ui.set_text(v.stop_name, selected_stop.name_en or selected_stop.id)
-  v.eta_text=nil
+  v.selected_stop_index=index
+  ui.set_text(v.stop_name, selected_stop.name_en or selected_stop.name_tc or selected_stop.id)
+  v.eta_text=nil;v.current_arrivals=nil
   for _, row in ipairs(v.arrivals) do ui.set_hidden(row.box,true) end
   ui.set_hidden(v.no_eta,true)
   update_actions()
   v.board=true
   ui.set_hidden(v.stop_section,true); ui.set_hidden(v.eta_section,false)
   ui.scroll_to(v.detail_header, {align="top"})
-  if not selected_stop.name_en and not selected_stop.name_tc then
-    status("Stop metadata unavailable - tap Refresh to retry")
-  end
-  fetch_eta()
+  fetch_selected_stop()
 end
-local function fetch_stops()
-  request("/api/stops?"..parameters(), function(data)
-    if type(data.stops)~="table" then status("Invalid stop response"); return end
-    stop_results=data.stops
-    stop_page=1
-    render_stop_page()
-    ui.set_text(v.stops_hint, #stop_results>0 and "Tap a stop for arrivals" or "No stops found for this route")
-    if catalog_load() and #stop_results>0 then
-      v.catalog_generation=(v.catalog_generation or 0)+1
-      local wanted, needs={},false
-      local provider=tostring(request_part(selected).operator or ""):upper()
-      for i, stop in ipairs(stop_results) do
-        if type(stop)=="table" and not stop.name_en and not stop.name_tc then
-          local id=tostring(stop.id or "")
-          if wanted[id] then
-            if type(wanted[id])=="table" then wanted[id][#wanted[id]+1]=i
-            else wanted[id]={wanted[id],i} end
-          else wanted[id]=i end
-          needs=true
+local function metadata_step(job)
+  if v.request_id or v.pending_request then return end
+  local stop=job.stops[job.index]
+  if not stop then
+    v.metadata_job=nil
+    status(v.stop_list_error or (job.failed and "Some stop names unavailable - tap Refresh to retry" or
+      (#(job.all_stops or job.stops)>0 and "Tap a stop for arrivals" or "No stops found for this route")))
+    resource_checkpoint("stops_loaded");return
+  end
+  job.index=job.index+1
+  if not metadata_missing(stop) then return end
+  request(Providers.stop_details_url(stop.operator,stop.id),function(body,err)
+    local details=not err and Providers.parse_stop_details(stop.operator,stop.id,json.decode(body))
+    if details then
+      for index,target in ipairs(job.all_stops or job.stops) do
+        if target.operator==stop.operator and target.id==stop.id then
+          apply_metadata(target,details)
+          render_stop_row(index)
         end
       end
-      if needs then
-        v.stop_catalog_job={provider=provider,index=1,wanted=wanted,generation=v.catalog_generation}
-        status("Loading stop metadata...")
-      else
-        resource_checkpoint("stops_loaded")
-        status("")
-      end
-    else
-      resource_checkpoint("stops_loaded")
-      status("")
+    else job.failed=true end
+  end)
+end
+begin_stop_metadata=function()
+  local wanted={}
+  local provider=tostring(request_part(selected).operator or ""):upper()
+  for i,stop in ipairs(stop_results) do
+    if metadata_missing(stop) then
+      wanted[stop.id]=wanted[stop.id] or {};table.insert(wanted[stop.id],i)
     end
+  end
+  -- LWB shares KMB's stop IDs and API.
+  if provider=="LWB" then provider="KMB" end
+  if next(wanted) and Catalog.available then
+    v.stop_catalog_job={provider=provider,index=1,wanted=wanted,generation=v.catalog_generation}
+    status("Loading stop names...")
+  else v.metadata_job={stops=missing_metadata_stops(wanted),all_stops=stop_results,index=1} end
+end
+local function fetch_stops()
+  local part=request_part(selected)
+  status("Loading stops...")
+  request(Providers.route_stops_url(part),function(body,err)
+    if err then status(err);return end
+    Controller.decode_array(body,function(item) return Providers.stop_record(part,item) end,function(rows,failure)
+      if failure then status(failure);return end
+      -- Stable ties retain repeated stop occurrences from the provider.
+      for i,row in ipairs(rows) do row.source_order=i end
+      table.sort(rows,function(a,b) return a.seq==b.seq and a.source_order<b.source_order or a.seq<b.seq end)
+      stop_results=rows
+      v.stop_list_error=nil
+      ui.list_clear(v.stop_list)
+      ui.scroll_to(v.stop_list,{align="top"})
+      ui.set_text(v.stops_hint,#rows>0 and "Tap a stop for arrivals" or "No stops found for this route")
+      v.stop_list_job={index=1,generation=v.catalog_generation}
+    end)
   end)
 end
 open_route = function(route, favorite)
-  if v.request_id then status("Please wait for the current request"); return end
+  invalidate_requests()
   -- Reopening a saved stop must not perform another synchronous state write.
   if not favorite then remember_route(route) end
   return_page=v.page
   v.catalog_generation=(v.catalog_generation or 0)+1
   v.catalog_job=nil; v.stop_catalog_job=nil
-  selected=route; selected_stop=nil; stops={}; stop_results={}; stop_page=1; v.eta_text=nil; v.board=false
+  selected=route; selected_stop=nil;v.selected_stop_index=nil;v.stop_list_error=nil;stops={};stop_results={};v.eta_text=nil;v.current_arrivals=nil; v.board=false
+  ui.list_clear(v.stop_list)
+  ui.scroll_to(v.stop_list,{align="top"})
   ui.set_hidden(v.stop_section,false); ui.set_hidden(v.eta_section,true)
   ui.set_text(v.route_title, tostring(route.route).."  |  "..operator_label(route))
   ui.set_text(v.destination, "To "..tostring(route.destination or "selected destination"))
@@ -518,12 +748,13 @@ open_route = function(route, favorite)
   ui.set_hidden(v.no_eta,true)
   update_actions(); show_page("detail")
   if favorite and favorite.stop_id then
-    selected_stop={id=favorite.stop_id, name_en=favorite.stop_name}
+    selected_stop={id=favorite.stop_id,name_en=favorite.stop_name,operator=favorite.stop_operator or request_part(favorite).operator,
+      seq=favorite.stop_seq,lat=favorite.stop_lat,lon=favorite.stop_lon}
     ui.set_text(v.stop_name, favorite.stop_name or favorite.stop_id)
     ui.set_text(v.stops_hint, "Saved stop")
     v.board=true
     ui.set_hidden(v.stop_section,true); ui.set_hidden(v.eta_section,false)
-    update_actions(); fetch_eta()
+    update_actions(); fetch_selected_stop()
   else fetch_stops() end
 end
 catalog_search = function(page)
@@ -536,7 +767,6 @@ catalog_search = function(page)
   status("Loading catalog...")
 end
 search_routes = function()
-  if v.request_id then search_pending=true; return end
   if query=="" then show_recent_routes(); return end
   if catalog_load() then
     route_results={}; route_total=0; route_page=1
@@ -545,17 +775,7 @@ search_routes = function()
     search_pending=false
     return
   end
-  local submitted=query
-  request("/api/routes?query="..escape(query), function(data)
-    if submitted~=query then search_pending=true; return end
-    if type(data.routes)~="table" then status("Invalid route response"); return end
-    resource_checkpoint("catalog_loaded")
-    routes={}
-    local rows=data.routes
-    for i=1, math.min(#rows, 8) do routes[i]=rows[i] end
-    render_route_rows(routes,#routes>0 and "Choose a route and direction" or "No matching routes",
-      "Fixture routes | "..#routes.." matches")
-  end)
+  render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
 end
 local function key(value)
   if value=="Clear" then query=""
@@ -571,19 +791,31 @@ local function key(value)
   end
 end
 local function search_tick()
+  if v.paused then return end
   if v.search_due and v.search_due>0 then
     v.search_due=v.search_due-1
     if v.search_due==0 and search_pending and v.page=="search" then
       search_pending=false; search_routes()
     end
   end
-  if v.catalog_job then
+  if v.pending_request then
+    Controller.start_request(v.pending_request)
+  elseif v.decode_job then
+    local job=v.decode_job
+    if job.generation~=(v.generation or 0) then v.decode_job=nil;return end
+    local done,err=Providers.array_step(job)
+    if done then v.decode_job=nil;job.body=nil;job.complete(err and nil or job.rows,err) end
+  elseif v.stop_list_job then
+    stop_list_step(v.stop_list_job)
+  elseif v.catalog_job then
     catalog_search_step(v.catalog_job)
   elseif v.stop_catalog_job then
     catalog_stop_step(v.stop_catalog_job)
+  elseif v.metadata_job then metadata_step(v.metadata_job)
   end
 end
 show_page = function(name)
+  if v.page and v.page~=name then invalidate_requests() end
   v.page=name
   ui.set_hidden(v.nav, name=="detail")
   for page, object in pairs(v.pages) do ui.set_hidden(object, page~=name) end
@@ -593,13 +825,14 @@ show_page = function(name)
   end
   if name=="favorites" then
     render_favorites()
-    status(#favorites>0 and "Saved stops - sample data" or "Sample data - not live")
+    status(#favorites>0 and "Tap a saved stop for live arrivals" or "")
   elseif name=="search" and query=="" then
     show_recent_routes()
   end
 end
 refresh = function()
-  if selected_stop then fetch_eta() else fetch_stops() end
+  invalidate_requests()
+  if selected_stop then fetch_selected_stop() else fetch_stops() end
 end
 function M.onCreate()
   metric_marks={}
@@ -703,32 +936,25 @@ function M.onCreate()
   v.route_next=button(v.route_nav,"Next",math.floor(width/3),key_h,function() move_route_page(1) end)
   ui.set_hidden(v.route_nav,true)
   page=v.pages.detail
-  local header=assert(ui.row(page,{gap=gap}))
+  -- Keep the two header actions comfortably tappable on the P4 touch panel.
+  -- Their symbols stay the same size; the surrounding target grows to the
+  -- platform's 56 px logical minimum instead of relying on the glyph bounds.
+  local header_h=math.floor(56*scale)
+  local header=assert(ui.row(page,{height=header_h,gap=gap}))
   v.detail_header=header
-  local icon_w=key_h
-  local back=button(header,ICON.back,icon_w,key_h,function() M.onBack() end)
+  local icon_w=header_h
+  local back=button(header,ICON.back,icon_w,header_h,function() M.onBack() end)
   ui.set_style(back,{bg_color=C.bg,border_width=0,text_color=C.accent})
   v.route_title=text(header,"",width-2*icon_w-2*gap,"large")
-  local refresh_button=button(header,ICON.refresh,icon_w,key_h,refresh)
+  local refresh_button=button(header,ICON.refresh,icon_w,header_h,refresh)
   ui.set_style(refresh_button,{bg_color=C.bg,border_width=0,text_color=C.accent,font_size=28})
   ui.set_style(back,{font_size=28})
   v.destination=text(page,"",width,readable_font,C.muted)
   v.stop_section=assert(ui.col(page,{gap=12}))
   v.stops_hint=text(v.stop_section,"Choose a route",width,"small",C.muted)
-  local stop_list=assert(ui.scroll_view(v.stop_section,{height=H-math.floor(210*scale),gap=math.floor(6*scale)}))
-  for i=1,8 do
-    v.stops[i]=assert(ui.button(stop_list,{text="",width=width,min_height=key_h,
-      on_click=function() select_stop(i) end,
-      style={bg_color=C.card,text_color=C.text,border_width=1,border_color=C.border,radius=8,
-        align="left",padding=10,font_size=readable_size}}))
-    ui.set_hidden(v.stops[i],true)
-  end
-  v.stop_nav=assert(ui.row(v.stop_section,{gap=gap}))
-  v.stop_prev=button(v.stop_nav,"Previous",math.floor(width/3),key_h,function() move_stop_page(-1) end)
-  v.stop_page=text(v.stop_nav,"",math.floor(width/3),"small",C.muted)
-  ui.set_style(v.stop_page,{align="center"})
-  v.stop_next=button(v.stop_nav,"Next",math.floor(width/3),key_h,function() move_stop_page(1) end)
-  ui.set_hidden(v.stop_nav,true)
+  v.stop_list=assert(ui.list(v.stop_section,{width=width,height=H-math.floor(210*scale),
+    on_select=function(index) select_stop(index) end,
+    style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
   -- ETA is a separate visual board, not a second list below the stop picker.
   v.eta_section=assert(ui.col(page,{gap=math.floor(16*scale)}))
   v.stop_name=text(v.eta_section,"Choose a stop",width,"large")
@@ -745,42 +971,35 @@ function M.onCreate()
   v.save=button(v.eta_section,"Save stop",width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
   -- The header refresh action is shared by the stop picker and ETA board.
   for _, name in ipairs({"favorites","search","detail"}) do
-    v.status[name]=text(v.pages[name],"Sample data - not live",width,"small",C.muted)
+    v.status[name]=text(v.pages[name],"",width,"small",C.muted)
   end
-  if fs and fs.read then v.search_timer=ui.timer(100,search_tick) end
+  v.search_timer=ui.timer(100,search_tick)
   update_actions(); show_page("favorites")
   resource_checkpoint("launch_ready")
   return true
 end
 function M.onPause()
-  save_state(); search_pending=false
-  v.catalog_generation=(v.catalog_generation or 0)+1
-  v.catalog_job=nil; v.stop_catalog_job=nil; v.search_due=nil
-  if v.request_id then http.cancel(v.request_id); v.request_id=nil end
+  v.paused=true;search_pending=false;v.search_due=nil
+  invalidate_requests()
   return true
 end
 function M.onResume()
-  if v.page=="detail" then
-    if selected_stop then fetch_eta()
-    elseif selected and selected.route then fetch_stops() end
-  end
+  v.paused=false
+  if v.page=="detail" then refresh()
+  elseif v.page=="search" then search_routes() end
   return true
 end
 function M.onDestroy()
-  v.catalog_generation=(v.catalog_generation or 0)+1
-  v.catalog_job=nil; v.stop_catalog_job=nil
-  if v.request_id then http.cancel(v.request_id); v.request_id=nil end
-  resource_checkpoint("teardown"); v={}; return true
+  v.paused=true;invalidate_requests()
+  resource_checkpoint("teardown");v={};return true
 end
 function M.onBack()
   if v.page=="detail" then
-    v.catalog_generation=(v.catalog_generation or 0)+1
-    v.catalog_job=nil; v.stop_catalog_job=nil
-    if v.request_id then http.cancel(v.request_id); v.request_id=nil end
+    invalidate_requests()
     if v.board and return_page=="search" then
       v.board=false; selected_stop=nil
       ui.set_hidden(v.stop_section,false); ui.set_hidden(v.eta_section,true)
-      ui.scroll_to(v.detail_header,{align="top"}); status("Tap a stop for arrivals")
+      ui.scroll_to(v.detail_header,{align="top"}); begin_stop_metadata()
     else show_page(return_page or "search") end
     return true
   elseif v.page=="search" and query~="" then key("Clear"); return true end

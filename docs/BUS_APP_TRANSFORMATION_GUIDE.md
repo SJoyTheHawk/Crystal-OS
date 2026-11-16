@@ -2,13 +2,28 @@
 
 ## Executive Summary
 
-This guide transforms the **working S3 native bus app** into a **functional Lua-based P4 app** that replicates—not reinvents—the proven behavior. The S3 app demonstrates the complete workflow: route search with catalog, HTTP requests to KMB/CTB APIs, stop lists, ETA display, and NVS favorites. The Flutter mobile app provides the reference logic for joint-route merging, stop matching, and ETA processing that handles real-world edge cases.
+This guide transforms the **partial S3 native bus app** into a **functional Lua-based P4 app** that replicates—not reinvents—the proven behavior. The S3 app provides a reference for the workflow: route search with catalog, HTTP requests to KMB/CTB APIs, stop lists, ETA display, and NVS favorites. The Flutter mobile app provides the reference logic for joint-route merging, stop matching, and ETA processing that handles real-world edge cases.
 
 **Goal**: Replicate the S3 app's complete functionality on P4 using Lua, with Flutter's proven data logic, adapted for MCU constraints.
 
 **Not goal**: Invent new UX patterns, simplify features, or create a "proof of concept" that lacks the original capabilities.
 
 ---
+
+## Phase 1 implementation update — 2026-11-16
+
+Bus Lite **0.2.8** now implements direct KMB/LWB and Citybus stop sequences,
+bundled metadata lookup with provider fallback, exact timestamp parsing and
+single-provider ETA. The accepted P4 layout, favorites and recent-route UI are
+retained. Host package/catalog/production UI tests and the P4 build pass;
+physical-board acceptance remains pending. See `BUS_APP_QUICK_START.md` and
+`BUS_APP_PHASE_1_RESULTS.md` for the current install/test instructions and hashes.
+
+The original status/estimates below describe the planning baseline. S3 was
+resource limited and incomplete; its reports do not establish P4 capacity.
+Phase 1 uses the existing 512 KiB quota pending board measurements. The source
+uses bounded per-record processing rather than the bulk-decode sketches below.
+Both stop endpoints require `outbound`/`inbound`, not `O`/`I` in the URL.
 
 ## 1. Reference Analysis
 
@@ -94,7 +109,7 @@ entries.indexed.toList()..sort((a, b) {
 
 ---
 
-## 2. Current P4 Implementation Status
+## 2. Planning baseline before Phase 1
 
 **Location**: `/Users/szemy/Workspace/ESP32 Crystal OS/examples/bus3p/`
 
@@ -104,11 +119,11 @@ entries.indexed.toList()..sort((a, b) {
 - Resource measurement checkpoints
 - 512 KiB Lua arena with bounded JSON decoding
 
-**What's missing (causes "inventing something different")**:
+**Gaps identified at planning time** (see the Phase 1 update above for current status):
 1. **No live provider HTTP requests** — still uses fixture server at `http://phase17.bus.fixture:8000`
 2. **No joint route ETA** — catalog has JOINT records but no dual-provider fetching
 3. **Incomplete stop metadata resolution** — async catalog lookup but no fallback to provider API
-4. **No favorites** — persistence exists but save/remove/reopen UI flow is incomplete
+4. **Persistence hardening** — save/remove/reopen UI already exists; validate stored records and write failures in Phase 3
 5. **No ETA refresh** — one-shot requests only, no 20s periodic refresh
 6. **Incomplete Flutter logic** — route merging is in Python catalog generator, but stop matching and ETA merging are not implemented
 
@@ -142,7 +157,7 @@ entries.indexed.toList()..sort((a, b) {
    - CTB: `/v2/transport/citybus/route-stop/CTB/{route}/{bound}`
    - Both return `{type:"RouteStop", version:"1.0", data:[...]}`
 
-**Acceptance**: Route 1A (KMB), route 2 (CTB) both fetch real stop sequences and display stop names without catalog fallback.
+**Acceptance**: Route 1A (KMB), route 2 (CTB) both fetch real stop sequences and display names from bundled metadata, with provider detail fallback for gaps.
 
 ### Phase 2: Joint Route Implementation
 
@@ -378,7 +393,7 @@ Controller.fetch_route_stops(selected_route.parts[1])
   ↓
 Catalog.stop_step() resolves names (if available in offline catalog)
   ↓
-View.render_stop_page() → 8 rows with Previous/Next
+View renders the full route as one scrollable native stop list
   ↓
 User selects stop "001"
   ↓
@@ -459,7 +474,7 @@ Extend existing Python test harnesses:
 def test_kmb_route_stops_url():
     part = {"operator": "KMB", "route": "1A", "bound": "O", "service_type": "1"}
     url = providers_route_stops_url(part)
-    assert url == "https://data.etabus.gov.hk/v1/transport/kmb/route-stop/1A/O/1"
+    assert url == "https://data.etabus.gov.hk/v1/transport/kmb/route-stop/1A/outbound/1"
 
 def test_parse_kmb_eta_response():
     json_text = '{"data":[{"eta":"2026-11-16T14:30:00+08:00","rmk_tc":"原定班次"}]}'
@@ -551,7 +566,7 @@ assert(#arrivals > 0, "Reopened favorite returned no ETA")
 **Symptom**: Catalog + HTTP responses + UI exceed 512 KB
 
 **Mitigation**:
-- Current peak: 379 KB with catalog search
+- Historical host measurements are not P4 evidence; Stage C P4 reported 248 KiB peak. Measure Phase 1 on P4 before sizing the quota.
 - ETA responses are small (~2 KB per provider)
 - Joint ETA needs sequential fetching (not parallel) to avoid double-buffering
 - If still tight: increase to 640 KB (Flutter logic adds ~50 KB, ETA buffers ~30 KB)

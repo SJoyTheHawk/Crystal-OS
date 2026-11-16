@@ -91,6 +91,7 @@ private:
     static int ui_off(lua_State *state);
     static int ui_list_add(lua_State *state);
     static int ui_list_insert(lua_State *state);
+    static int ui_list_set_text(lua_State *state);
     static int ui_list_remove(lua_State *state);
     static int ui_list_clear(lua_State *state);
     static int ui_list_count(lua_State *state);
@@ -141,6 +142,8 @@ private:
     void release_callbacks();
     cJSON *lua_to_json(int index, unsigned depth = 0, unsigned *nodes = nullptr);
     void json_to_lua(const cJSON *value, unsigned depth = 0);
+    static int protected_json_value(lua_State *state);
+    int push_json_value(const cJSON *value);
     bool read_data(const std::string &path, std::string *out, size_t limit) const;
     bool write_data(const std::string &path, const std::string &bytes);
     bool data_size(size_t *bytes) const;

@@ -1,5 +1,12 @@
 # Phase 17 board test guide
 
+For **Bus transformation Phase 1 (0.2.8)**, follow
+[BUS_APP_QUICK_START.md](BUS_APP_QUICK_START.md). It uses the new firmware plus
+`/tmp/phase17-bus-live.capp` and direct KMB/CTB HTTPS. The Bus fixture steps later
+in this document are historical platform tests and optional fixture checks;
+they are not the install path for the live-provider package.
+
+
 This runbook covers the Phase 17 acceptance checks that need an ESP32-P4. It
 assumes the board is on the same LAN as the development Mac. Record failures
 with the board revision, firmware image SHA-256, date, and relevant serial log.

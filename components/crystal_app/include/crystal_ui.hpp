@@ -54,9 +54,11 @@ public:
     bool off(Handle object, const char *event);
     bool list_add(Handle list, const ListItem &item);
     bool list_insert(Handle list, unsigned index, const ListItem &item);
+    bool list_set_text(Handle list, unsigned index, const char *text);
     bool list_remove(Handle list, unsigned index);
     bool list_clear(Handle list);
     bool list_count(Handle list, unsigned *count) const;
+    bool list_on_click(Handle list, Callback callback, void *user = nullptr);
     bool list_set_item_height(Handle list, unsigned height);
     Handle chart_add_series(Handle chart, uint32_t color);
     Handle chart_series(Handle chart, unsigned index) const;
@@ -91,6 +93,7 @@ private:
         bool chart_auto_range = true;
         unsigned item_height = 0;
         std::array<Listener, 7> events{};
+        Listener list_item_click{};
     };
     struct Series { Handle id; Handle chart; lv_chart_series_t *series; };
     struct Timer : Metadata { CrystalUI *owner; Handle id; lv_timer_t *timer; CrystalResources::Handle resource; Callback callback; void *user; bool once; };
@@ -101,6 +104,7 @@ private:
     };
     Node *node(Handle handle) const;
     static void event_cb(lv_event_t *event);
+    static void list_item_event_cb(lv_event_t *event);
     static void timer_cb(lv_timer_t *timer);
     static void anim_step(void *context, int32_t progress);
     static void anim_done(lv_anim_t *animation);

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Host acceptance checks for the bounded Bus Lite Script package."""
 import json
+import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,8 +23,29 @@ def main():
         "/api/stops", {"route": ["68X"], "operator": ["KMB"]}
     )["stops"]
     assert len(long_stops) == 17 and long_stops[-1]["seq"] == 17
+    for path, operator, count in (("/kmb/route-stop/1A/outbound/1", "KMB", 3),
+                                  ("/ctb/route-stop/CTB/2/inbound", "CTB", 3),
+                                  ("/kmb/route-stop/68X/inbound/1", "KMB", 17)):
+        data = phase17_bus_fixture.provider_response(path)["data"]
+        assert len(data) == count and data[-1]["seq"] == str(count)
+        stop_id = data[1]["stop"]
+        prefix = "/ctb" if operator == "CTB" else "/kmb"
+        detail = phase17_bus_fixture.provider_response(f"{prefix}/stop/{stop_id}")["data"]
+        assert detail["stop"] == stop_id and detail["name_en"]
+        route = "68X" if count == 17 else "2" if operator == "CTB" else "1A"
+        eta_path = f"/ctb/eta/CTB/{stop_id}/{route}" if operator == "CTB" else f"/kmb/eta/{stop_id}/{route}/1"
+        assert len(phase17_bus_fixture.provider_response(eta_path)["data"]) == 3
+    assert phase17_bus_fixture.provider_response("/ctb/route-stop/CTB/2/O") is None
     with tempfile.TemporaryDirectory(prefix="phase17-bus-") as temp:
         root = Path(__file__).resolve().parents[1]
+        samples = root / "tools/fixtures/bus-phase1-providers"
+        for row in json.loads((samples / "provenance.json").read_text())["responses"]:
+            raw = (samples / row["file"]).read_bytes()
+            assert len(raw) == row["bytes"]
+            assert hashlib.sha256(raw).hexdigest() == row["sha256"]
+        live = crystal.pack(root / "examples/bus3p", Path(temp) / "live.capp")
+        assert live["permissions"]["network_hosts"] == ["data.etabus.gov.hk", "rt.data.gov.hk"]
+        assert "phase17.bus.fixture" not in (root / "examples/bus3p/main.lua").read_text()
         phase17_bus_fixture.OUTPUT = Path(temp) / "package"
         phase17_bus_fixture.create("192.168.1.195")
         package = Path(temp) / "bus.capp"
@@ -31,21 +53,25 @@ def main():
         inspected = crystal.inspect(package)
         assert manifest["id"] == "com.example.bus3p"
         assert manifest["runtime"] == "lua"
-        assert manifest["version"] == "0.2.5"
+        assert "fixture" in manifest["name"]
+        assert manifest["version"] == "0.2.8"
         assert manifest["memory_kb"] == 512 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
-        assert "math.min(#rows, 8)" in source
-        assert "math.min(#rows, 3)" in source
         assert "catalog_search_step" in source
         assert "catalog_stop_step" in source
         assert "assets/catalog/runtime.txt" in source
         assert "v.catalog_job" in source and "v.stop_catalog_job" in source
         assert "math.ceil(route_total/8)" in source
-        assert "math.ceil(#stop_results/8)" in source
+        assert "v.stop_list_job={index=1,generation=v.catalog_generation}" in source
+        assert "local function stop_list_step(job)" in source
+        assert "render_stop_row = function(index)" in source
+        assert "ui.list_add(v.stop_list," in source
+        assert "on_select=function(index)" in source
+        assert "move_stop_page" not in source
         assert "#query<6" in source
         assert "v.search_due=2" in source
-        assert "http.cancel(v.request_id)" in source
+        assert "http.cancel(old)" in source
         assert "state.set(\"favorites\", favorites)" in source
         assert "state.set(\"recent_routes\", recents)" in source
         assert "while #recents>5 do table.remove(recents) end" in source
@@ -91,7 +117,7 @@ def main():
         for checkpoint in ("launch_begin", "launch_ready", "catalog_loaded",
                            "stops_loaded", "teardown"):
             assert f'resource_checkpoint("{checkpoint}")' in source
-        assert 'end, "eta_complete")' in source
+        assert 'resource_checkpoint("eta_complete")' in source
         # Syntax-check against the same Lua sources as firmware. Behavioral
         # and rendering coverage lives in test_phase17_bus_render.py.
         lua = root / "managed_components/georgik__lua"

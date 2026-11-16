@@ -1516,13 +1516,20 @@ not establish P4 capacity.
 | API or limit | Current P4 contract |
 | --- | --- |
 | `crystal.fs.read("assets/…")` | Returns the complete asset or `nil`; reads are limited to 64 KiB. |
-| `crystal.json.decode(text)` | Converts JSON to Lua values subject to the 512-node, depth-16 and app-arena limits. Invalid JSON returns `nil`. |
+| `crystal.json.decode(text)` | Converts JSON to Lua values subject to depth-16 and app-arena limits (the 512-node limit applies to encoding, not decoding). Invalid JSON returns `nil`. |
 | `crystal.service.http.fetch(url, opts, callback)` | Returns an ID or `nil, error`; callback arguments are `(id, status, body)`. The body cap is 64 KiB, and concurrency is bounded by manifest `worker_threads`. |
 | `crystal.service.http.cancel(id)` | Requests cancellation. A generation/identity check must still discard stale callbacks. |
 | `crystal.service.time.now()` | Returns Unix seconds. |
 | `crystal.ui.timer(period_ms, callback)` | Registers a managed LVGL timer and consumes one of the app's 64 callback slots. |
 | `crystal.state.set(key, value)` | Returns whether the state update was written. `state.flush()` currently returns success without performing a second write. |
 | Package limits | Package tooling enforces 128 files and 5.5 MiB total; Lua source is limited to 64 KiB. Asset files can be read whole, so catalog pages should remain substantially smaller than that ceiling. |
+
+Native lists may register one shared Lua `on_select(index)` callback in their
+creation options. This index is one-based; list mutation APIs use zero-based
+indexes. Selectable lists allow up to 256 rows and can update labels in place
+with `crystal.ui.list_set_text(list, index, text)`. Ordinary lists retain the
+64-row bound. This pattern supports long, scrollable stop sequences without a
+Lua callback slot per row.
 
 ### Stage B catalog asset contract
 
@@ -1558,14 +1565,15 @@ pause, Back action or route selection invalidates the generation before the
 next page can publish stale results.
 
 The selected route's complete provider stop response is retained in
-`stop_results`. Eight reusable stop rows expose Previous/Next pages, so the
-visible page size does not truncate a long route. Missing names start a second
-generation-tagged metadata job over the operator-qualified stop descriptors;
-rows remain visible as `Metadata unavailable - Retry` until a later refresh can
-fill them. Joint route records preserve their `parts` identities and display
-both operator labels while the current Stage C fixture request uses the first
-part for the stop sequence. Joint-provider live requests and ETA merging are
-reserved for Stage D.
+`stop_results`. One native selectable list exposes the whole ordered sequence
+through continuous scrolling, including routes longer than twelve stops. Rows
+are appended one per 100 ms timer tick; metadata is resolved progressively and
+updates only the affected row in place, preserving scroll position. Missing
+names remain identifiable by stop ID and can be retried when selected. Joint
+route records preserve their `parts` identities and display both operator
+labels while the current Stage C fixture request uses the first part for the
+stop sequence. Joint-provider live requests and ETA merging are reserved for
+Stage D.
 
 The same reusable 100 ms timer provides the two-tick (200 ms) search debounce
 and catalog continuation. It is created only when the filesystem API is
@@ -1630,3 +1638,36 @@ unlink after clean=1. Verified uninstall now detaches the app into hidden
 drain the entire cursor from a live UI callback. Wait for cleanup before new
 install admission; the error is retryable. Boot reclaims interrupted trash
 before app discovery. Keep leak-before-removal checks and watchdog limits.
+
+
+### Live provider work and JSON failure cleanup (Bus 0.2.6)
+
+The Bus entry uses official KMB/LWB and Citybus HTTPS endpoints. Preserve string
+stop IDs, constituent route/service identities and repeated sequence positions.
+Map `O`/`I` to `outbound`/`inbound` and percent-encode path components.
+
+Frame provider `data` arrays in Lua and normalize one record on each scheduler
+tick; do not build an unrestricted Lua table and truncate it afterward. The
+current framing scan is capped at 2,048 characters per tick. Metadata uses
+canonical ID searches within a bounded bundled page, one read OR one needed
+record decode per tick, followed by sequential provider detail requests for
+missing names. UI rows update as metadata resolves.
+
+Cancellation is asynchronous: invalidating a job suppresses its late callback,
+but its native worker slot can remain occupied until dispatch. The Bus
+controller keeps one current pending request, retries a quota-busy slot on its
+100 ms timer for a bounded interval, and drops that job on navigation/pause.
+
+`json.decode` and `state.get` now convert cJSON values inside a protected Lua
+call. On allocation failure, release the native JSON tree before rethrowing the
+Lua error; release state-read strings before rethrowing as well. Reserve Lua
+stack space before acquiring native trees. The production-binding render
+harness checks ten forced conversion failures and zero retained cJSON
+allocations. This requires the updated 0.17.0 firmware; a package update alone
+does not install the cleanup fix.
+
+Use exact Gregorian calendar arithmetic and explicit timezone offsets in epoch
+seconds. The Bus parser supports 1970–2037 within the current signed 32-bit Lua
+integer range. Rounded minutes and a 30-second Arriving threshold follow the
+Flutter reference. Save route/stop context, not a stale displayed countdown.
+See `BUS_APP_QUICK_START.md` for Phase 1 board acceptance.

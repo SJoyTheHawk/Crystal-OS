@@ -1,3 +1,42 @@
+# Bus Lite live-provider package (0.2.8)
+
+Phase 1 uses the official KMB/LWB and Citybus HTTPS APIs for complete stop
+sequences and ETA. Bundled catalogs provide offline route search and stop names;
+missing stop details are fetched sequentially. IDs remain strings, and repeated
+stop occurrences keep their sequence numbers. The accepted Favorites/Search,
+stop-picker and ETA layout is retained.
+
+Install **`/tmp/phase17-bus-live.capp`** through the P4 Developer Tools Control
+Panel after updating the firmware with `app-flash`. The new firmware frees
+native JSON trees even when Lua conversion runs out of memory; OS stays
+0.17.0. It also provides the shared selection callback and in-place row update
+used by the continuous stop list. Uninstall the previous package before replacing it (saved data is
+removed). The package is signed with the existing test key, ID 240. No Mac
+server is required.
+
+Follow [BUS_APP_QUICK_START.md](../../docs/BUS_APP_QUICK_START.md) for the full
+step-by-step flash/install/board test. Host checks and the firmware build pass;
+board TLS, timing, resource headroom and touch acceptance remain pending.
+[BUS_APP_PHASE_1_RESULTS.md](../../docs/BUS_APP_PHASE_1_RESULTS.md) records the
+artifact hashes, official response provenance and separate host/P4 evidence.
+
+Joint-provider ETA merging is Phase 2. A joint route currently shows explicitly
+labelled partial arrivals from its primary provider. Persistence hardening and
+scheduled refresh/countdown remain Phases 3 and 4; existing manual refresh,
+saved-stop reopening and recent routes are retained. The final functional
+release remains 0.3.0 after acceptance.
+
+The host fixture tool can still produce an explicitly named **Bus Lite
+(fixture)** package using provider-shaped synthetic responses. This is a test
+option; production packages point directly at official HTTPS hosts. Historical
+Stage C notes below describe the earlier fixture milestone.
+
+---
+
+The previous stop-picker instructions below describe the fixture-era page-based
+UI and are retained as historical notes. Current stop-list behavior and live
+package testing are in the linked Phase 1 quick start.
+
 ## Stage C callback correction (0.2.5)
 
 The 0.2.4 P4 retest passed launch with 178 KiB peak Lua payload, but catalog

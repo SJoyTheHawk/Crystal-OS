@@ -407,6 +407,7 @@ void ScriptApp::install_api()
         {"set_hidden", ui_set_hidden}, {"set_enabled", ui_set_enabled}, {"set_style", ui_set_style},
         {"scroll_to", ui_scroll_to}, {"set_parent", ui_set_parent}, {"get_size", ui_get_size},
         {"on", ui_on}, {"off", ui_off}, {"list_add", ui_list_add}, {"list_insert", ui_list_insert},
+        {"list_set_text", ui_list_set_text},
         {"list_remove", ui_list_remove}, {"list_clear", ui_list_clear}, {"list_count", ui_list_count},
         {"chart_add_series", ui_chart_add_series}, {"chart_set_data", ui_chart_set_data},
         {"chart_set_range", ui_chart_set_range}, {"chart_clear", ui_chart_clear},
@@ -936,12 +937,15 @@ int ScriptApp::ui_create(lua_State *state)
     const auto handle = app->ui_.create(type, parent, options); cJSON_Delete(options);
     if (!handle) { lua_pushnil(state); return 1; }
     if (lua_istable(state, options_index)) {
-        const std::pair<const char *, const char *> callbacks[] = {{"on_click", "click"}, {"on_change", "change"}, {"on_focus", "focus"}, {"on_blur", "blur"}};
+        const std::pair<const char *, const char *> callbacks[] = {{"on_click", "click"}, {"on_change", "change"}, {"on_focus", "focus"}, {"on_blur", "blur"}, {"on_select", "select"}};
         for (const auto &entry : callbacks) {
             lua_getfield(state, options_index, entry.first);
             if (lua_isfunction(state, -1)) {
                 auto *callback = app->make_callback(-1);
-                if (callback && app->ui_.on(handle, entry.second, ui_event, callback)) app->event_callbacks_[{handle, entry.second}] = callback;
+                const bool ok = callback && (!strcmp(entry.second, "select")
+                    ? (!strcmp(type, "list") && app->ui_.list_on_click(handle, ui_event, callback))
+                    : app->ui_.on(handle, entry.second, ui_event, callback));
+                if (ok) app->event_callbacks_[{handle, entry.second}] = callback;
             }
             lua_pop(state, 1);
         }
@@ -1069,6 +1073,14 @@ int ScriptApp::ui_list_insert(lua_State *state)
     if (primary.empty()) { lua_pushboolean(state, false); return 1; }
     item.primary = primary.c_str(); item.secondary = secondary.empty() ? nullptr : secondary.c_str(); item.icon = icon.empty() ? nullptr : icon.c_str();
     const bool ok = index == UINT32_MAX ? app->ui_.list_add(handle, item) : app->ui_.list_insert(handle, index, item);
+    lua_pushboolean(state, ok); return 1;
+}
+int ScriptApp::ui_list_set_text(lua_State *state)
+{
+    auto *app = self(state); uint32_t handle = 0, index = 0; size_t length = 0;
+    const char *text = lua_tolstring(state, 3, &length);
+    const bool ok = app && lua_uint(state, 1, 1, UINT32_MAX, &handle) &&
+        lua_uint(state, 2, 0, 255, &index) && text && length <= 96 && app->ui_.list_set_text(handle, index, text);
     lua_pushboolean(state, ok); return 1;
 }
 int ScriptApp::ui_list_remove(lua_State *state)
@@ -1232,6 +1244,23 @@ void ScriptApp::json_to_lua(const cJSON *value, unsigned depth)
     } else lua_pushnil(lua_);
 }
 
+int ScriptApp::protected_json_value(lua_State *state)
+{
+    auto *app = static_cast<ScriptApp *>(lua_touserdata(state, 1));
+    app->json_to_lua(static_cast<const cJSON *>(lua_touserdata(state, 2)));
+    return 1;
+}
+
+int ScriptApp::push_json_value(const cJSON *value)
+{
+    // Callers reserve stack space before acquiring native JSON allocations.
+    // Lua allocation errors must unwind to here so the caller can free cJSON.
+    lua_pushcfunction(lua_, protected_json_value);
+    lua_pushlightuserdata(lua_, this);
+    lua_pushlightuserdata(lua_, const_cast<cJSON *>(value));
+    return lua_pcall(lua_, 2, 1, 0);
+}
+
 bool ScriptApp::valid_data_path(const char *path, std::string *relative) const
 {
     std::string value;
@@ -1295,11 +1324,17 @@ int ScriptApp::state_get(lua_State *state)
 {
     auto *app = self(state); size_t length = 0; const char *key = lua_tolstring(state, 1, &length);
     if (!app || !key || !length || length > 63 || memchr(key, '\0', length)) { lua_pushnil(state); return 1; }
-    std::string text; cJSON *root = nullptr;
-    if (app->read_data("state.json", &text, kMaxStateBytes)) root = cJSON_ParseWithLength(text.c_str(), text.size());
-    const cJSON *value = root ? json_field(root, std::string(key, length).c_str()) : nullptr;
-    if (value) app->json_to_lua(value); else lua_pushnil(state);
-    cJSON_Delete(root); return 1;
+    luaL_checkstack(state, 4, "JSON conversion");
+    int result = LUA_OK;
+    {
+        std::string text; cJSON *root = nullptr;
+        if (app->read_data("state.json", &text, kMaxStateBytes)) root = cJSON_ParseWithLength(text.c_str(), text.size());
+        const cJSON *value = root ? json_field(root, std::string(key, length).c_str()) : nullptr;
+        if (value) result = app->push_json_value(value); else lua_pushnil(state);
+        cJSON_Delete(root);
+    }
+    if (result != LUA_OK) return lua_error(state);
+    return 1;
 }
 int ScriptApp::state_set(lua_State *state)
 {
@@ -1339,9 +1374,16 @@ int ScriptApp::json_decode(lua_State *state)
     size_t length = 0; const char *text = lua_tolstring(state, 1, &length);
     if (!text || length > kMaxFileBytes || memchr(text, '\0', length)) { lua_pushnil(state); return 1; }
     auto *app = self(state);
+    luaL_checkstack(state, 4, "JSON conversion");
     const size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    cJSON *value = cJSON_ParseWithLength(text, length);
+    const char *parse_end = nullptr;
+    cJSON *value = cJSON_ParseWithLengthOpts(text, length, &parse_end, false);
+    if (value) {
+        while (parse_end < text + length &&
+               (*parse_end == ' ' || *parse_end == '\t' || *parse_end == '\r' || *parse_end == '\n')) ++parse_end;
+        if (parse_end != text + length) { cJSON_Delete(value); value = nullptr; }
+    }
     const size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const size_t psram_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (app) {
@@ -1354,7 +1396,11 @@ int ScriptApp::json_decode(lua_State *state)
         if (psram_cost > app->json_peak_psram_bytes_) app->json_peak_psram_bytes_ = psram_cost;
     }
     if (!value) { lua_pushnil(state); return 1; }
-    if (app) app->json_to_lua(value); else lua_pushnil(state); cJSON_Delete(value); return 1;
+    int result = LUA_OK;
+    if (app) result = app->push_json_value(value); else lua_pushnil(state);
+    cJSON_Delete(value);
+    if (result != LUA_OK) return lua_error(state);
+    return 1;
 }
 
 int ScriptApp::fs_read(lua_State *state)

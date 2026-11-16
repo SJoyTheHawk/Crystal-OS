@@ -62,6 +62,8 @@ public:
     static ScriptApp *self(lua_State *state);
     cJSON *lua_to_json(int index, unsigned depth = 0, unsigned *node_count = nullptr);
     void json_to_lua(const cJSON *value, unsigned depth = 0);
+    static int protected_json_value(lua_State*);
+    int push_json_value(const cJSON*);
     bool read_data(const std::string &, std::string *, size_t) const;
     bool data_size(size_t *) const;
     bool write_data(const std::string &, const std::string &);
@@ -148,7 +150,7 @@ int main(int argc, char **argv) {
 
 def main():
     names = ['bool tree_bytes(', 'bool make_parent_dirs(', 'bool write_all(', 'const cJSON *json_field(', 'bool lua_uint(',
-             'ScriptApp *ScriptApp::self(', 'cJSON *ScriptApp::lua_to_json(', 'void ScriptApp::json_to_lua(',
+             'ScriptApp *ScriptApp::self(', 'cJSON *ScriptApp::lua_to_json(', 'void ScriptApp::json_to_lua(', 'int ScriptApp::protected_json_value(', 'int ScriptApp::push_json_value(',
              'bool ScriptApp::read_data(', 'bool ScriptApp::data_size(', 'bool ScriptApp::write_data(',
              'int ScriptApp::state_get(', 'int ScriptApp::state_set(']
     names += ['int ScriptApp::service_timer_' + name + '(' for name in ('arm', 'start', 'pause', 'resume', 'reset', 'status')]

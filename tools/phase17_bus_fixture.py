@@ -2,9 +2,10 @@
 """Create and serve the bounded Bus Lite Phase 17 acceptance fixture."""
 import argparse
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "examples" / "bus3p"
@@ -58,6 +59,47 @@ def response(path, query):
     return None
 
 
+def provider_response(path):
+    """Provider-shaped synthetic data for explicitly generated fixture packages."""
+    fields = [unquote(field) for field in path.strip("/").split("/")]
+    if len(fields) < 3 or fields[0] not in ("kmb", "ctb"):
+        return None
+    operator = "CTB" if fields[0] == "ctb" else "KMB"
+    operation = fields[1]
+    if operation == "route-stop" and len(fields) == 5:
+        if operator == "CTB":
+            if fields[2] != "CTB":
+                return None
+            route, direction = fields[3:5]
+        else:
+            route, direction = fields[2:4]
+        if direction not in ("outbound", "inbound"):
+            return None
+        data = response("/api/stops", {"route": [route], "operator": [operator]})["stops"]
+        return {"type": "RouteStop", "data": [
+            {"stop": item["id"], "seq": str(item["seq"])} for item in data]}
+    if operation == "stop" and len(fields) == 3:
+        stop_id = fields[2]
+        for route in ROUTES:
+            if route["operator"] != operator:
+                continue
+            stops = response("/api/stops", {"route": [route["route"]], "operator": [operator]})["stops"]
+            stop = next((row for row in stops if row["id"] == stop_id), None)
+            if stop:
+                return {"type": "Stop", "data": dict(stop, stop=stop_id, lat="22.30", long="114.17")}
+        return {"type": "Stop", "data": {}}
+    if operation == "eta" and len(fields) == 5:
+        if operator == "CTB" and fields[2] != "CTB":
+            return None
+        stop, route = fields[3:5] if operator == "CTB" else fields[2:4]
+        data = response("/api/eta", {"route": [route], "operator": [operator], "stop": [stop]})["etas"]
+        now = datetime.now(timezone(timedelta(hours=8)))
+        return {"type": "ETA", "data": [
+            {"eta": (now + timedelta(minutes=row["minutes"])).isoformat(timespec="seconds"),
+             "co": operator, "rmk_en": "Fixture only - not live"} for row in data]}
+    return None
+
+
 def create(host: str) -> None:
     if not host or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in host):
         raise SystemExit("host must be a lowercase DNS name or IPv4 address")
@@ -70,6 +112,19 @@ def create(host: str) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source.read_text(encoding="utf-8").replace(HOST_TOKEN, host), encoding="utf-8")
+    manifest_path=destination / "app.yaml"
+    manifest=json.loads(manifest_path.read_text())
+    manifest["permissions"]["network_hosts"]=[host]
+    manifest["name"]="Bus Lite (fixture)"
+    manifest_path.write_text(json.dumps(manifest,indent=2)+"\n")
+    entry=destination / "main.lua"
+    source=entry.read_text()
+    # Explicit fixture builds reuse production parsers and scheduling. Only the
+    # two base URLs and the label change; live packages use official HTTPS.
+    source=source.replace("https://data.etabus.gov.hk/v1/transport/kmb", f"http://{host}:8000/kmb")
+    source=source.replace("https://rt.data.gov.hk/v2/transport/citybus", f"http://{host}:8000/ctb")
+    source=source.replace('ui.set_text(label,message)', 'ui.set_text(label,message.." | fixture data")')
+    entry.write_text(source)
     print(destination)
 
 
@@ -78,10 +133,12 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         print(f"request {parsed.path} {parsed.query}".rstrip(), flush=True)
-        if parsed.path not in ("/api/routes", "/api/stops", "/api/eta"):
+        payload=provider_response(parsed.path)
+        if payload is None and parsed.path not in ("/api/routes", "/api/stops", "/api/eta"):
             self.send_error(404)
             return
-        payload = response(parsed.path, query)
+        if payload is None:
+            payload = response(parsed.path, query)
         body = json.dumps(payload, separators=(",", ":")).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

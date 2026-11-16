@@ -2,6 +2,51 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
+## Verified Phase 1 contract (0.2.8, 2026-11-16)
+
+Phase 1 is implemented in `examples/bus3p/main.lua`; use that tested source for
+working API calls. The remaining Phase 2–4 snippets below are design sketches,
+not a replacement entry file. Some use conceptual UI helpers that the current
+ABI does not expose (`container`, `align`, `remove_children`, `timer_stop`).
+Reuse the existing controls and one 100 ms timer through the real API instead.
+
+- Keep local `Catalog`, `Providers`, `Arrivals` and `Controller` tables in the
+  entry file. Runtime `require`/`os`/`io` are unavailable; entry source is capped
+  at 64 KiB.
+- Map `O`/`I` to `outbound`/`inbound` and percent-encode each path component.
+  Preserve provider-qualified string stop IDs and service type.
+- The production adapters use `stop_record`, `eta_record`,
+  `parse_stop_details(operator, id, decoded)` and `array_job`/`array_step`.
+  Decode one provider record per tick, not the whole response array. Scan at
+  most 2,048 characters per tick; validate the envelope after the array.
+- Resolve metadata from bounded bundled pages, update names progressively,
+  then request missing stop details sequentially. Keep every sequence position,
+  including repeated IDs, and display an identifiable retry row on failure.
+- `service.time.now()` is epoch **seconds**. Timestamp parsing validates real
+  calendar dates, leap years and explicit `Z`/signed offsets (fractional seconds
+  are accepted). The implemented safe integer range is years 1970–2037.
+- Keep valid timestamp rows when optional sequence/direction fields disagree,
+  matching the Flutter reference. Sort by timestamp then source order, keep
+  three; use rounded minutes and the 30-second Arriving threshold.
+- Invalidate generations before cancelling HTTP. Native cancellation retires
+  asynchronously, so one current job waits/retries on a later tick if the worker
+  slot is still occupied. Clear pending jobs on navigation, pause and destroy.
+- Create UI callbacks once. Stop lists use one shared `on_select(index)`
+  callback. Add one native row per timer tick and update metadata in place with
+  `crystal.ui.list_set_text(list, zero_based_index, text)` so resolving names
+  does not rebuild the list or reset its scroll position. Selectable lists
+  support up to 256 entries; conventional lists remain capped at 64.
+- The real-catalog harness registers 62 callbacks;
+  repeated refresh/paging must not grow that count. First launch initializes in
+  `onCreate`; pause cancels work, resume refreshes the visible selection.
+- JSON conversion is protected so native cJSON trees are released before Lua
+  allocation errors propagate. `test_phase17_bus_render.py` exercises the actual
+  production binding, including repeated forced OOM.
+
+See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2 joint
+matching, Phase 3 persistence hardening and Phase 4 periodic refresh remain open.
+
+
 ## 1. Provider Module Implementation
 
 ### 1.1 URL Builders
@@ -13,42 +58,24 @@ local Providers = {}
 local KMB_BASE = "https://data.etabus.gov.hk/v1/transport/kmb"
 local CTB_BASE = "https://rt.data.gov.hk/v2/transport/citybus"
 
+local function escape(value)
+  return (tostring(value or ""):gsub("[^%w%-_.~]", function(c)
+    return string.format("%%%02X",string.byte(c))
+  end))
+end
 function Providers.route_stops_url(part)
-  local op = tostring(part.operator or "KMB")
-  local route = tostring(part.route or "")
-  local bound = tostring(part.bound or "O")
-  local service = tostring(part.service_type or "1")
-  
-  if op == "CTB" then
-    -- CTB endpoint: /route-stop/CTB/{route}/{bound}
-    return CTB_BASE .. "/route-stop/CTB/" .. route .. "/" .. bound
-  else
-    -- KMB/LWB endpoint: /route-stop/{route}/{bound}/{service}
-    return KMB_BASE .. "/route-stop/" .. route .. "/" .. bound .. "/" .. service
+  local direction=part.bound=="I" and "inbound" or "outbound"
+  if part.operator=="CTB" then
+    return CTB_BASE.."/route-stop/CTB/"..escape(part.route).."/"..direction
   end
+  return KMB_BASE.."/route-stop/"..escape(part.route).."/"..direction.."/"..escape(part.service_type or "1")
 end
-
-function Providers.stop_details_url(operator, stop_id)
-  if operator == "CTB" then
-    return CTB_BASE .. "/stop/" .. tostring(stop_id)
-  else
-    return KMB_BASE .. "/stop/" .. tostring(stop_id)
-  end
+function Providers.stop_details_url(operator,id)
+  return (operator=="CTB" and CTB_BASE or KMB_BASE).."/stop/"..escape(id)
 end
-
-function Providers.eta_url(part, stop)
-  local op = tostring(part.operator or "KMB")
-  local route = tostring(part.route or "")
-  local service = tostring(part.service_type or "1")
-  local stop_id = tostring(stop.id or "")
-  
-  if op == "CTB" then
-    -- CTB ETA: /eta/CTB/{stop}/{route}
-    return CTB_BASE .. "/eta/CTB/" .. stop_id .. "/" .. route
-  else
-    -- KMB ETA: /eta/{stop}/{route}/{service}
-    return KMB_BASE .. "/eta/" .. stop_id .. "/" .. route .. "/" .. service
-  end
+function Providers.eta_url(part,stop)
+  if part.operator=="CTB" then return CTB_BASE.."/eta/CTB/"..escape(stop.id).."/"..escape(part.route) end
+  return KMB_BASE.."/eta/"..escape(stop.id).."/"..escape(part.route).."/"..escape(part.service_type or "1")
 end
 ```
 
@@ -138,6 +165,8 @@ function Providers.parse_stop_details(operator, decoded)
 end
 ```
 
+
+
 ---
 
 ## 2. Arrivals Module Implementation
@@ -149,65 +178,26 @@ local Arrivals = {}
 
 -- Manual ISO8601 parser for "2026-11-16T14:30:00+08:00"
 -- Returns Unix epoch seconds or nil on parse failure
-function Arrivals.parse_timestamp(iso8601)
-  if type(iso8601) ~= "string" then
-    return nil
+function Arrivals.parse_timestamp(value)
+  if type(value)~="string" then return nil end
+  local y,m,d,h,mi,s,zone=value:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)(.*)$")
+  y,m,d,h,mi,s=tonumber(y),tonumber(m),tonumber(d),tonumber(h),tonumber(mi),tonumber(s)
+  if not y or y<1970 or y>2037 or m<1 or m>12 or h>23 or mi>59 or s>59 then return nil end
+  zone=zone:gsub("^%.%d+","")
+  local offset=0
+  if zone~="Z" then
+    local sign,zh,zm=zone:match("^([+-])(%d%d):(%d%d)$")
+    zh,zm=tonumber(zh),tonumber(zm)
+    if not sign or zh>23 or zm>59 then return nil end
+    offset=(zh*3600+zm*60)*(sign=="-" and -1 or 1)
   end
-  
-  -- Match ISO8601 with timezone: YYYY-MM-DDTHH:MM:SS+HH:MM
-  local year, month, day, hour, min, sec, tz_sign, tz_hour, tz_min = 
-    iso8601:match("^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)([+-])(%d%d):(%d%d)$")
-  
-  if not year then
-    return nil
-  end
-  
-  -- Convert to numbers
-  year = tonumber(year)
-  month = tonumber(month)
-  day = tonumber(day)
-  hour = tonumber(hour)
-  min = tonumber(min)
-  sec = tonumber(sec)
-  tz_hour = tonumber(tz_hour)
-  tz_min = tonumber(tz_min)
-  
-  -- Days per month (non-leap year; good enough for ETA display)
-  local days_in_month = {31,28,31,30,31,30,31,31,30,31,30,31}
-  
-  -- Leap year check
-  if (year % 4 == 0 and year % 100 ~= 0) or (year % 400 == 0) then
-    days_in_month[2] = 29
-  end
-  
-  -- Calculate days since epoch (1970-01-01)
-  local days = 0
-  for y = 1970, year - 1 do
-    if (y % 4 == 0 and y % 100 ~= 0) or (y % 400 == 0) then
-      days = days + 366
-    else
-      days = days + 365
-    end
-  end
-  
-  for m = 1, month - 1 do
-    days = days + days_in_month[m]
-  end
-  
-  days = days + day - 1
-  
-  -- Convert to seconds
-  local epoch_sec = days * 86400 + hour * 3600 + min * 60 + sec
-  
-  -- Apply timezone offset
-  local tz_offset_sec = tz_hour * 3600 + tz_min * 60
-  if tz_sign == "-" then
-    tz_offset_sec = -tz_offset_sec
-  end
-  
-  epoch_sec = epoch_sec - tz_offset_sec
-  
-  return epoch_sec
+  local function leaps(year) return year//4-year//100+year//400 end
+  local months={31,28,31,30,31,30,31,31,30,31,30,31}
+  if y%4==0 and (y%100~=0 or y%400==0) then months[2]=29 end
+  if d<1 or d>months[m] then return nil end
+  local days=(y-1970)*365+leaps(y-1)-leaps(1969)+d-1
+  for i=1,m-1 do days=days+months[i] end
+  return days*86400+h*3600+mi*60+s-offset
 end
 ```
 
@@ -271,46 +261,21 @@ end
 ```lua
 -- Select and sort arrivals: timestamp first, source order breaks ties
 -- Returns up to 3 arrivals
-function Arrivals.select(entries, now_sec)
-  if type(entries) ~= "table" then
-    return {}
-  end
-  
-  -- Filter out past arrivals
-  local valid = {}
-  for _, entry in ipairs(entries) do
-    if entry.epoch_sec and entry.epoch_sec >= now_sec then
-      valid[#valid + 1] = entry
-    end
-  end
-  
-  -- Sort by timestamp, then source order
-  table.sort(valid, function(a, b)
-    if a.epoch_sec ~= b.epoch_sec then
-      return a.epoch_sec < b.epoch_sec
-    end
-    return (a.source_order or 0) < (b.source_order or 0)
+function Arrivals.select(entries)
+  -- Preserve all valid provider timestamps, including optional metadata
+  -- disagreements. Accuracy filtering is a separate refinement milestone.
+  table.sort(entries,function(a,b)
+    if a.epoch_sec~=b.epoch_sec then return a.epoch_sec<b.epoch_sec end
+    return a.source_order<b.source_order
   end)
-  
-  -- Return first 3
-  local result = {}
-  for i = 1, math.min(3, #valid) do
-    result[i] = valid[i]
-  end
-  
+  local result={}
+  for i=1,math.min(3,#entries) do result[i]=entries[i] end
   return result
 end
-
--- Format epoch seconds as "X min" or "Arriving"
-function Arrivals.format_minutes(epoch_sec, now_sec)
-  local diff = epoch_sec - now_sec
-  local minutes = math.floor(diff / 60)
-  
-  if minutes < 1 then
-    return "Arriving"
-  else
-    return tostring(minutes) .. " min"
-  end
+function Arrivals.format_minutes(epoch,now)
+  if not now or now<=0 then return "Time unavailable" end
+  local seconds=epoch-now
+  return seconds<30 and "Arriving" or tostring((seconds+30)//60).." min"
 end
 ```
 
@@ -994,26 +959,25 @@ end
 
 ## 8. Migration Checklist
 
-- [ ] Replace `BASE` fixture URL with Provider module functions
-- [ ] Implement `Providers.route_stops_url()` for KMB and CTB
-- [ ] Implement `Providers.parse_route_stops()`
-- [ ] Test single-operator stop fetching (route 1A, route 2)
-- [ ] Implement `Providers.eta_url()` and `parse_eta()`
-- [ ] Implement `Arrivals.parse_timestamp()` with ISO8601 support
-- [ ] Test single-operator ETA display
+- [x] Replace the fixture base URL with live provider adapters
+- [x] Implement KMB and CTB route-stop and ETA URLs
+- [x] Parse stop/ETA records incrementally through `array_step`
+- [x] Host integration checks for route 1A/2 and recorded official responses
+- [x] Implement exact timezone-aware `Arrivals.parse_timestamp()`
+- [ ] Validate live stop fetching and ETA on P4 (both providers/directions)
 - [ ] Implement `Arrivals.match_joint_stop()` with haversine
 - [ ] Implement `Controller.fetch_joint_eta()` with sequential flow
 - [ ] Test joint-route ETA (route 101, 101R)
 - [ ] Implement `Store.add_favorite()` and `load_favorites()`
-- [ ] Build Favorites tab UI with cards
+- [x] Retain existing Favorites/save/remove UI and recent routes
 - [ ] Test save/exit/relaunch persistence
 - [ ] Implement ETA refresh timer (20s interval)
 - [ ] Implement live minute countdown
-- [ ] Test pause/resume cancellation
-- [ ] Add resource checkpoints throughout
+- [x] Host checks for pause/resume, navigation and late callbacks
+- [x] Resource checkpoints at launch/search/stops/ETA/teardown
 - [ ] Run 10-cycle stability test on P4
-- [ ] Document peak Lua usage and validate <400 KB
-- [ ] Remove all fixture server dependencies
+- [ ] Capture Phase 1 P4 peak/fragmentation and validate 25% arena headroom
+- [x] Remove fixture dependency from the live package; retain explicit test fixtures
 - [ ] Update app.yaml version to 0.3.0
 
 ---
@@ -1022,4 +986,4 @@ end
 
 These patterns replicate the S3 C++ implementation and Flutter Dart logic in P4 Lua. Follow them faithfully — they're proven to work in production mobile apps and native MCU apps. The adaptation is straightforward: Lua has the necessary primitives (HTTP, JSON, state, timers), and the memory constraints are manageable with bounded processing.
 
-**Next step**: Start with Phase 1 (Provider Integration) — replace the fixture server calls with these Provider module functions.
+**Next step**: Complete the continuous stop-list and live-provider P4 checks before starting Phase 2 joint-provider integration.

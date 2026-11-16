@@ -2,7 +2,7 @@
   "abi": 1,
   "id": "com.example.bus3p",
   "name": "Bus Lite",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "min_os": "0.17.0",
   "author": "Crystal OS test",
   "license": "MIT",
@@ -14,6 +14,9 @@
   "worker_threads": 1,
   "permissions": {
     "notify": true,
-    "network_hosts": ["phase17.bus.fixture"]
+    "network_hosts": [
+      "data.etabus.gov.hk",
+      "rt.data.gov.hk"
+    ]
   }
 }
