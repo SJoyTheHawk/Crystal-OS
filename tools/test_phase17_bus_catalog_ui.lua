@@ -2,6 +2,7 @@
 local timer, pending, sequence = nil, nil, 0
 local saved={}
 local reads,decodes=0,0
+local preload=true
 local native_set_enabled=ui.set_enabled
 local enabled_states={}
 local check_keypad=true
@@ -27,13 +28,12 @@ local function ticks(n)
   for i=1,n or 400 do
     reads,decodes,destinations=0,0,0
     run_callback(timer)
-    assert(reads<=1 and decodes<=24,'route preload exceeded its bounded per-tick work')
-    assert(reads==0 or decodes==0,'catalog tick combined file IO and JSON conversion')
-    assert(destinations<=1,'search tick rendered more than one route row')
+    if preload then assert(decodes==0,'preload expanded route records instead of keeping compact pages') end
   end
 end
 local function complete(body)
-  local request=assert(pending);pending=nil;request.callback(request.id,200,body)
+  local request=assert(pending);pending=nil
+  run_callback(function() request.callback(request.id,200,body) end)
 end
 local function checkpoint(name)
   local m=memory_stats();print('CATALOG_MEMORY',name,m.used,m.peak,m.occupied,m.largest,m.capacity)
@@ -42,12 +42,14 @@ local app=assert(loadfile(package_path))()
 assert(app.onCreate());assert(timer);assert(decodes==0,'launch must not decode catalogs');checkpoint('launch')
 click('Search');click('1');assert(not has_text('Catalog routes |'),'keypad must stay locked during preload')
 assert(not is_enabled('1'),'route key must be disabled before preload finishes')
-ticks(4);assert(app.onPause())
-ticks(30);assert(not is_enabled('1'),'paused preload must not enable the keypad')
+assert(app.onPause())
+ticks(1);assert(not is_enabled('1'),'paused preload must not enable the keypad')
 assert(app.onResume())
--- Nine route files plus one keypad file: announce/read on separate ticks,
--- followed by publish/UI/checkpoint. Startup must not scan 2,115 records.
-ticks(24);assert(is_enabled('1') and has_text('0') and not is_enabled('0'),'unavailable numeric keys remain visible and disabled')
+-- Load all nine compact route files and the keypad index in the next callback,
+-- without expanding all 2,115 route records into tables.
+ticks(1);assert(reads==10,'preload still waits for a separate tick per file')
+preload=false
+assert(is_enabled('1') and has_text('0') and not is_enabled('0'),'unavailable numeric keys remain visible and disabled')
 assert(not has_text('M') and not has_text('Z'),'letters without a matching route prefix must be hidden')
 assert(memory_stats().peak<768*1024,'preload must retain compact pages, not expand the full catalog')
 local startup_reads=0
@@ -61,17 +63,18 @@ assert(has_text('M') and not has_text('Z'),'valid letters must appear for the pr
 click('A');assert(not has_text('M'),'letters must hide when the new prefix makes them impossible')
 click(utf8.char(0xF00D));assert(not has_text('M'))
 click('1');assert(has_text('M'),'valid letters must appear again when the prefix changes back')
--- Two debounce ticks then one scan tick must count all 2,115 records.
-ticks(3)
-assert(has_text('Page 1 / '..math.ceil(decode_json(expected_counts)['1']/8)) == false,
-  'publication remains separate from scanning')
--- The next tick starts publishing the completed page, without scan batches.
-ticks(1);assert(has_text('1   CTB'),'full catalog scan did not finish in one callback')
-ticks(10);checkpoint('prefix_1')
-assert(has_text('Choose a route and direction'))
+-- The normal 200 ms debounce remains; scanning and all row publication then
+-- finish in the same callback, with no result-row pacing.
+ticks(1);assert(not has_text('1   CTB'),'debounce fired early')
+ticks(1);assert(has_text('1   CTB'),'route search/publication still yields between ticks')
+assert(not has_text('Choose a route and direction'))
+assert(destinations==8,'result publication did not update all eight rows together')
+checkpoint('prefix_1')
 assert(not pending,'catalog search must be offline')
 -- Every page remains reachable; counts come from an independent Python scan.
 local counts=decode_json(expected_counts)
+assert(text_count('Catalog routes | '..counts['1']..' matches')==1)
+assert(text_font_size('Catalog routes | '..counts['1']..' matches')==20)
 local pages=math.ceil(counts['1']/8)
 assert(has_text('Page 1 / '..pages))
 for page=2,pages do click('Next');ticks();assert(has_text('Page '..page..' / '..pages)) end
@@ -83,12 +86,9 @@ for cycle=1,3 do
   end
 end
 checkpoint('repeated_prefixes')
--- Edit while rows are being published: an old row must not open a route.
+-- Replace a pending query before publication; stale rows must not remain.
 click(utf8.char(0xF00D));click('1')
-for i=1,100 do
-  ticks(1)
-  if has_text('1   KMB') then break end
-end
+ticks(1)
 click(utf8.char(0xF00D));click('2');ticks()
 assert(has_text('Catalog routes | '..counts['2']..' matches'))
 assert(not has_text('1   KMB') and not pending)
@@ -97,19 +97,47 @@ click(utf8.char(0xF00D));click('1');click('A');ticks();assert(has_text('1A   KMB
 check_keypad=false
 click('1A   KMB');assert(pending.url:find('/route-stop/1A/inbound/1',1,true))
 complete('{"data":[{"stop":"00040ED8B61CA94B","seq":1},{"stop":"00040ED8B61CA94B","seq":2}]}')
-ticks();checkpoint('metadata')
 assert(has_text('1. PUBLIC SQUARE STREET YAU MA TEI (YT545)'))
 assert(has_text('2. PUBLIC SQUARE STREET YAU MA TEI (YT545)'))
+assert(not has_text('Loading...') and not pending,'bundled names must resolve in the response callback')
+checkpoint('metadata')
+-- Look up stops across the first and last catalog files in the same callback.
+click(utf8.char(0xF021))
+complete('{"data":[{"stop":"00040ED8B61CA94B","seq":1},{"stop":"FFFB0F940CA7BEA7","seq":2}]}')
+assert(not has_text('Loading...') and not pending,'stop lookup still waits between catalog pages')
+assert(has_text('Tap a stop for arrivals'))
+-- More than 64 missing names spread over 40 packaged files must all resolve
+-- before this single response callback returns.
+click(utf8.char(0xF021))
+local metadata_rows,expected_names={},{}
+for page=0,39 do
+  local page_text=assert(read_asset(string.format('assets/catalog/stops-kmb-%03d.jsonl',page)))
+  local taken=0
+  for line in page_text:gmatch('[^\r\n]+') do
+    local stop=assert(decode_json(line))
+    local seq=#metadata_rows+1
+    metadata_rows[seq]='{"stop":"'..stop.id..'","seq":'..seq..'}'
+    expected_names[seq]=seq..'. '..(stop.name_en or stop.name_tc)
+    taken=taken+1;if taken==2 then break end
+  end
+end
+reads,decodes=0,0
+complete('{"data":['..table.concat(metadata_rows,',')..']}')
+assert(reads==40 and decodes>=80,'metadata resolution still yields between records or source files')
+for _,name in ipairs(expected_names) do assert(has_text(name),'unresolved bundled stop: '..name) end
+assert(not pending and not has_text('Loading...'))
+checkpoint('eighty_stop_metadata')
 -- Long sequences retain every occurrence in one continuous scrolling list.
 click(utf8.char(0xF021))
 local rows={}
-for i=1,35 do rows[i]='{"stop":"same-stop-'..i..'","seq":'..i..',"name_en":"Test stop '..i..'"}' end
-complete('{"data":['..table.concat(rows,',')..']}');ticks()
-assert(has_text('1. Test stop 1') and has_text('9. Test stop 9') and has_text('35. Test stop 35'))
+for i=1,80 do rows[i]='{"stop":"same-stop-'..i..'","seq":'..i..',"name_en":"Test stop '..i..'"}' end
+complete('{"data":['..table.concat(rows,',')..']}')
+assert(has_text('1. Test stop 1') and has_text('65. Test stop 65') and has_text('80. Test stop 80'),
+  'full response/list must complete immediately, including more than 64 stops')
 assert(not has_text('Next') and not has_text('Page 1 /'))
-assert(list_scroll_y('35. Test stop 35')>0,'last stop must be reachable by scrolling')
-click('35. Test stop 35')
-assert(pending.url:find('/eta/same-stop-35/1A/1',1,true));complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}');ticks()
+assert(list_scroll_y('80. Test stop 80')>0,'last stop must be reachable by scrolling')
+click('80. Test stop 80')
+assert(pending.url:find('/eta/same-stop-80/1A/1',1,true));complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}');ticks()
 assert(has_text('3 min'));click('Save stop');assert(#saved.favorites==1)
 click(utf8.char(0xF021));local late=pending
 assert(app.onPause());assert(not pending);late.callback(late.id,200,'{"data":[{"eta":"2026-11-16T16:09:00+08:00"}]}')

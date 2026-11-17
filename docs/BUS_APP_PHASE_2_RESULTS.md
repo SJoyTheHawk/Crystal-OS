@@ -1,5 +1,75 @@
 # Bus App Phase 2 Results
 
+## Consistent bottom notifications (0.2.17)
+
+Removed the upper route-result and stop-list hint controls, including the
+duplicate Choose a route and direction, Loading bus stops... and Tap a stop
+for arrivals messages. The existing bottom status field retains loading,
+guidance, results and error feedback. Every page now uses the same 20 px status
+font, one step larger than the prior 16 px font.
+
+Host package checks and production Lua/LVGL regressions pass at 480 and 720 px.
+Assertions verify a single bottom stop instruction, removal of the upper hints,
+and the actual 20 px font on Search, Favorites, stops and arrivals. Rendered
+720 px Search and stops previews were visually reviewed.
+
+Signed package: /tmp/phase17-bus-live.capp, 2,029,521 bytes, Ed25519 verified
+with key ID 240. SHA-256:
+e4d1431830c84ae9feacb4b4695875e9c96275a203d1d241d8a3e02c6581c51f
+
+Package-only update for the current runtime; no firmware flash performed.
+Board visual confirmation remains pending.
+
+## Complete local processing without timer pacing (0.2.16)
+
+Removed per-file startup waits, per-row route publication, per-record HTTP
+framing/decoding delays, per-stop native-list insertion waits, and per-page/record
+bundled metadata waits for primary and joint providers. Controller.run_ready
+finishes ready local jobs together, stopping for asynchronous HTTP or an empty
+queue. HTTP completion resumes this processing immediately. Stop metadata is
+still read on demand; this change does not preload the entire stop catalog.
+
+Individual JSON records are decoded separately to avoid a duplicate full
+response tree, but all records are processed in the same callback. The 200 ms
+typing debounce, 4 MiB arena, 5/30-second runtime deadline, native list capacity,
+one-active-request rule, HTTP timeout and generation/cancellation checks remain.
+Worker retirement retries yield to actual completion instead of busy-waiting.
+Unresolved rows retain Loading... and names replace labels in place.
+
+Host production Lua/UI checks pass at 480/720 pixels: 80 stops decoded and
+rendered on response without timer ticks; 80 missing names across 40 real
+catalog pages resolved before callback return; repeated IDs, long scrolling,
+invalid/truncated JSON, sequential joint ETA, refresh, cancellation and late
+callbacks. Catalog preload and all eight route result rows complete together.
+The extended workload peaks at 880,464 bytes of the 4 MiB host Lua arena.
+Package checks and production 5/30/5-second timeout/OOM regressions pass.
+These host results do not certify P4 execution time or UI responsiveness.
+
+Install the signed Bus Lite 0.2.16 CAPP through the Control Panel. No additional
+firmware reflash is needed on the current runtime. Board retest: catalog load,
+1/1A/68X/101 search, long stop lists, metadata failure/recovery, joint ETA and
+navigation/pause/resume. Capture BUS_SEARCH and BUS_RESOURCE checkpoints.
+
+Signed package: /tmp/phase17-bus-live.capp, 2,029,935 bytes,
+Ed25519 verified with key ID 240. SHA-256:
+b51609474318a58bb7f836cb9a9143ada447e201b31c85ac8b4a4da7cef015ed
+
+## Unresolved stop labels (0.2.15)
+
+Stop rows without a usable name now display exactly **Loading...**, without
+sequence numbers, provider IDs or retry suffixes. Resolved names replace these
+labels in place and retain their sequence prefix. Opening an unresolved stop
+also uses Loading... for the selected-stop heading.
+
+Package and production Lua/LVGL checks pass at 480 and 720 pixels, including
+missing metadata, placeholder selection, last-stop scrolling and metadata
+replacement. This package-only change needs no firmware reflash on the latest
+runtime. Board visual confirmation remains pending.
+
+Signed package: /tmp/phase17-bus-live.capp, 2,029,887 bytes,
+Ed25519 verified with key ID 240. SHA-256:
+595fbf9e9d997a99f22dc27763893262f6c630a01b814747ae1e37752fb0ee46
+
 ## Resident full-catalog search and developer timeout (0.2.14)
 
 Removed both the 64-entry scan slice and the early return after each visible

@@ -1,5 +1,14 @@
 # Bus App Transformation — Complete Documentation Index
 
+> Current implementation (0.2.16, 2026-11-17): local work finishes without
+> record/file/row timer pacing, including preload, route publication, response
+> decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
+> typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
+> 5/30-second deadline. Earlier per-tick/512 KiB/50 ms passages describe the
+> previous implementation. BUS_APP_LUA_CODE_PATTERNS.md and
+> BUS_APP_QUICK_START.md describe the current contract and board retest.
+
+
 ## Overview
 
 This directory contains the complete plan for transforming the **S3 native bus app** into a **working P4 Lua implementation** that replicates—not reinvents—the proven functionality.

@@ -2,7 +2,7 @@
   "abi": 1,
   "id": "com.example.bus3p",
   "name": "Bus Lite",
-  "version": "0.2.14",
+  "version": "0.2.17",
   "min_os": "0.17.0",
   "author": "Crystal OS test",
   "license": "MIT",

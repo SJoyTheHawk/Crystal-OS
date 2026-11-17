@@ -55,7 +55,7 @@ def main():
         assert manifest["id"] == "com.example.bus3p"
         assert manifest["runtime"] == "lua"
         assert "fixture" in manifest["name"]
-        assert manifest["version"] == "0.2.14"
+        assert manifest["version"] == "0.2.17"
         assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()

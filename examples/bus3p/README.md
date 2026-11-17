@@ -1,6 +1,20 @@
-# Bus Lite live-provider package (0.2.14)
+# Bus Lite live-provider package (0.2.17)
 
-Current Lua quota: **4 MiB (4096 KiB)**, set on 2026-11-17. Version 0.2.14 removes the 64-record search batch and one-match-per-tick scan pauses. Each search scans the full resident route catalog in one callback; only the eight visible results are expanded. Result rows still publish over separate ticks.
+Version 0.2.17 removes the duplicate guidance above route results and the
+stop list. Loading, instructions, results and errors remain in the bottom
+status field. Favorites, Search, stops and arrivals use the same 20 px status
+font, one step larger than the previous 16 px font. This is a package-only
+update for the current firmware.
+
+Unresolved stop rows show **Loading...** until their names are available.
+Resolved rows retain their sequence number and name. Version 0.2.16 removes
+per-tick pacing from catalog preload, route-row publication, response decoding,
+stop-list creation and bundled metadata resolution. Each callback finishes
+available local work until it needs a provider response. The 200 ms typing
+debounce and selected 5/30-second Lua deadline remain. Install the rebuilt CAPP;
+no additional firmware flash is required on the latest runtime.
+
+Current Lua quota: **4 MiB (4096 KiB)**, set on 2026-11-17. Each search scans the full resident route catalog in one callback; only the eight visible results are expanded. Version 0.2.16 also publishes all visible route rows together.
 
 The firmware adds **Settings → Developer Tools → Extended Lua Timeout**: off is
 5 seconds (default), on is 30 seconds per Lua callback. It is saved across
@@ -9,7 +23,7 @@ Flash the rebuilt firmware with idf.py app-flash, then install the new CAPP.
 The independent ESP-IDF task watchdog keeps its existing configuration; a long
 callback can still stall the UI and cause task-watchdog reports.
 
-At startup the app incrementally loads all 2,115 bundled route records into Lua
+On its first scheduler callback the app loads all 2,115 bundled route records into Lua
 memory as compact page strings; only visible results expand into tables.
 The search keypad stays disabled until loading completes. Numeric keys remain
 visible and disable when unavailable; alphabetic keys hide unless they continue

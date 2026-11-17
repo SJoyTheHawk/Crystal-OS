@@ -196,8 +196,8 @@ local function catalog_load_step()
     v.catalog_ready_notice=true
     return true
   end
-  -- New packages carry a host-built prefix map. Read one file per callback,
-  -- retain its string, and return without scanning or allocating route keys.
+  -- New packages carry a host-built prefix map. Retain compact strings; the
+  -- controller loads all available pages without per-file timer delays.
   if job.compact and Catalog.keypad_descriptor then
     local descriptor=Catalog.route_index_pages[job.index]
     local is_keypad=not descriptor
@@ -241,7 +241,7 @@ local function catalog_load_step()
         Catalog.load_failed=true
         Catalog.available=false
         if v.page=="search" then
-          render_route_rows({},"Catalog unavailable","Bundled route catalog is incomplete")
+          render_route_rows({},"Bundled route catalog is incomplete")
         end
       end
       return true
@@ -255,7 +255,7 @@ local function catalog_load_step()
       Catalog.load_job=nil
       Catalog.available=false
       if v.page=="search" then
-        render_route_rows({},"Catalog unavailable","Could not read bundled route data")
+        render_route_rows({},"Could not read bundled route data")
       end
       return true
     end
@@ -294,8 +294,8 @@ local function catalog_load_step()
   return false
 end
 
--- One file read OR one JSON record conversion per timer callback.
--- Even a page with hundreds of records never runs a full decode loop.
+-- Keep one source page and decode individual matching records. The controller
+-- drains these steps together, without waiting for a timer between records.
 local function catalog_line(job, pages)
   if not job.raw then
     local descriptor=pages[job.index]
@@ -356,18 +356,6 @@ local function catalog_search_step(job)
     if v.catalog_job==job then v.catalog_job=nil end
     return true
   end
-  if job.render then
-    render_route_page(job.render)
-    job.render=job.render+1
-    if job.render>9 then job.render=nil;job.finish=true end
-    return false
-  elseif job.finish then
-    ui.set_text(v.results_hint,#route_results>0 and "Choose a route and direction" or "No matching routes")
-    status(#route_results>0 and ("Catalog routes | "..route_total.." matches") or "No matching routes")
-    print("BUS_SEARCH","ready",job.prefix,job.count)
-    v.catalog_job=nil;v.search_checkpoint=true
-    return true
-  end
   -- Scan resident compact pages without allocating each skipped record.
   -- Complete the resident scan in one callback; retain only the visible page.
   while job.index<=#Catalog.routes do
@@ -400,9 +388,13 @@ local function catalog_search_step(job)
     end
   end
   route_results=job.results; route_total=job.count; route_page=job.page
-  routes={};job.render=1
+  routes={}
   print("BUS_SEARCH","render",job.prefix,job.count)
-  return false
+  render_route_page()
+  status(#route_results>0 and ("Catalog routes | "..route_total.." matches") or "No matching routes")
+  print("BUS_SEARCH","ready",job.prefix,job.count)
+  v.catalog_job=nil;v.search_checkpoint=true
+  return true
 end
 
 local function catalog_stop_step(job)
@@ -602,8 +594,8 @@ function Providers.eta_record(part,stop,item,order)
   return {operator=item.co=="LWB" and "LWB" or part.operator,stop_id=stop.id,
     epoch_sec=epoch,remark_en=tostring(item.rmk_en or ""),remark_tc=tostring(item.rmk_tc or ""),source_order=order}
 end
--- Retain the small HTTP body, frame one object and decode one record per tick.
--- This avoids building the full provider response tree in the Lua arena.
+-- Decode individual records through the complete response in one callback,
+-- avoiding a second full provider response tree in the Lua arena.
 function Providers.array_job(body,normalize,complete)
   if type(body)~="string" then return nil end
   local _,first=body:find('"data"%s*:%s*%[')
@@ -612,9 +604,7 @@ function Providers.array_job(body,normalize,complete)
 end
 function Providers.array_step(job)
   local body=job.body
-  -- Keep framing work well below the 50 ms callback watchdog on P4.  A
-  -- response record is still decoded one scheduler tick at a time.
-  for _=1,512 do
+  while job.pos<=#body do
     local c=body:sub(job.pos,job.pos)
     if c=="" then return true,"Invalid provider response" end
     if job.mode=="record" then
@@ -632,8 +622,7 @@ function Providers.array_step(job)
           job.order=job.order+1
           local row=job.normalize(item,job.order)
           if row then job.rows[#job.rows+1]=row end
-          job.mode="separator";job.pos=job.pos+1
-          return false
+          job.mode="separator"
         end
       end
     elseif c:match("%s") then -- whitespace
@@ -650,7 +639,7 @@ function Providers.array_step(job)
     else return true,"Invalid provider response" end
     job.pos=job.pos+1
   end
-  return false
+  return true,"Invalid provider response"
 end
 local function identity(route)
   if type(route.parts)=="table" then
@@ -690,6 +679,7 @@ function Controller.start_request(job)
     v.request_id=nil
     local failure=code~=200 and ("Network error "..tostring(code).." - tap Refresh to retry") or nil
     job.callback(failure and nil or body,failure)
+    Controller.run_ready()
     if job.checkpoint then resource_checkpoint(job.checkpoint) end
   end)
   if id then v.request_id=id;v.pending_request=nil;return true end
@@ -750,16 +740,15 @@ render_route_page = function(slot)
   ui.set_hidden(v.route_next, route_page>=pages)
   ui.set_text(v.route_page, #route_results>0 and ("Page "..route_page.." / "..pages) or "")
 end
-render_route_rows = function(rows, hint, message)
+render_route_rows = function(rows, message)
   route_results=rows or {}; route_total=#route_results; route_page=math.max(1,math.min(route_page,math.max(1,math.ceil(route_total/8))))
   render_route_page()
-  ui.set_text(v.results_hint,hint)
   status(message)
 end
 show_recent_routes = function()
   local rows={}
   for i=1,math.min(#recents,5) do rows[i]=recents[i] end
-  render_route_rows(rows,#rows>0 and "Recent routes" or "Search by route number",
+  render_route_rows(rows,
     #rows>0 and "Recent routes saved on this device" or "Enter a route number")
 end
 local function button(parent, title, width, height, callback)
@@ -809,11 +798,14 @@ local function remove_stop()
   local index = is_saved()
   if index then table.remove(favorites, index); save_state(); render_favorites(); update_actions(); status("Removed from Favorites") end
 end
+local function stop_row_text(stop,index)
+  local name=nonempty(stop.name_en) or nonempty(stop.name_tc)
+  return name and (tostring(stop.seq or index)..". "..name) or "Loading..."
+end
 render_stop_row = function(index)
   local stop=stop_results[index]
   if not stop then return false end
-  local name=stop.name_en or stop.name_tc or (stop.id.." - Retry name")
-  return ui.list_set_text(v.stop_list,index-1,tostring(stop.seq or index)..". "..name)
+  return ui.list_set_text(v.stop_list,index-1,stop_row_text(stop,index))
 end
 local function stop_list_step(job)
   if not job or job.generation~=(v.catalog_generation or 0) then
@@ -827,8 +819,7 @@ local function stop_list_step(job)
     begin_stop_metadata()
     return true
   end
-  local name=stop.name_en or stop.name_tc or (stop.id.." - Retry name")
-  if not ui.list_add(v.stop_list,tostring(stop.seq or index)..". "..name) then
+  if not ui.list_add(v.stop_list,stop_row_text(stop,index)) then
     v.stop_list_job=nil
     v.stop_list_error="Stop list reached its display limit at "..tostring(index-1).." of "..tostring(#stop_results)
     begin_stop_metadata()
@@ -1013,7 +1004,7 @@ local function fetch_selected_stop()
     if details then
       apply_metadata(stop,details)
       if v.selected_stop_index then render_stop_row(v.selected_stop_index) end
-      ui.set_text(v.stop_name,stop.name_en or stop.name_tc or stop.id)
+      ui.set_text(v.stop_name,stop.name_en or stop.name_tc or "Loading...")
     end
     fetch_eta()
   end)
@@ -1023,7 +1014,7 @@ local function select_stop(index)
   selected_stop=stop_results[index]
   if not selected_stop then return end
   v.selected_stop_index=index
-  ui.set_text(v.stop_name, selected_stop.name_en or selected_stop.name_tc or selected_stop.id)
+  ui.set_text(v.stop_name, selected_stop.name_en or selected_stop.name_tc or "Loading...")
   v.eta_text=nil;v.current_arrivals=nil
   for _, row in ipairs(v.arrivals) do ui.set_hidden(row.box,true) end
   ui.set_hidden(v.no_eta,true)
@@ -1085,7 +1076,6 @@ local function fetch_stops()
       v.stop_list_error=nil
       ui.list_clear(v.stop_list)
       ui.scroll_to(v.stop_list,{align="top"})
-      ui.set_text(v.stops_hint,#rows>0 and "Tap a stop for arrivals" or "No stops found for this route")
       v.stop_list_job={index=1,generation=v.catalog_generation}
     end)
   end)
@@ -1104,7 +1094,6 @@ open_route = function(route, favorite)
   ui.set_text(v.route_title, tostring(route.route).."  |  "..operator_label(route))
   ui.set_text(v.destination, "To "..tostring(route.destination or "selected destination"))
   ui.set_text(v.stop_name, "Choose a stop")
-  ui.set_text(v.stops_hint, "Loading bus stops...")
   for _, row in ipairs(v.stops) do ui.set_hidden(row, true) end
   for _, row in ipairs(v.arrivals) do ui.set_hidden(row.box,true) end
   ui.set_hidden(v.no_eta,true)
@@ -1112,8 +1101,7 @@ open_route = function(route, favorite)
   if favorite and favorite.stop_id then
     selected_stop={id=favorite.stop_id,name_en=favorite.stop_name,operator=favorite.stop_operator or request_part(favorite).operator,
       seq=favorite.stop_seq,lat=favorite.stop_lat,lon=favorite.stop_lon}
-    ui.set_text(v.stop_name, favorite.stop_name or favorite.stop_id)
-    ui.set_text(v.stops_hint, "Saved stop")
+    ui.set_text(v.stop_name, favorite.stop_name or "Loading...")
     v.board=true
     ui.set_hidden(v.stop_section,true); ui.set_hidden(v.eta_section,false)
     update_actions(); fetch_selected_stop()
@@ -1132,9 +1120,9 @@ end
 search_routes = function()
   if not Catalog.ready then
     if Catalog.load_failed then
-      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
+      render_route_rows({},"Reinstall the package with its bundled catalog")
     else
-      render_route_rows({},"Loading route catalog...","Loading route catalog...")
+      render_route_rows({},"Loading route catalog...")
     end
     return
   end
@@ -1145,7 +1133,7 @@ search_routes = function()
     search_pending=false
     return
   end
-  render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
+  render_route_rows({},"Reinstall the package with its bundled catalog")
 end
 local function key(value)
   if not Catalog.ready then return end
@@ -1168,103 +1156,102 @@ local function key(value)
     search_routes()
   end
 end
+function Controller.run_ready()
+  if v.draining then return end
+  v.draining=true
+  while not v.paused and not v.request_id and not v.pending_request do
+    if v.catalog_ready_notice then
+      v.catalog_ready_notice=nil
+      if v.page=="search" and query=="" then show_recent_routes() end
+      v.catalog_ready_checkpoint=true
+    elseif v.catalog_ready_checkpoint then
+      v.catalog_ready_checkpoint=nil;resource_checkpoint("catalog_loaded")
+    elseif Catalog.load_failed and not v.catalog_failure_notice then
+      v.catalog_failure_notice=true
+      if v.page=="search" then
+        render_route_rows({},"Reinstall the package with its bundled catalog")
+      end
+    elseif v.decode_job then
+      local job=v.decode_job
+      if job.generation~=(v.generation or 0) then v.decode_job=nil
+      else
+        local _,err=Providers.array_step(job)
+        v.decode_job=nil;job.body=nil;job.complete(err and nil or job.rows,err)
+      end
+    elseif Catalog.load_job then catalog_load_step()
+    elseif v.stop_list_job then
+      stop_list_step(v.stop_list_job)
+    elseif v.catalog_job then
+      catalog_search_step(v.catalog_job)
+    elseif v.search_checkpoint then
+      v.search_checkpoint=nil;resource_checkpoint("search_ready")
+    elseif v.stop_catalog_job then
+      catalog_stop_step(v.stop_catalog_job)
+    elseif v.joint_catalog_job then
+      local job=v.joint_catalog_job
+      if job.generation~=(v.generation or 0) then
+        v.joint_catalog_job=nil
+      else
+        local line,done
+        if not next(job.wanted) then done=true
+        else line,done=catalog_line(job,Catalog.stop_pages[job.provider] or {}) end
+        if done then
+          v.joint_catalog_job=nil
+          if job.done then job.done(job.rows, next(job.wanted)~=nil) end
+        elseif line then
+          local stop=catalog_decode(line)
+          local id=type(stop)=="table" and tostring(stop.id or "")
+          local wanted=id and job.wanted[id]
+          if wanted then
+            local targets=type(wanted)=="table" and wanted or {wanted}
+            for _,index in ipairs(targets) do
+              local target=job.rows[index]
+              if target then
+                target.name_en=target.name_en or stop.name_en;target.name_tc=target.name_tc or stop.name_tc
+                target.lat=target.lat or stop.lat;target.lon=target.lon or stop.lon
+              end
+            end
+            job.wanted[id]=nil
+          end
+        end
+      end
+    elseif v.joint_detail_job then
+      local job=v.joint_detail_job
+      if job.generation~=(v.generation or 0) then
+        v.joint_detail_job=nil
+      elseif not v.request_id and not v.pending_request then
+        local stop=job.rows[job.index]
+        while stop and not job.needs(stop) do
+          job.index=job.index+1;stop=job.rows[job.index]
+        end
+        if not stop then
+          v.joint_detail_job=nil
+          if job.done then job.done(job.rows,job.failed) end
+        else
+          job.index=job.index+1
+          request(Providers.stop_details_url(stop.operator,stop.id),function(body,err)
+            local details=not err and Providers.parse_stop_details(stop.operator,stop.id,json.decode(body))
+            if details then apply_metadata(stop,details) else job.failed=true end
+          end)
+        end
+      end
+    elseif v.metadata_job then metadata_step(v.metadata_job)
+    else break
+    end
+  end
+  v.draining=nil
+end
 local function search_tick()
   if v.paused then return end
-  if v.catalog_ready_notice then
-    v.catalog_ready_notice=nil
-    if v.page=="search" and query=="" then show_recent_routes() end
-    v.catalog_ready_checkpoint=true
-    return
-  elseif v.catalog_ready_checkpoint then
-    v.catalog_ready_checkpoint=nil;resource_checkpoint("catalog_loaded");return
-  elseif Catalog.load_failed and not v.catalog_failure_notice then
-    v.catalog_failure_notice=true
-    if v.page=="search" then
-      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
-    end
-    return
-  end
-  -- Keep an already-selected favorite responsive while the route catalog
-  -- preloads in the background. Network dispatch/response decoding takes the
-  -- timer slot first; catalog batches resume on the next tick.
-  if v.pending_request then
-    Controller.start_request(v.pending_request)
-    return
-  elseif v.decode_job then
-    local job=v.decode_job
-    if job.generation~=(v.generation or 0) then v.decode_job=nil;return end
-    local done,err=Providers.array_step(job)
-    if done then v.decode_job=nil;job.body=nil;job.complete(err and nil or job.rows,err) end
-    return
-  elseif Catalog.load_job then
-    catalog_load_step()
-    return
-  end
+  -- Retry a retiring worker once per tick; never busy-wait for network I/O.
+  if v.pending_request then Controller.start_request(v.pending_request) end
   if v.search_due and v.search_due>0 then
     v.search_due=v.search_due-1
     if v.search_due==0 and search_pending and v.page=="search" then
-      search_pending=false; search_routes()
-      return
+      search_pending=false;search_routes()
     end
   end
-  if v.stop_list_job then
-    stop_list_step(v.stop_list_job)
-  elseif v.catalog_job then
-    catalog_search_step(v.catalog_job)
-  elseif v.search_checkpoint then
-    v.search_checkpoint=nil;resource_checkpoint("search_ready")
-  elseif v.stop_catalog_job then
-    catalog_stop_step(v.stop_catalog_job)
-  elseif v.joint_catalog_job then
-    local job=v.joint_catalog_job
-    if job.generation~=(v.generation or 0) then
-      v.joint_catalog_job=nil
-    else
-      local line,done
-      if not next(job.wanted) then done=true
-      else line,done=catalog_line(job,Catalog.stop_pages[job.provider] or {}) end
-      if done then
-        v.joint_catalog_job=nil
-        if job.done then job.done(job.rows, next(job.wanted)~=nil) end
-      elseif line then
-        local stop=catalog_decode(line)
-        local id=type(stop)=="table" and tostring(stop.id or "")
-        local wanted=id and job.wanted[id]
-        if wanted then
-          local targets=type(wanted)=="table" and wanted or {wanted}
-          for _,index in ipairs(targets) do
-            local target=job.rows[index]
-            if target then
-              target.name_en=target.name_en or stop.name_en;target.name_tc=target.name_tc or stop.name_tc
-              target.lat=target.lat or stop.lat;target.lon=target.lon or stop.lon
-            end
-          end
-          job.wanted[id]=nil
-        end
-      end
-    end
-  elseif v.joint_detail_job then
-    local job=v.joint_detail_job
-    if job.generation~=(v.generation or 0) then
-      v.joint_detail_job=nil
-    elseif not v.request_id and not v.pending_request then
-      local stop=job.rows[job.index]
-      while stop and not job.needs(stop) do
-        job.index=job.index+1;stop=job.rows[job.index]
-      end
-      if not stop then
-        v.joint_detail_job=nil
-        if job.done then job.done(job.rows,job.failed) end
-      else
-        job.index=job.index+1
-        request(Providers.stop_details_url(stop.operator,stop.id),function(body,err)
-          local details=not err and Providers.parse_stop_details(stop.operator,stop.id,json.decode(body))
-          if details then apply_metadata(stop,details) else job.failed=true end
-        end)
-      end
-    end
-  elseif v.metadata_job then metadata_step(v.metadata_job)
-  end
+  Controller.run_ready()
 end
 show_page = function(name)
   if v.page and v.page~=name then invalidate_requests() end
@@ -1282,9 +1269,9 @@ show_page = function(name)
     if Catalog.ready then
       if query=="" then show_recent_routes() end
     elseif Catalog.load_failed then
-      render_route_rows({},"Catalog unavailable","Reinstall the package with its bundled catalog")
+      render_route_rows({},"Reinstall the package with its bundled catalog")
     else
-      render_route_rows({},"Loading route catalog...","Loading route catalog...")
+      render_route_rows({},"Loading route catalog...")
     end
   end
 end
@@ -1387,7 +1374,6 @@ function M.onCreate()
     v.key_rows[row]=row_keys
     v.key_row_hidden[row]=false
   end
-  v.results_hint=text(page,"Matching routes will appear here",width,"small",C.muted)
   for i=1,8 do
     local box=assert(ui.row(page,{gap=12,on_click=function() if routes[i] then open_route(routes[i]) end end,
       style={padding=16,radius=8,bg_color=C.card,bg_opa=255,border_width=1,border_color=C.border}}))
@@ -1418,7 +1404,6 @@ function M.onCreate()
   ui.set_style(back,{font_size=28})
   v.destination=text(page,"",width,readable_font,C.muted)
   v.stop_section=assert(ui.col(page,{gap=12}))
-  v.stops_hint=text(v.stop_section,"Choose a route",width,"small",C.muted)
   v.stop_list=assert(ui.list(v.stop_section,{width=width,height=H-math.floor(210*scale),
     on_select=function(index) select_stop(index) end,
     style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
@@ -1438,7 +1423,7 @@ function M.onCreate()
   v.save=button(v.eta_section,"Save stop",width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
   -- The header refresh action is shared by the stop picker and ETA board.
   for _, name in ipairs({"favorites","search","detail"}) do
-    v.status[name]=text(v.pages[name],"",width,"small",C.muted)
+    v.status[name]=text(v.pages[name],"",width,"normal",C.muted)
   end
   v.search_timer=ui.timer(100,search_tick)
   update_keypad_state(); update_actions(); show_page("favorites")

@@ -1,5 +1,14 @@
 # Bus App Transformation Guide — S3 Native to P4 Lua
 
+> Current implementation (0.2.16, 2026-11-17): local work finishes without
+> record/file/row timer pacing, including preload, route publication, response
+> decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
+> typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
+> 5/30-second deadline. Earlier per-tick/512 KiB/50 ms passages describe the
+> previous implementation. BUS_APP_LUA_CODE_PATTERNS.md and
+> BUS_APP_QUICK_START.md describe the current contract and board retest.
+
+
 ## Executive Summary
 
 This guide transforms the **partial S3 native bus app** into a **functional Lua-based P4 app** that replicates—not reinvents—the proven behavior. The S3 app provides a reference for the workflow: route search with catalog, HTTP requests to KMB/CTB APIs, stop lists, ETA display, and NVS favorites. The Flutter mobile app provides the reference logic for joint-route merging, stop matching, and ETA processing that handles real-world edge cases.

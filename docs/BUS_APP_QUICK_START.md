@@ -1,15 +1,23 @@
 # Bus Phases 1–2 — install and board test
 
-Updated 2026-11-17. Package **0.2.14** implements direct KMB/LWB and Citybus stop
+Updated 2026-11-17. Package **0.2.17** implements direct KMB/LWB and Citybus stop
 sequences, metadata fallback, single-provider ETA and Phase 2 joint-provider
 ETA merging. Host checks and the P4 firmware build pass. Physical-board
 acceptance is pending.
 
-For 0.2.14, first flash the updated firmware using the app-flash command below,
+Version 0.2.17 keeps notifications in the bottom status field and removes the
+duplicate guidance above route results and stops. Check Search, open a route,
+wait for stops, open arrivals, and return to Favorites: all bottom statuses
+use the same larger 20 px font. There should be no upper "Choose a route and
+direction" or "Loading bus stops..." line, and "Tap a stop for arrivals"
+appears only at the bottom. Install the updated CAPP through the Control Panel;
+this change needs no additional firmware flash on the current runtime.
+
+For 0.2.14 and later, first flash the updated firmware using the app-flash command below,
 then uninstall the old Bus Lite package and install /tmp/phase17-bus-live.capp
 through the Control Panel (uninstall removes saved stops). Search now scans
 all resident routes in one callback, removing the 64-record batch and
-one-match-per-tick pauses. Result rows still publish over separate ticks.
+one-match-per-tick pauses. Version 0.2.16 also publishes all visible route rows together.
 
 In **Settings → Developer Tools → Extended Lua Timeout**, off selects the
 5-second default; on selects 30 seconds. The setting survives reboot and takes
@@ -19,7 +27,11 @@ Capture BUS_SEARCH scan/render/ready timestamps for actual P4 latency.
 The separate task watchdog retains its existing settings; extended Lua time
 can still block the UI and produce task-watchdog reports.
 
-At launch, the app incrementally reads the complete bundled route
+Version 0.2.15 displays **Loading...** for unresolved stop names, without a stop
+ID, sequence prefix or retry suffix. Names replace placeholders in place when
+resolved. Installing this package alone is sufficient on the latest firmware.
+
+On its first scheduler callback, the app reads the complete bundled route
 catalog into its 4 MiB Lua arena. The signed catalog includes a compact startup
 route index retained as raw page strings; only visible results expand into
 tables. This avoids thousands of startup arena allocations.
@@ -27,8 +39,17 @@ Search keys remain disabled during this load.
 After it completes, numeric keys remain visible and disable when unavailable;
 alphabetic keys hide unless they can continue the current prefix. Valid letters
 reappear as the prefix changes. Clear and backspace update the keypad immediately.
-Detailed stop metadata remains loaded on demand. The preload is incremental
-so `onCreate` returns without decoding the full catalog in one UI callback.
+Detailed stop metadata remains loaded on demand. Preload reads all compact
+route pages together; it does not expand all records into tables.
+
+Version 0.2.16 removes record/file/row timer pacing throughout the app. Check
+that the catalog enables without pauses between its file-read logs, route
+results appear together after typing, and each stop response populates the
+complete list and available bundled names in one callback. Test a long route,
+Loading... rows, joint ETA, refresh, navigation and pause/resume. Provider HTTP
+requests remain sequential and asynchronous. The normal 200 ms typing debounce
+and selected 5/30-second Lua deadline remain. Capture P4 elapsed time and
+resource checkpoints; host tests cannot establish board responsiveness.
 
 Earlier package history (the package-only notes below refer to those versions):
 
@@ -88,7 +109,7 @@ No flash has been performed as part of the implementation.
 
 ## 2. Install the live package through the Control Panel
 
-Use **`/tmp/phase17-bus-live.capp`**. It is the signed **Bus Lite 0.2.9** package,
+Use **`/tmp/phase17-bus-live.capp`**. It is the signed **Bus Lite 0.2.16** package,
 key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
@@ -99,7 +120,7 @@ key ID 240, with network permissions for `data.etabus.gov.hk` and
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.9**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.16**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the
@@ -232,10 +253,10 @@ It forces JSON conversion OOM repeatedly and verifies native trees are freed.
 HTTP and storage are controlled adapters; these checks do not establish board
 TLS, touch, timing or resource acceptance.
 
-The parser handles one response record per 100 ms scheduler tick. It scans at
-most 2,048 response characters per tick and decodes either one record or the
-small envelope. Stop metadata uses one bounded page read or one record decode
-per tick. Route/service path components are percent-encoded; `O`/`I` becomes
+The parser handles the complete response in one callback, decoding individual
+records to avoid a duplicate full response tree, then validating the envelope.
+Stop metadata reads relevant source pages and resolves all available names in
+the same callback. Route/service path components are percent-encoded; `O`/`I` becomes
 `outbound`/`inbound`. Stop identities remain strings and repeated occurrences
 retain their sequence positions. The single reusable timer and 64-callback
 limit remain unchanged.

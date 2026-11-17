@@ -154,8 +154,20 @@ static int is_enabled(lua_State *state) {
     lua_pushboolean(state,!lv_obj_has_state(target,LV_STATE_DISABLED));return 1;
 }
 static int has_text(lua_State *state) {lua_pushboolean(state,find(lv_scr_act(),luaL_checkstring(state,1))!=nullptr);return 1;}
-static int list_scroll_y(lua_State *state) {
+static int text_font_size(lua_State *state) {
     auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *font=lv_obj_get_style_text_font(label,LV_PART_MAIN);
+    const int size=font==&lv_font_montserrat_16?16:font==&lv_font_montserrat_20?20:font==&lv_font_montserrat_28?28:0;
+    lua_pushinteger(state,size);return 1;
+}
+static int text_count(lua_State *state) {
+    const char *value=luaL_checkstring(state,1);int count=0;
+    for(int nth=1;;++nth){int remaining=nth;if(!find_nth(lv_scr_act(),value,remaining))break;++count;}
+    lua_pushinteger(state,count);return 1;
+}
+static int list_scroll_y(lua_State *state) {
+    int remaining=luaL_optinteger(state,2,1);assert(remaining>0);
+    auto *label=find_nth(lv_scr_act(),luaL_checkstring(state,1),remaining);assert(label);
     auto *row=lv_obj_get_parent(label);auto *list=row?lv_obj_get_parent(row):nullptr;assert(list);
     lv_obj_scroll_to_view(row,LV_ANIM_OFF);lv_obj_update_layout(lv_scr_act());
     lua_pushinteger(state,lv_obj_get_scroll_y(list));return 1;
@@ -212,6 +224,8 @@ int main(int argc,char **argv) {
     lua_pushcfunction(L,click);lua_setglobal(L,"click");
     lua_pushcfunction(L,is_enabled);lua_setglobal(L,"is_enabled");
     lua_pushcfunction(L,has_text);lua_setglobal(L,"has_text");
+    lua_pushcfunction(L,text_font_size);lua_setglobal(L,"text_font_size");
+    lua_pushcfunction(L,text_count);lua_setglobal(L,"text_count");
     lua_pushcfunction(L,list_scroll_y);lua_setglobal(L,"list_scroll_y");
     lua_pushcfunction(L,snapshot);lua_setglobal(L,"snapshot");
     lua_pushstring(L,argv[5]);lua_setglobal(L,"expected_counts");

@@ -2,7 +2,7 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1/2 contract (0.2.9, 2026-11-16)
+## Verified Phase 1/2 contract (0.2.16, 2026-11-17)
 
 Phases 1 and 2 are implemented in `examples/bus3p/main.lua`; use that tested
 source for working API calls. The remaining Phase 3–4 snippets below are design sketches,
@@ -17,11 +17,12 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
   Preserve provider-qualified string stop IDs and service type.
 - The production adapters use `stop_record`, `eta_record`,
   `parse_stop_details(operator, id, decoded)` and `array_job`/`array_step`.
-  Decode one provider record per tick, not the whole response array. Scan at
-  most 2,048 characters per tick; validate the envelope after the array.
+  Decode individual provider records through the complete response in one
+  callback, then validate the envelope. Avoid a duplicate full response tree.
 - Resolve metadata from bounded bundled pages, update names progressively,
   then request missing stop details sequentially. Keep every sequence position,
-  including repeated IDs, and display an identifiable retry row on failure.
+  including repeated IDs. Unresolved rows show Loading... until named;
+  resolved names retain the sequence prefix.
 - `service.time.now()` is epoch **seconds**. Timestamp parsing validates real
   calendar dates, leap years and explicit `Z`/signed offsets (fractional seconds
   are accepted). The implemented safe integer range is years 1970–2037.
@@ -32,30 +33,26 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
   asynchronously, so one current job waits/retries on a later tick if the worker
   slot is still occupied. Clear pending jobs on navigation, pause and destroy.
 - Create UI callbacks once. Stop lists use one shared `on_select(index)`
-  callback. Add one native row per timer tick and update metadata in place with
+  callback. Add the complete native list without per-row timer waits and update metadata with
   `crystal.ui.list_set_text(list, zero_based_index, text)` so resolving names
   does not rebuild the list or reset its scroll position. Selectable lists
   support up to 256 entries; conventional lists remain capped at 64.
 - The real-catalog harness registers 62 callbacks;
   repeated refresh/paging must not grow that count. First launch initializes in
   `onCreate`; pause cancels work, resume refreshes the visible selection.
-- Startup incrementally reads the compact route-search pages into a resident
-  collection of raw page strings, reading one file per callback. The host
-  generates keypad.txt; exact-prefix lookup uses that resident string without
-  building prefix tables on P4. Readiness/UI/checkpoint work uses separate ticks.
-  Only visible results expand into tables. Legacy JSONL
-  fallback packages decode one record per tick. Keep the keypad disabled until
-  this preload finishes. Derive the next-character mask
-  from the loaded route numbers after each key edit; enable only characters
-  that continue at least one route prefix. Search scans at most 64 resident
-  records and expands at most one visible result per tick, without rereading
-  route files. Compare prefix bytes without allocating per-record substrings.
-  Cache keypad states to avoid redundant native writes. Publish one result
-  row per tick, then navigation/status; resource diagnostics use another tick.
-  Invalidate clickable result mappings immediately on query changes.
-  Stop metadata pages remain on demand. The 4 MiB
-  quota is configured for this workload; host arena results do not replace P4
-  heap, callback-time or startup measurements.
+- The first scheduler callback loads all compact route pages and keypad.txt
+  as resident strings. Keep keys disabled until completion. Only visible
+  results expand into tables; search checks every resident record and publishes
+  all eight visible rows in the same callback after the 200 ms typing debounce.
+  Retain complete match counts and paging, invalidate mappings on edits, and
+  reuse keypad states to avoid redundant writes. Stop metadata stays on demand.
+- Controller.run_ready drains local decoding, list creation, primary/joint
+  metadata lookup and completion work until HTTP is needed or no work remains.
+  HTTP completions resume it directly. Generation checks reject stale jobs;
+  cancelled workers retry on the timer instead of busy-waiting.
+- The 4 MiB quota and selected 5/30-second callback deadline still apply.
+  The separate ESP-IDF task watchdog retains its configuration. Host arena and
+  timing results do not replace P4 resource and responsiveness measurements.
 - JSON conversion is protected so native cJSON trees are released before Lua
   allocation errors propagate. `test_phase17_bus_render.py` exercises the actual
   production binding, including repeated forced OOM.
