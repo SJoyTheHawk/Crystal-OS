@@ -9,16 +9,18 @@
 namespace {
 // Both boards use a 4-inch square panel. Preserve the S3 keyboard's physical
 // geometry at P4's 720px resolution (1.5x the S3's 480px), including key gaps
-// and the bottom gesture inset, rather than shrinking its physical key height.
+// and the bottom edge inset, rather than shrinking its physical key height.
+// The home pill hides while typing, so only a small edge inset is needed.
+// Reduce the reserved band with that inset to keep the key heights unchanged.
 #if CONFIG_IDF_TARGET_ESP32P4
-constexpr lv_coord_t kKeyboardBandHeight = 300;
-constexpr lv_coord_t kBottomSafe = 39;
+constexpr lv_coord_t kKeyboardBandHeight = 273;
+constexpr lv_coord_t kBottomSafe = 12;
 constexpr lv_coord_t kKeyPadding = 6;
 constexpr lv_coord_t kKeyColumnGap = 3;
 constexpr lv_coord_t kFieldMargin = 12;
 #else
-constexpr lv_coord_t kKeyboardBandHeight = 200;
-constexpr lv_coord_t kBottomSafe = 26;
+constexpr lv_coord_t kKeyboardBandHeight = 182;
+constexpr lv_coord_t kBottomSafe = 8;
 constexpr lv_coord_t kKeyPadding = 4;
 constexpr lv_coord_t kKeyColumnGap = 2;
 constexpr lv_coord_t kFieldMargin = 8;
@@ -114,6 +116,51 @@ bool is_control_key(const char *text)
            (plane_for_key(text) >= 0 ||
             !strcmp(text, LV_SYMBOL_BACKSPACE) || !strcmp(text, LV_SYMBOL_LEFT) ||
             !strcmp(text, LV_SYMBOL_RIGHT));
+}
+
+// Extend only the bottom edge: LVGL's object click padding alone does not
+// extend the individual button-matrix keys into the unused bottom inset.
+void bottom_edge_hit_test(lv_event_t *event)
+{
+    auto *hit = lv_event_get_hit_test_info(event);
+    lv_area_t area{};
+    lv_obj_get_coords(lv_event_get_target(event), &area);
+    hit->res = hit->point->x >= area.x1 && hit->point->x <= area.x2 &&
+               hit->point->y >= area.y1 && hit->point->y <= area.y2 + kBottomSafe;
+}
+
+void bottom_edge_key_event(lv_event_t *event)
+{
+    auto *indev = lv_indev_get_act();
+    if (indev == nullptr || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) return;
+    auto *keyboard = lv_event_get_target(event);
+    lv_point_t point{};
+    lv_indev_get_point(indev, &point);
+    lv_area_t area{};
+    lv_obj_get_coords(keyboard, &area);
+    if (point.x < area.x1 || point.x > area.x2 || point.y < area.y1 ||
+            point.y > area.y2 + kBottomSafe) {
+        lv_btnmatrix_set_selected_btn(keyboard, LV_BTNMATRIX_BTN_NONE);
+        return;
+    }
+    if (point.y <= area.y2) return;
+
+    // Read the current plane's actual geometry. Split gaps at their midpoints
+    // so sliding sideways still selects the key under the finger.
+    auto *matrix = reinterpret_cast<lv_btnmatrix_t *>(keyboard);
+    if (matrix->btn_cnt == 0) return;
+    const uint16_t last = matrix->btn_cnt - 1;
+    uint16_t first = last;
+    while (first > 0 && matrix->button_areas[first - 1].y1 ==
+                          matrix->button_areas[last].y1) --first;
+    const lv_coord_t x = point.x - area.x1;
+    for (uint16_t id = first; id <= last; ++id) {
+        if (id == last || x <= (matrix->button_areas[id].x2 +
+                                matrix->button_areas[id + 1].x1) / 2) {
+            lv_btnmatrix_set_selected_btn(keyboard, id);
+            return;
+        }
+    }
 }
 
 // The stock handler only understands abc/ABC/1#, so a fourth plane needs its own
@@ -358,6 +405,14 @@ bool crystal_keyboard_show(lv_obj_t *field, lv_obj_t *viewport)
     lv_keyboard_set_textarea(s_keyboard, field);
     lv_obj_set_size(s_keyboard, display_width, kKeyboardHeight);
     lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, -kBottomSafe);
+    lv_obj_set_ext_click_area(s_keyboard, kBottomSafe);
+    lv_obj_add_flag(s_keyboard, LV_OBJ_FLAG_ADV_HITTEST);
+    lv_obj_add_event_cb(s_keyboard, bottom_edge_hit_test, LV_EVENT_HIT_TEST, nullptr);
+    // Correct selection after stock hit testing, then before release dispatch.
+    lv_obj_add_event_cb(s_keyboard, bottom_edge_key_event, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(s_keyboard, bottom_edge_key_event, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(s_keyboard, bottom_edge_key_event,
+        static_cast<lv_event_code_t>(LV_EVENT_RELEASED | LV_EVENT_PREPROCESS), nullptr);
     lv_obj_set_style_bg_color(s_keyboard, lv_color_hex(0xd1d3d9), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_keyboard, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_keyboard, 0, LV_PART_MAIN);
@@ -403,6 +458,10 @@ void crystal_keyboard_hide()
     // field explicitly so its cursor cannot remain visible after rebinding.
     if (s_field != nullptr) {
         lv_event_send(s_field, LV_EVENT_DEFOCUSED, nullptr);
+        // The keyboard is not click-focusable, so the pointer still remembers
+        // this field as last_pressed. Forget it along with its visual focus;
+        // otherwise tapping the same field again skips LV_EVENT_FOCUSED.
+        if (s_field != nullptr) lv_indev_reset(nullptr, s_field);
     }
     if (s_viewport != nullptr) {
         lv_obj_remove_event_cb(s_viewport, watched_object_deleted);

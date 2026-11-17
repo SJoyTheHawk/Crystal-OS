@@ -256,7 +256,7 @@ int main() {
     lv_obj_get_coords(dialog,&dialog_open);lv_obj_get_coords(s_wifi_page_list,&list_open);
     assert(reveal_area.x1-input_area.x2<=13 && input_area.x2<reveal_area.x1);
     assert(dialog_open.y2<crystal_keyboard_reserved_top());
-    assert(crystal_keyboard_reserved_top()==420);
+    assert(crystal_keyboard_reserved_top()==447);
     assert(lv_obj_get_style_bg_color(connect,0).full==lv_color_hex(0x3b82f6).full);
     assert(lv_obj_get_style_bg_color(cancel,0).full==lv_color_hex(0x334155).full);
     assert(lv_textarea_get_password_mode(field));
@@ -396,11 +396,33 @@ GEOMETRY = r'''
 void crystal_shell_set_keyboard_open(bool) {}
 static void flush(lv_disp_drv_t *d,const lv_area_t *,lv_color_t *) { lv_disp_flush_ready(d); }
 static void advance() { for(int i=0;i<30;++i) { lv_tick_inc(10);lv_timer_handler(); } }
+static lv_point_t touch_point;
+static lv_indev_state_t touch_state=LV_INDEV_STATE_RELEASED;
+static unsigned key_events;
+static uint16_t last_key;
+static void read_touch(lv_indev_drv_t *,lv_indev_data_t *data) {
+    data->point=touch_point;data->state=touch_state;
+}
+static void record_key(lv_event_t *event) {
+    ++key_events;last_key=lv_btnmatrix_get_selected_btn(lv_event_get_target(event));
+}
+static void focus_field(lv_event_t *event) {
+    auto *field=lv_event_get_target(event);
+    assert(crystal_keyboard_show(field,lv_obj_get_parent(field)));
+}
 int main() {
     lv_init();static lv_color_t pixels[720*20];static lv_disp_draw_buf_t buffer;
     lv_disp_draw_buf_init(&buffer,pixels,nullptr,720*20);static lv_disp_drv_t driver;
     lv_disp_drv_init(&driver);driver.hor_res=driver.ver_res=CONFIG_IDF_TARGET_ESP32P4 ? 720 : 480;
     driver.draw_buf=&buffer;driver.flush_cb=flush;auto *display=lv_disp_drv_register(&driver);
+    static lv_indev_drv_t input;lv_indev_drv_init(&input);
+    input.type=LV_INDEV_TYPE_POINTER;input.read_cb=read_touch;
+    auto *pointer=lv_indev_drv_register(&input);lv_timer_pause(pointer->driver->read_timer);
+    auto touch=[&](int x,int y,bool down) {
+        touch_point={static_cast<lv_coord_t>(x),static_cast<lv_coord_t>(y)};
+        touch_state=down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+        lv_indev_read_timer_cb(pointer->driver->read_timer);advance();
+    };
     auto *root=lv_obj_create(lv_scr_act());lv_obj_remove_style_all(root);
     const int original_height=driver.ver_res-40;
     lv_obj_set_size(root,driver.hor_res,original_height);
@@ -411,7 +433,10 @@ int main() {
     auto *keyboard=lv_obj_get_child(lv_layer_top(),-1);
     assert(lv_obj_check_type(keyboard,&lv_keyboard_class));
     assert(lv_obj_get_height(keyboard)==(CONFIG_IDF_TARGET_ESP32P4 ? 261 : 174));
-    assert(crystal_keyboard_reserved_top()==(CONFIG_IDF_TARGET_ESP32P4 ? 420 : 280));
+    assert(crystal_keyboard_reserved_top()==(CONFIG_IDF_TARGET_ESP32P4 ? 447 : 298));
+    lv_area_t keyboard_area{};lv_obj_get_coords(keyboard,&keyboard_area);
+    assert(keyboard_area.y1==crystal_keyboard_reserved_top());
+    assert(driver.ver_res-1-keyboard_area.y2==(CONFIG_IDF_TARGET_ESP32P4 ? 12 : 8));
     assert(lv_obj_get_style_text_font(keyboard,LV_PART_ITEMS)->line_height==
            (CONFIG_IDF_TARGET_ESP32P4 ? lv_font_montserrat_24.line_height : lv_font_montserrat_16.line_height));
     auto *matrix=reinterpret_cast<lv_btnmatrix_t *>(keyboard);
@@ -435,6 +460,89 @@ int main() {
     assert(lv_obj_get_height(root)==original_height);
     assert(crystal_keyboard_show(field,root));advance();crystal_keyboard_hide();advance();
     assert(lv_obj_get_height(root)==original_height);
+    auto open_keyboard=[&](int mode) {
+        assert(crystal_keyboard_show(field,root));advance();
+        keyboard=lv_obj_get_child(lv_layer_top(),-1);
+        matrix=reinterpret_cast<lv_btnmatrix_t *>(keyboard);
+        lv_keyboard_set_mode(keyboard,static_cast<lv_keyboard_mode_t>(mode));advance();
+        lv_obj_get_coords(keyboard,&keyboard_area);
+        lv_obj_add_event_cb(keyboard,record_key,
+            static_cast<lv_event_code_t>(LV_EVENT_VALUE_CHANGED|LV_EVENT_PREPROCESS),nullptr);
+        key_events=0;lv_textarea_set_text(field,"ab");lv_textarea_set_cursor_pos(field,1);
+    };
+    // Exercise every bottom key on every plane using actual pointer input.
+    for(int mode : modes) for(unsigned id=28;id<33;++id) for(int edge=0;edge<4;++edge) {
+        open_keyboard(mode);
+        const auto key=matrix->button_areas[id];
+        const int x=keyboard_area.x1+(key.x1+key.x2)/2;
+        const int y=edge==0 ? keyboard_area.y1+key.y2-1 :
+                    edge==1 ? keyboard_area.y2 : edge==2 ? keyboard_area.y2+1 : driver.ver_res-1;
+        touch(x,y,true);assert(key_events==0 && crystal_keyboard_is_open());
+        touch(x,y,false);assert(key_events==1 && last_key==id);
+        if(id==28) assert(lv_keyboard_get_mode(keyboard)==
+            (mode==LV_KEYBOARD_MODE_TEXT_LOWER || mode==LV_KEYBOARD_MODE_TEXT_UPPER ?
+             LV_KEYBOARD_MODE_SPECIAL : LV_KEYBOARD_MODE_TEXT_LOWER));
+        if(id==29) assert(lv_textarea_get_cursor_pos(field)==0);
+        if(id==30) assert(!std::strcmp(lv_textarea_get_text(field),"a b"));
+        if(id==31) assert(lv_textarea_get_cursor_pos(field)==2);
+        if(id==32) assert(!crystal_keyboard_is_open());
+        crystal_keyboard_hide();advance();assert(lv_obj_get_height(root)==original_height);
+    }
+    // Drift into the inset, including when it first appears on release.
+    for(unsigned id=28;id<33;++id) for(int move_sample=0;move_sample<2;++move_sample) {
+        open_keyboard(LV_KEYBOARD_MODE_TEXT_LOWER);const auto key=matrix->button_areas[id];
+        const int x=(key.x1+key.x2)/2;
+        touch(x,keyboard_area.y1+key.y2-1,true);
+        if(move_sample) touch(x,driver.ver_res-1,true);
+        assert(key_events==0);touch(x,driver.ver_res-1,false);
+        assert(key_events==1 && last_key==id);crystal_keyboard_hide();advance();
+    }
+    // Sliding in the inset changes keys; moving clear of the keyboard cancels.
+    open_keyboard(LV_KEYBOARD_MODE_TEXT_LOWER);
+    int space_x=(matrix->button_areas[30].x1+matrix->button_areas[30].x2)/2;
+    int left_x=(matrix->button_areas[29].x1+matrix->button_areas[29].x2)/2;
+    touch(space_x,driver.ver_res-1,true);touch(left_x,driver.ver_res-1,true);
+    touch(left_x,driver.ver_res-1,false);assert(key_events==1 && last_key==29);
+    assert(!std::strcmp(lv_textarea_get_text(field),"ab"));crystal_keyboard_hide();advance();
+    for(int move_sample=0;move_sample<2;++move_sample) {
+        open_keyboard(LV_KEYBOARD_MODE_TEXT_LOWER);
+        int done_x=(matrix->button_areas[32].x1+matrix->button_areas[32].x2)/2;
+        touch(done_x,driver.ver_res-1,true);
+        if(move_sample) touch(done_x,keyboard_area.y1-20,true);
+        touch(done_x,keyboard_area.y1-20,false);assert(key_events==0 && crystal_keyboard_is_open());
+        crystal_keyboard_hide();advance();
+    }
+    open_keyboard(LV_KEYBOARD_MODE_TEXT_LOWER);
+    lv_point_t above={static_cast<lv_coord_t>(driver.hor_res/2),static_cast<lv_coord_t>(keyboard_area.y1-1)};
+    assert(!lv_obj_hit_test(keyboard,&above));
+    crystal_keyboard_hide();advance();
+    // Reopen the same field after Done through real pointer focus, including
+    // forms that open on FOCUSED and the Wi-Fi dialog that opens on CLICKED.
+    const lv_event_code_t focus_events[]={LV_EVENT_FOCUSED,LV_EVENT_CLICKED};
+    for(auto event : focus_events) {
+        lv_indev_reset(pointer,nullptr);
+        lv_obj_add_event_cb(field,focus_field,event,nullptr);
+        for(int cycle=0;cycle<3;++cycle) {
+            lv_area_t area{};lv_obj_get_coords(field,&area);
+            const int x=(area.x1+area.x2)/2,y=(area.y1+area.y2)/2;
+            touch(x,y,true);touch(x,y,false);
+            assert(crystal_keyboard_is_open());
+            assert(lv_obj_has_state(field,LV_STATE_FOCUSED));
+            keyboard=lv_obj_get_child(lv_layer_top(),-1);
+            assert(lv_keyboard_get_textarea(keyboard)==field);
+            matrix=reinterpret_cast<lv_btnmatrix_t *>(keyboard);
+            lv_obj_get_coords(keyboard,&keyboard_area);
+            const auto done=matrix->button_areas[32];
+            const int done_x=keyboard_area.x1+(done.x1+done.x2)/2;
+            const int done_y=keyboard_area.y1+(done.y1+done.y2)/2;
+            touch(done_x,done_y,true);touch(done_x,done_y,false);
+            assert(!crystal_keyboard_is_open());
+            assert(!lv_obj_has_state(field,LV_STATE_FOCUSED));
+            assert(lv_obj_get_height(root)==original_height);
+        }
+        lv_obj_remove_event_cb(field,focus_field);
+    }
+    lv_indev_delete(pointer);
     std::printf("{\"width\":%d,\"height\":%d}\n",lv_area_get_width(&first),lv_area_get_height(&first));
     lv_obj_del(root);lv_disp_remove(display);
 }
