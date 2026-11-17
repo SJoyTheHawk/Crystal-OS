@@ -40,14 +40,18 @@ local function checkpoint(name)
 end
 local app=assert(loadfile(package_path))()
 assert(app.onCreate());assert(timer);assert(decodes==0,'launch must not decode catalogs');checkpoint('launch')
-click('Search');click('1');assert(not has_text('Catalog routes |'),'keypad must stay locked during preload')
+local search_tab='Search'
+assert(has_text('Favorites') and has_text(search_tab) and has_icon('Favorites') and has_icon(search_tab),
+  'tabs retain their text with image icons')
+click(search_tab);click('1');assert(not has_text('Catalog routes |'),'keypad must stay locked during preload')
 assert(not is_enabled('1'),'route key must be disabled before preload finishes')
 assert(app.onPause())
 ticks(1);assert(not is_enabled('1'),'paused preload must not enable the keypad')
 assert(app.onResume())
--- Load all nine compact route files and the keypad index in the next callback,
--- without expanding all 2,115 route records into tables.
-ticks(1);assert(reads==10,'preload still waits for a separate tick per file')
+-- Load every compact route file and keypad index in the next callback,
+-- without expanding the route records into tables.
+local counts=decode_json(expected_counts)
+ticks(1);assert(reads==counts['_preload_reads'],'preload still waits for a separate tick per file')
 preload=false
 assert(is_enabled('1') and has_text('0') and not is_enabled('0'),'unavailable numeric keys remain visible and disabled')
 assert(not has_text('M') and not has_text('Z'),'letters without a matching route prefix must be hidden')
@@ -74,14 +78,13 @@ click(utf8.char(0xF00D));assert(not has_text('M'))
 click('1');assert(has_text('M'),'valid letters must appear again when the prefix changes back')
 -- The normal 200 ms debounce remains; scanning and all row publication then
 -- finish in the same callback, with no result-row pacing.
-ticks(1);assert(not has_text('1   CTB'),'debounce fired early')
-ticks(1);assert(has_text('1   CTB'),'route search/publication still yields between ticks')
+ticks(1);assert(not has_text('CTB'),'debounce fired early')
+ticks(1);assert(has_text('CTB'),'route search/publication still yields between ticks')
 assert(not has_text('Choose a route and direction'))
 assert(destinations==8,'result publication did not update all eight rows together')
 checkpoint('prefix_1')
 assert(not pending,'catalog search must be offline')
 -- Every page remains reachable; counts come from an independent Python scan.
-local counts=decode_json(expected_counts)
 assert(text_count('Catalog routes | '..counts['1']..' matches')==1)
 assert(text_font_size('Catalog routes | '..counts['1']..' matches')==20)
 local pages=math.ceil(counts['1']/8)
@@ -100,11 +103,11 @@ click(utf8.char(0xF00D));click('1')
 ticks(1)
 click(utf8.char(0xF00D));click('2');ticks()
 assert(has_text('Catalog routes | '..counts['2']..' matches'))
-assert(not has_text('1   KMB') and not pending)
+assert(text_count('1')==1 and not pending)
 assert(startup_reads==0,'search must reuse resident pages without rereading route assets')
-click(utf8.char(0xF00D));click('1');click('A');ticks();assert(has_text('1A   KMB'));checkpoint('route_1A')
+click(utf8.char(0xF00D));click('1');click('A');ticks();assert(has_text('KMB'));checkpoint('route_1A')
 check_keypad=false
-click('1A   KMB');assert(pending.url:find('/route-stop/1A/inbound/1',1,true))
+click('KMB',1,1);assert(pending.url:find('/route-stop/1A/inbound/1',1,true))
 complete('{"data":[{"stop":"00040ED8B61CA94B","seq":1},{"stop":"00040ED8B61CA94B","seq":2}]}')
 assert(has_text('1. PUBLIC SQUARE STREET YAU MA TEI (YT545)'))
 assert(has_text('2. PUBLIC SQUARE STREET YAU MA TEI (YT545)'))

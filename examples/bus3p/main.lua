@@ -1,8 +1,6 @@
--- Bus package: native-reference layout with a resident route catalog.
 local ui, http, state, json = crystal.ui, crystal.service.http, crystal.state, crystal.json
 local fs = crystal.fs
 local C = {bg=0x0F172A, card=0x1E293B, text=0xF8FAFC, muted=0x94A3B8, border=0x334155, accent=0x38BDF8}
--- Built-in LVGL symbols, available in the firmware's Montserrat fonts.
 local ICON={clear=utf8.char(0xF00D),backspace=utf8.char(0xF55A),back=utf8.char(0xF053),refresh=utf8.char(0xF021)}
 local M, v = {}, {}
 local Catalog = {manifest=nil, route_pages=nil, route_index_pages=nil, stop_pages={}, routes={}, next_keys={}, available=false, ready=false}
@@ -41,7 +39,6 @@ local function catalog_normalize(record)
     parts={}
     for _, part in ipairs(record.parts) do
       if type(part)=="table" then
-        -- Keep route identity compact; localized display fields stay in source pages.
         parts[#parts+1]={operator=tostring(part.operator or ""),route=tostring(part.route or ""),
           bound=tostring(part.bound or "O"),service_type=tostring(part.service_type or "1")}
       end
@@ -72,7 +69,6 @@ local function catalog_load()
   local directory=fs and fs.read and fs.read("assets/catalog/runtime.txt")
   Catalog.manifest={}; Catalog.route_pages={}; Catalog.route_index_pages={}; Catalog.stop_pages={}
   if not directory then Catalog.load_failed=true;return false end
-  -- Retain small descriptors, not decoded manifest/index trees.
   for line in directory:gmatch("[^\r\n]+") do
     local kind, rest=line:match("^(%u) (.+)$")
     if kind=="L" then Catalog.letters=rest
@@ -89,7 +85,6 @@ local function catalog_load()
     end
   end
   Catalog.available=#Catalog.route_index_pages>0 or #Catalog.route_pages>0
-  -- Keep compact pages resident; expand only visible records.
   Catalog.ready=false
   if Catalog.available then
     Catalog.load_job={index=1,raw=nil,position=1,count=0,
@@ -199,7 +194,6 @@ local function catalog_load_step()
     v.catalog_ready_notice=true
     return true
   end
-  -- New packages carry a host-built prefix map and load compact pages together.
   if job.compact and Catalog.keypad_descriptor then
     local descriptor=Catalog.route_index_pages[job.index]
     local is_keypad=not descriptor
@@ -265,7 +259,6 @@ local function catalog_load_step()
     return false
   end
 
-  -- Inspect route numbers only; repeated directions share a keypad prefix.
   local batch=1
   for _=1,batch do
     local start=job.position
@@ -295,7 +288,6 @@ local function catalog_load_step()
   return false
 end
 
--- Decode individual matching records without per-record timer waits.
 local function catalog_line(job, pages)
   if not job.raw then
     local descriptor=pages[job.index]
@@ -316,7 +308,6 @@ local function catalog_line(job, pages)
     return nil,false
   end
   if not job.prefix then
-    -- Search canonical IDs directly in the source page.
     local id=job.ids[job.id_index];job.id_index=job.id_index+1
     if not id then job.raw=nil;return nil,false end
     local position=job.raw:find('"id":"'..id..'"',1,true)
@@ -326,7 +317,6 @@ local function catalog_line(job, pages)
     local last=job.raw:find("\n",position,true) or (#job.raw+1)
     return job.raw:sub(first,last-1),false
   end
-  -- Current searches use resident compact pages in catalog_search_step.
   for _=1,4 do
     local start=job.position
     if start>#job.raw then job.raw=nil;return nil,false end
@@ -352,7 +342,6 @@ local function catalog_search_step(job)
     if v.catalog_job==job then v.catalog_job=nil end
     return true
   end
-  -- Scan compact pages and retain only the visible result page.
   while job.index<=#Catalog.routes do
     local record=Catalog.routes[job.index]
     local matches, line
@@ -513,7 +502,6 @@ function Providers.parse_stop_details(operator,id,decoded)
   return {operator=operator,id=id,name_en=nonempty(data.name_en),name_tc=nonempty(data.name_tc),
     lat=tonumber(data.lat),lon=tonumber(data.long)}
 end
--- Epoch seconds and explicit offsets keep timestamps within Lua's safe range.
 function Arrivals.parse_timestamp(value)
   if type(value)~="string" then return nil end
   local y,m,d,h,mi,s,zone=value:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)(.*)$")
@@ -543,7 +531,6 @@ local function joint_distance(lat1,lon1,lat2,lon2)
   a=math.max(0,math.min(1,a))
   return r*2*math.atan(math.sqrt(a),math.sqrt(1-a))
 end
--- Use Flutter's nearest valid coordinate rule with a first-stop fallback.
 function Arrivals.match_joint_stop(primary,secondary)
   if type(secondary)~="table" or #secondary==0 then return nil end
   local plat=tonumber(primary and primary.lat);local plon=tonumber(primary and primary.lon)
@@ -562,7 +549,6 @@ function Arrivals.match_joint_stop(primary,secondary)
   return best
 end
 function Arrivals.select(entries)
-  -- Keep valid timestamps even when optional metadata disagrees.
   table.sort(entries,function(a,b)
     if a.epoch_sec~=b.epoch_sec then return a.epoch_sec<b.epoch_sec end
     return a.source_order<b.source_order
@@ -583,7 +569,6 @@ function Providers.eta_record(part,stop,item,order)
   return {operator=item.co=="LWB" and "LWB" or part.operator,stop_id=stop.id,
     epoch_sec=epoch,remark_en=tostring(item.rmk_en or ""),remark_tc=tostring(item.rmk_tc or ""),source_order=order}
 end
--- Decode records in-place to avoid a duplicate response tree.
 function Providers.array_job(body,normalize,complete)
   if type(body)~="string" then return nil end
   local _,first=body:find('"data"%s*:%s*%[')
@@ -766,7 +751,6 @@ local function invalidate_requests()
   local old=v.request_id;v.request_id=nil
   if old then http.cancel(old) end
 end
--- Cancellation retires asynchronously; retain one foreground job while waiting.
 function Controller.start_request(job)
   if job.generation~=(v.generation or 0) or v.paused then return false end
   local id,err=http.fetch(job.url,{timeout_sec=15},function(req,code,body)
@@ -806,8 +790,9 @@ render_route_page = function(slot)
     local route=route_results[first+i-1]
     routes[i]=route
     ui.set_hidden(row.box, not route)
-    if route then
-      ui.set_text(row.route, route.route.."   "..operator_label(route))
+    if route and row.route then
+      ui.set_text(row.route, route.route)
+      ui.set_text(row.operator, operator_label(route))
       ui.set_text(row.destination, "To "..(route.destination or "selected destination"))
     end
   end
@@ -843,11 +828,11 @@ render_favorites = function()
   for i, row in ipairs(v.favorites) do
     local favorite = favorites[i]
     ui.set_hidden(row.box, not favorite)
-    if favorite then
-      ui.set_text(row.route, (favorite.route or "?").."   "..(favorite.operator or "KMB"))
+    if favorite and row.route then
+      ui.set_text(row.route, favorite.route or "?")
+      ui.set_text(row.operator, operator_label(favorite))
       ui.set_text(row.destination, "To "..(favorite.destination or "selected destination"))
-      ui.set_text(row.stop, favorite.stop_name or "Choose a stop for this saved route")
-      ui.set_text(row.eta, "Tap to load live arrivals")
+      ui.set_text(row.stop_name, favorite.stop_name or "Choose a stop for this saved route")
     end
   end
   ui.set_hidden(v.empty, #favorites>0)
@@ -1141,7 +1126,6 @@ begin_stop_metadata=function()
       wanted[stop.id]=wanted[stop.id] or {};table.insert(wanted[stop.id],i)
     end
   end
-  -- LWB shares KMB's stop IDs and API.
   if provider=="LWB" then provider="KMB" end
   if next(wanted) and Catalog.available then
     v.stop_catalog_job={provider=provider,index=1,wanted=wanted,generation=v.catalog_generation}
@@ -1155,7 +1139,6 @@ local function fetch_stops()
     if err then status(err);return end
     Controller.decode_array(body,function(item) return Providers.stop_record(part,item) end,function(rows,failure)
       if failure then status(failure);return end
-      -- Stable ties retain repeated stop occurrences from the provider.
       for i,row in ipairs(rows) do row.source_order=i end
       table.sort(rows,function(a,b) return a.seq==b.seq and a.source_order<b.source_order or a.seq<b.seq end)
       stop_results=rows
@@ -1332,7 +1315,6 @@ function Controller.run_ready()
 end
 local function search_tick()
   if v.paused then return end
-  -- Retry a retiring worker once per tick; never busy-wait for network I/O.
   if v.pending_request then Controller.start_request(v.pending_request) end
   if v.search_due and v.search_due>0 then
     v.search_due=v.search_due-1
@@ -1345,6 +1327,7 @@ end
 show_page = function(name)
   if v.page and v.page~=name then invalidate_requests() end
   v.page=name
+  if v.rows_ready then v.rows_ready(name) end
   ui.set_hidden(v.nav, name=="detail")
   for page, object in pairs(v.pages) do ui.set_hidden(object, page~=name) end
   for page, line in pairs(v.tab_lines) do
@@ -1370,149 +1353,192 @@ refresh = function()
   if selected_stop then fetch_selected_stop() else fetch_stops() end
 end
 function M.onCreate()
-  metric_marks={}
-  resource_checkpoint("launch_begin")
-  favorites,favorite_load_warning=Store.load_favorites()
-  recents,recent_load_warning=Store.load_recents()
-  v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={},
-    key_buttons={},letter_buttons={},letter_slots={},letter_rows={},letter_enabled={},
-    letter_hidden={},letter_row_hidden={}}
-  catalog_load()
-  local screen=ui.screen()
-  local size=ui.get_size(screen)
-  local W,H=size.w,size.h
-  local scale=W/480
-  local pad,gap=math.floor(16*scale),math.floor(5*scale)
-  local detail_pad=pad
-  local tab_h,key_h=math.floor(48*scale),math.floor(40*scale)
-  local width=W-2*pad
-  local detail_width=width
-  local readable_font=W>=600 and "large" or "normal"
-  local readable_size=W>=600 and 28 or 20
-  assert(ui.set_style(screen, {padding=0, bg_color=C.bg}))
-  local root=assert(ui.col(screen, {width=W,height=H,gap=0}))
-  v.nav=assert(ui.row(root, {height=tab_h,gap=0}))
-  for _, name in ipairs({"favorites","search"}) do
-    local slot=assert(ui.col(v.nav, {width=W//2,gap=0}))
-    v.tab_buttons[name]=button(slot,name=="favorites" and "Favorites" or "Search",W//2,tab_h-3,function()
-      show_page(name)
-      if name=="search" then search_routes() end
-    end)
-    ui.set_style(v.tab_buttons[name], {radius=0,border_width=0,bg_color=C.bg})
-    v.tab_lines[name]=assert(ui.col(slot, {height=3,style={bg_color=C.bg,bg_opa=255}}))
+metric_marks={}
+resource_checkpoint("launch_begin")
+favorites,favorite_load_warning=Store.load_favorites()
+recents,recent_load_warning=Store.load_recents()
+v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={},
+key_buttons={},letter_buttons={},letter_slots={},letter_rows={},letter_enabled={},
+letter_hidden={},letter_row_hidden={}}
+catalog_load()
+local screen=ui.screen()
+local size=ui.get_size(screen)
+local W,H=size.w,size.h
+local scale=W/480
+local pad,gap=math.floor(16*scale),math.floor(5*scale)
+local detail_pad=pad
+local tab_h,key_h=math.floor(48*scale),math.floor(40*scale)
+local width=W-2*pad
+local detail_width=width
+local readable_font=W>=600 and "large" or "normal"
+local readable_size=W>=600 and 28 or 20
+local rw=math.floor(80*scale)
+local cg=math.floor(6*scale)
+local rg=math.floor(3*scale)
+local function rc(box)
+local col=assert(ui.col(box,{width=rw,gap=rg}))
+return text(col,"",rw,"large"),text(col,"",rw,"small",C.muted),col
+end
+assert(ui.set_style(screen, {padding=0, bg_color=C.bg}))
+local root=assert(ui.col(screen, {width=W,height=H,gap=0}))
+v.nav=assert(ui.row(root, {height=tab_h,gap=0}))
+for _, name in ipairs({"favorites","search"}) do
+local title_width=name=="favorites" and 112 or 90
+local icon_size=20
+local item_gap=8
+local group_width=title_width+icon_size+item_gap
+local left_pad=(W//2-group_width)//2
+local row_height=24
+local top_pad=(tab_h-row_height-3)//2
+local select_tab=function()
+  show_page(name)
+  if name=="search" then search_routes() end
+end
+local slot=assert(ui.col(v.nav, {width=W//2,height=tab_h,gap=0}))
+local title=name=="favorites" and "Favorites" or "Search"
+local icon=name=="favorites" and "assets/bookmark.cr16" or "assets/search.cr16"
+local content=assert(ui.row(slot,{width=W//2,height=tab_h-3,gap=item_gap,on_click=select_tab,style={padding=top_pad}}))
+ui.label(content,{text="",width=left_pad-top_pad-item_gap,height=1})
+assert(ui.image(content,{src=icon,width=icon_size,height=icon_size}))
+v.tab_buttons[name]=assert(ui.label(content,{text=title,width=title_width,height=row_height,style={align="center"}}))
+v.tab_lines[name]=assert(ui.col(slot, {height=3,style={bg_color=C.bg,bg_opa=255}}))
+end
+for _, name in ipairs({"favorites","search","detail"}) do
+local page_pad=name=="detail" and detail_pad or pad
+local page_gap=name=="detail" and math.floor(6*scale) or math.floor(12*scale)
+local page=assert(ui.scroll_view(root, {height=name=="detail" and H or H-tab_h,gap=page_gap,style={padding=page_pad}}))
+v.pages[name]=page
+end
+local page=v.pages.favorites
+v.empty=assert(ui.col(page,{gap=math.floor(16*scale),style={padding=math.floor(32*scale)}}))
+local empty_w=width-2*math.floor(32*scale)
+ui.col(v.empty,{height=math.floor(38*scale)})
+local mark=text(v.empty,"BUS",empty_w,"large",C.accent)
+ui.set_style(mark,{align="center"})
+local title=text(v.empty,"No saved stops yet",empty_w,"large")
+ui.set_style(title,{align="center"})
+local hint=text(v.empty,"Find a route and save the stops you check often.",empty_w,"small",C.muted)
+ui.set_style(hint,{align="center"})
+text(v.empty,"Use Search above to find a route.",empty_w,"small",C.muted)
+for i=1,8 do
+local open=function() if favorites[i] then open_route(favorites[i],favorites[i]) end end
+local box=assert(ui.row(page,{gap=cg,on_click=open,style={padding=16,radius=8,
+  bg_color=C.card,bg_opa=255,border_width=1,border_color=C.border}}))
+v.favorites[i]={box=box}
+end
+page=v.pages.search
+v.query=assert(ui.label(page,{text="",width=width,height=58,font="large"}))
+ui.set_style(v.query,{font_size=48,align="center"})
+local keypad_w=math.floor(W*3/4)
+local surround=assert(ui.row(page,{gap=0}))
+ui.col(surround,{width=(width-keypad_w)//2,height=1})
+local keypad=assert(ui.row(surround,{width=keypad_w,gap=gap}))
+local numeric_w=math.floor(keypad_w*2/3)
+local numeric=assert(ui.col(keypad,{width=numeric_w,gap=gap}))
+for _, keys in ipairs({{"1","2","3"},{"4","5","6"},{"7","8","9"},{"Clear","0","<"}}) do
+local row=assert(ui.row(numeric,{gap=gap}))
+for _, value in ipairs(keys) do
+  local caption=value=="Clear" and ICON.clear or value=="<" and ICON.backspace or value
+  local key_button=button(row,caption,(numeric_w-2*gap)//3,key_h,function() key(value) end)
+  ui.set_style(key_button,{border_width=0})
+  v.key_buttons[value]=key_button
+end
+end
+local letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+local bank_w=keypad_w-numeric_w-gap
+local bank=assert(ui.scroll_view(keypad,{width=bank_w,height=4*key_h+3*gap,gap=gap}))
+for i=1,#letters,2 do
+local row=assert(ui.row(bank,{gap=gap}))
+v.letter_rows[#v.letter_rows+1]=row
+for j=i,math.min(i+1,#letters) do
+  local slot=#v.letter_buttons+1
+  local key_button=button(row,"",(bank_w-gap)//2,key_h,function()
+    local value=v.letter_slots[slot]
+    if value then key(value) end
+  end)
+  ui.set_style(key_button,{border_width=0})
+  v.letter_buttons[slot]=key_button
+  v.letter_hidden[slot]=false
+end
+end
+v.recent_heading=text(page,"Recent:",width,"normal",C.muted)
+ui.set_hidden(v.recent_heading,true)
+for i=1,8 do
+local box=assert(ui.row(page,{gap=cg,on_click=function() if routes[i] then open_route(routes[i]) end end,
+  style={padding=16,radius=8,bg_color=C.card,bg_opa=255,border_width=1,border_color=C.border}}))
+v.routes[i]={box=box}
+ui.set_hidden(box,true)
+end
+local tab
+v.rows_ready=function(name)
+if name=="detail" or name==tab then return end
+for _,r in ipairs(tab=="favorites" and v.favorites or v.routes) do
+  for _,obj in ipairs(r.content or {}) do ui.delete(obj) end
+  r.content=nil;r.route=nil
+end
+for _,r in ipairs(name=="favorites" and v.favorites or v.routes) do
+  local col
+  r.route,r.operator,col=rc(r.box);r.content={col}
+  if name=="favorites" then
+    local ew=math.floor(78*scale)
+    local dw=width-32-rw-ew-2*cg
+    local d=assert(ui.col(r.box,{width=dw,gap=rg}))
+    r.destination=text(d,"",dw,"large")
+r.stop_name=text(d,"",dw,"large",C.muted)
+    r.etas=text(r.box,"--\n--\n--",ew,"normal",C.accent)
+    ui.set_style(r.etas,{align="right"})
+    r.content[2]=d;r.content[3]=r.etas
+  else
+    r.destination=text(r.box,"",width-32-rw-cg,"large")
+    r.content[2]=r.destination
   end
-  for _, name in ipairs({"favorites","search","detail"}) do
-    local page_pad=name=="detail" and detail_pad or pad
-    local page_gap=name=="detail" and math.floor(6*scale) or math.floor(12*scale)
-    local page=assert(ui.scroll_view(root, {height=name=="detail" and H or H-tab_h,gap=page_gap,style={padding=page_pad}}))
-    v.pages[name]=page
-  end
-  local page=v.pages.favorites
-  v.empty=assert(ui.col(page,{gap=math.floor(16*scale),style={padding=math.floor(32*scale)}}))
-  local empty_w=width-2*math.floor(32*scale)
-  ui.col(v.empty,{height=math.floor(38*scale)})
-  local mark=text(v.empty,"BUS",empty_w,"large",C.accent)
-  ui.set_style(mark,{align="center"})
-  local title=text(v.empty,"No saved stops yet",empty_w,"large")
-  ui.set_style(title,{align="center"})
-  local hint=text(v.empty,"Find a route and save the stops you check often.",empty_w,"small",C.muted)
-  ui.set_style(hint,{align="center"})
-  text(v.empty,"Use Search above to find a route.",empty_w,"small",C.muted)
-  for i=1,8 do
-    local box=card(page,function() if favorites[i] then open_route(favorites[i],favorites[i]) end end)
-    v.favorites[i]={box=box,route=text(box,"",width-32,"large"),destination=text(box,"",width-32,readable_font,C.muted),
-      stop=text(box,"",width-32,"normal"),eta=text(box,"",width-32,"normal",C.accent)}
-  end
-  page=v.pages.search
-  v.query=assert(ui.label(page,{text="",width=width,height=58,font="large"}))
-  ui.set_style(v.query,{font_size=48,align="center"})
-  -- Center the keypad within the available width.
-  local keypad_w=math.floor(W*3/4)
-  local surround=assert(ui.row(page,{gap=0}))
-  ui.col(surround,{width=(width-keypad_w)//2,height=1})
-  local keypad=assert(ui.row(surround,{width=keypad_w,gap=gap}))
-  local numeric_w=math.floor(keypad_w*2/3)
-  local numeric=assert(ui.col(keypad,{width=numeric_w,gap=gap}))
-  for _, keys in ipairs({{"1","2","3"},{"4","5","6"},{"7","8","9"},{"Clear","0","<"}}) do
-    local row=assert(ui.row(numeric,{gap=gap}))
-    for _, value in ipairs(keys) do
-      local caption=value=="Clear" and ICON.clear or value=="<" and ICON.backspace or value
-      local key_button=button(row,caption,(numeric_w-2*gap)//3,key_h,function() key(value) end)
-      ui.set_style(key_button,{border_width=0})
-      v.key_buttons[value]=key_button
-    end
-  end
-  local letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-  local bank_w=keypad_w-numeric_w-gap
-  local bank=assert(ui.scroll_view(keypad,{width=bank_w,height=4*key_h+3*gap,gap=gap}))
-  for i=1,#letters,2 do
-    local row=assert(ui.row(bank,{gap=gap}))
-    v.letter_rows[#v.letter_rows+1]=row
-    for j=i,math.min(i+1,#letters) do
-      local slot=#v.letter_buttons+1
-      local key_button=button(row,"",(bank_w-gap)//2,key_h,function()
-        local value=v.letter_slots[slot]
-        if value then key(value) end
-      end)
-      ui.set_style(key_button,{border_width=0})
-      v.letter_buttons[slot]=key_button
-      v.letter_hidden[slot]=false
-    end
-  end
-  v.recent_heading=text(page,"Recent:",width,"normal",C.muted)
-  ui.set_hidden(v.recent_heading,true)
-  for i=1,8 do
-    local box=assert(ui.col(page,{gap=4,on_click=function() if routes[i] then open_route(routes[i]) end end,
-      style={padding=16,radius=8,bg_color=C.card,bg_opa=255,border_width=1,border_color=C.border}}))
-    v.routes[i]={box=box,route=text(box,"",width-32,"large"),
-      destination=text(box,"",width-32,readable_font,C.muted)}
-    ui.set_hidden(box,true)
-  end
-  v.route_nav=assert(ui.row(page,{gap=gap}))
-  v.route_prev=button(v.route_nav,"Previous",math.floor(width/3),key_h,function() move_route_page(-1) end)
-  v.route_page=text(v.route_nav,"",math.floor(width/3),"small",C.muted)
-  ui.set_style(v.route_page,{align="center"})
-  v.route_next=button(v.route_nav,"Next",math.floor(width/3),key_h,function() move_route_page(1) end)
-  ui.set_hidden(v.route_nav,true)
-  page=v.pages.detail
-  -- Tighten the detail header while keeping generous 48 px tap targets.
-  local header_h=math.floor(48*scale)
-  local header=assert(ui.row(page,{height=header_h,gap=gap}))
-  v.detail_header=header
-  local icon_w=header_h
-  local back=button(header,ICON.back,icon_w,header_h,function() M.onBack() end)
-  ui.set_style(back,{bg_color=C.bg,border_width=0,text_color=C.accent})
-  v.route_title=assert(ui.button(header,{text="",width=detail_width-2*icon_w-2*gap,height=header_h,font="large",
-    style={bg_color=C.bg,text_color=C.text,border_width=0,align="left"}}))
-  local refresh_button=button(header,ICON.refresh,icon_w,header_h,refresh)
-  ui.set_style(refresh_button,{bg_color=C.bg,border_width=0,text_color=C.accent,font_size=28})
-  ui.set_style(back,{font_size=28})
-  v.destination=text(page,"",detail_width,readable_font,C.muted)
-  v.stop_section=assert(ui.col(page,{gap=math.floor(8*scale)}))
-  local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))
-  v.stop_list=assert(ui.list(v.stop_section,{width=detail_width,height=stop_list_h,gap=math.floor(8*scale),
-    on_select=function(index) select_stop(index) end,
-    style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
-  v.eta_section=assert(ui.col(page,{gap=math.floor(16*scale)}))
-  v.stop_name=text(v.eta_section,"Choose a stop",detail_width,"large")
-  text(v.eta_section,"NEXT ARRIVALS",detail_width,"small",C.muted)
-  local board=card(v.eta_section,nil)
-  for i=1,3 do
-    local row=assert(ui.row(board,{gap=12}))
-    v.arrivals[i]={box=row,minutes=text(row,"",math.floor(118*scale),"large",i==1 and C.accent or C.text),
-      remark=text(row,"",detail_width-44-math.floor(118*scale),"small",C.muted)}
-    ui.set_hidden(row,true)
-  end
-  v.no_eta=text(board,"No arrivals available",detail_width-32,"normal",C.muted)
-  ui.set_hidden(v.no_eta,true)
-  v.save=button(v.eta_section,"Save stop",detail_width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
-  for _, name in ipairs({"favorites","search","detail"}) do
-    v.status[name]=text(v.pages[name],"",name=="detail" and detail_width or width,"normal",C.muted)
-  end
-  v.search_timer=ui.timer(100,search_tick)
-  update_keypad_state(); update_actions(); show_page("favorites")
-  resource_checkpoint("launch_ready")
-  return true
+end
+tab=name
+end
+v.route_nav=assert(ui.row(page,{gap=gap}))
+v.route_prev=button(v.route_nav,"Previous",math.floor(width/3),key_h,function() move_route_page(-1) end)
+v.route_page=text(v.route_nav,"",math.floor(width/3),"small",C.muted)
+ui.set_style(v.route_page,{align="center"})
+v.route_next=button(v.route_nav,"Next",math.floor(width/3),key_h,function() move_route_page(1) end)
+ui.set_hidden(v.route_nav,true)
+page=v.pages.detail
+local header_h=math.floor(48*scale)
+local header=assert(ui.row(page,{height=header_h,gap=gap}))
+v.detail_header=header
+local icon_w=header_h
+local back=button(header,ICON.back,icon_w,header_h,function() M.onBack() end)
+ui.set_style(back,{bg_color=C.bg,border_width=0,text_color=C.accent})
+v.route_title=assert(ui.button(header,{text="",width=detail_width-2*icon_w-2*gap,height=header_h,font="large",
+style={bg_color=C.bg,text_color=C.text,border_width=0,align="left"}}))
+local refresh_button=button(header,ICON.refresh,icon_w,header_h,refresh)
+ui.set_style(refresh_button,{bg_color=C.bg,border_width=0,text_color=C.accent,font_size=28})
+ui.set_style(back,{font_size=28})
+v.destination=text(page,"",detail_width,readable_font,C.muted)
+v.stop_section=assert(ui.col(page,{gap=math.floor(8*scale)}))
+local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))
+v.stop_list=assert(ui.list(v.stop_section,{width=detail_width,height=stop_list_h,gap=math.floor(8*scale),
+on_select=function(index) select_stop(index) end,
+style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
+v.eta_section=assert(ui.col(page,{gap=math.floor(16*scale)}))
+v.stop_name=text(v.eta_section,"Choose a stop",detail_width,"large")
+text(v.eta_section,"NEXT ARRIVALS",detail_width,"small",C.muted)
+local board=card(v.eta_section,nil)
+for i=1,3 do
+local row=assert(ui.row(board,{gap=12}))
+v.arrivals[i]={box=row,minutes=text(row,"",math.floor(118*scale),"large",i==1 and C.accent or C.text),
+  remark=text(row,"",detail_width-44-math.floor(118*scale),"small",C.muted)}
+ui.set_hidden(row,true)
+end
+v.no_eta=text(board,"No arrivals available",detail_width-32,"normal",C.muted)
+ui.set_hidden(v.no_eta,true)
+v.save=button(v.eta_section,"Save stop",detail_width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
+for _, name in ipairs({"favorites","search","detail"}) do
+v.status[name]=text(v.pages[name],"",name=="detail" and detail_width or width,"normal",C.muted)
+end
+v.search_timer=ui.timer(100,search_tick)
+update_keypad_state(); update_actions(); show_page("favorites")
+resource_checkpoint("launch_ready")
+return true
 end
 function M.onPause()
   v.paused=true;search_pending=false;v.search_due=nil

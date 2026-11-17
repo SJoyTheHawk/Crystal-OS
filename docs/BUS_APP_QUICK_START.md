@@ -1,6 +1,6 @@
 # Bus Phases 1–3 — install and board test
 
-Updated 2026-11-18. Package **0.2.22** implements direct KMB/LWB and Citybus
+Updated 2026-11-18. Package **0.2.23** implements direct KMB/LWB and Citybus
 stop sequences, metadata fallback, joint-provider ETA merging, and Phase 3
 persistence validation. Possible alphabetic route keys now reflow into a
 consistent two-column grid. The detail header is more compact, and stop entries
@@ -10,8 +10,10 @@ remaining screen height to its bottom status line. The user reports the Phase 3 
 board checklist passed.
 
 Favorite and recent-route records are validated on load. Failed writes preserve
-the current lists and show an error. The board checklist includes app restart
-and persistence-write failure cases.
+the current lists and show an error. The P4 checklist covers app restart,
+reboot, removal and limit behavior; simulated write failures are covered by
+the host harness. Hardware storage-write failure injection was not part of the
+board run.
 
 Version 0.2.17 keeps notifications in the bottom status field and removes the
 duplicate guidance above route results and stops. Check Search, open a route,
@@ -125,7 +127,7 @@ No flash has been performed as part of the implementation.
 
 Build `/tmp/phase17-bus-live.capp` from the current source below. The previous
 signed package may be an older version; confirm the package is **Bus Lite
-0.2.22**, key ID 240, with network permissions for `data.etabus.gov.hk` and
+0.2.23**, key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
 1. On P4, open Settings → Developer Tools → Control Panel and pair as usual.
@@ -135,7 +137,7 @@ signed package may be an older version; confirm the package is **Bus Lite
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.22**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.23**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the

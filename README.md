@@ -9,7 +9,9 @@ esp-brookesia, with swipeable app cards, Quick Settings and installable apps.
 720 × 720 touch display, ESP32-C6 hosted Wi-Fi, and Ethernet. P4 bring-up,
 visual/interaction acceptance (P4.2), and network expansion (P4.3) are complete
 for their documented scopes as of **November 15, 2026**. Performance, soak,
-and remaining feature qualification continue in P4.4 before Phase 17 (Lua).
+and remaining feature qualification continue in P4.4. Phase 17 Lua runtime
+support is implemented; Bus Lite **0.2.23** has completed Phase 3 persistence
+acceptance, with Phase 4 refresh and polish next (November 18, 2026).
 The validated S3 baseline is preserved on branch `ESP32-S3-Touch-LCD-4B`.
 See the [validation records](#project-status) and [documentation index](docs/README.md).
 
@@ -78,6 +80,9 @@ The previous **ESP32-S3-Touch-LCD-4B** baseline (480 × 480, 16 MB flash,
   and the P4 Ethernet diagnostics app.
 - **Manage Apps:** enable bundled apps live, disable them for the next reboot,
   reorder cards, and clear saved app data.
+- **Lua packages:** install signed `.capp` apps through the Developer Tools
+  control panel. Bus Lite 0.2.23 provides bundled route search, KMB/Citybus
+  stops and live ETA, joint routes, eight favorites and five recent routes.
 - **Shared services:** persistent app state, RTC and network time, Wi-Fi, power
   management, an on-screen keyboard, and a time/network/battery status bar.
 - **P4 networking:** prefer Ethernet after DHCP, fall back to connected Wi-Fi,
@@ -163,7 +168,8 @@ P4 acceptance, as recorded on November 15, 2026:
 | P4.2 — visuals and interaction | Accepted boot screen, cards, Quick Settings, immediate Settings navigation, Wi-Fi UI, and enlarged keyboard. [Validation](docs/ESP32_P4_PHASE2_VALIDATION.md) |
 | P4.3 — network expansion | Accepted Ethernet, Wi-Fi fallback/reconnection, Ethernet-only Weather/SNTP/HTTPS, browser pairing/app-list access, and network indicator. [Validation](docs/ESP32_P4_PHASE3_VALIDATION.md) |
 | P4.4 — qualification | Sustained performance/FPS, memory and network soaks, package/OTA flows, and remaining feature parity are still open. |
-| Phase 17 — Lua runtime | Follows P4 migration/qualification. |
+| Phase 17 — Lua runtime | Implemented; runtime/device checks remain tracked in the [test guide](docs/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md). |
+| Bus Lite 0.2.23 | Phases 1–3 implemented; Phase 3 persistence accepted on P4. [Results](docs/BUS_APP_PHASE_3_RESULTS.md). Phase 4 scheduled refresh/countdown and polish remain open. |
 
 These scoped acceptance records do not establish release readiness or a 60 fps
 guarantee. Retained memory, HTTPS, and lifecycle findings are listed in the
@@ -184,7 +190,8 @@ components/*_app/             Bundled apps and development examples
 sim/                         Host HAL mocks and screenshot harness
 tools/                       Host checks, screenshot generation, and recovery
 docs/                        Architecture, validation records, and images
-examples/                    App-platform examples and archived Bus workload
+examples/bus3p/              Current installable Bus Lite Lua package
+examples/bus_app/            Historical S3 Bus implementation and catalog inputs
 reference/                   Vendor board resources and reference material
 partitions.esp32p4.csv        P4 dual-OTA, filesystem, and app storage layout
 sdkconfig.defaults.esp32p4    P4 target profile (with common/Board Manager defaults)
@@ -201,6 +208,7 @@ references, implementation records and important unresolved findings.
 | --- | --- |
 | P4 migration | [Overview](docs/MIGRATION_PLAN_ESP32_P4.md) · [Detailed proposal](docs/CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) |
 | App platform | [Overview](docs/APP_PLATFORM_V2_OVERVIEW.md) · [Implementation plan](docs/APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md) |
+| Bus Lite | [Package](examples/bus3p/README.md) · [Transformation plan](docs/README_BUS_TRANSFORMATION.md) · [Install/test](docs/BUS_APP_QUICK_START.md) |
 | Original OS architecture | [Design](docs/v1_implementation_plan/DESIGN.md) · [Code guide](docs/v1_implementation_plan/CODE_GUIDE.md) |
 | Build and recovery | [P4 build/flash](docs/ESP32_P4_PHASE1_VALIDATION.md#build-from-the-repository-root) · [S3 ESP-IDF commands](docs/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
 | Focused checks | [Regression guide](docs/APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) |

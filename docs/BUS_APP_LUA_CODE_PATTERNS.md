@@ -2,7 +2,7 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1–3 contract (0.2.22, 2026-11-18)
+## Verified Phase 1–3 contract (0.2.23, 2026-11-18)
 
 Phases 1–3 are implemented in `examples/bus3p/main.lua`; use that tested
 source for working API calls. Phase 3 validates persisted records and commits
@@ -70,8 +70,8 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
 
 See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2
 joint matching and sequential ETA merging, plus Phase 3 persistence hardening,
-are implemented in the production entry file. P4 acceptance remains pending;
-Phase 4 periodic refresh is still open.
+are implemented in the production entry file. The user-reported Phase 3 P4
+acceptance passed on 2026-11-18; Phase 4 periodic refresh remains open.
 
 
 ## 1. Provider Module Implementation
@@ -925,5 +925,6 @@ end
 
 These patterns replicate the S3 C++ implementation and Flutter Dart logic in P4 Lua. Follow them faithfully — they're proven to work in production mobile apps and native MCU apps. The adaptation is straightforward: Lua has the necessary primitives (HTTP, JSON, state, timers), and the memory constraints are manageable with bounded processing.
 
-**Next step**: Complete Phase 3 persistence acceptance on P4, then implement
-Phase 4 ETA refresh and live countdown.
+**Next step**: Implement Phase 4 ETA refresh and live countdown. The Phase 3
+persistence acceptance is closed; platform-level ten-cycle stability and
+resource measurements remain separate acceptance work.

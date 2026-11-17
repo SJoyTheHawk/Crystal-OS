@@ -1,6 +1,6 @@
 # Bus App Transformation Guide — S3 Native to P4 Lua
 
-> Current implementation (0.2.22, 2026-11-18): local work finishes without
+> Current implementation (0.2.23, 2026-11-18): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
@@ -42,9 +42,9 @@ with stable source order. If one source or the stop match fails, successful
 arrivals remain visible with an explicit partial-data status. Host joint-flow
 coverage passes; P4 joint-route acceptance remains pending.
 
-## Phase 3 implementation update — 2026-11-17
+## Phase 3 implementation update — 2026-11-18
 
-Bus Lite **0.2.18** validates favorite and recent-route records when loading
+Bus Lite **0.2.18** introduced validation of favorite and recent-route records when loading
 state, preserves joint-provider route identity and stop occurrence, and shows
 when malformed entries are skipped. Add, remove and recent-route operations
 build candidate lists and publish them in memory only after `state.set()`
@@ -54,7 +54,9 @@ relaunch and reboot, persistent removal across relaunch and reboot, recent-route
 ordering/deduplication and five-route limit, joint-route favorite reopening,
 and the eight-favorite limit. Simulated failed-write handling is covered by host
 tests; an injected storage failure was not part of the board checklist. The
-accepted UI remains unchanged.
+accepted UI remains unchanged. The current package carrying this work is
+**0.2.23**. Phase 3 is closed; the detailed closure record is in
+`BUS_APP_PHASE_3_RESULTS.md`.
 
 The original status/estimates below describe the planning baseline. S3 was
 resource limited and incomplete; its reports do not establish P4 capacity.
@@ -486,7 +488,7 @@ Timer tick (every 100ms)
 
 **Deliverable**: Joint routes display merged ETA with provider labels
 
-### Phase 3: Persistence (implemented in 0.2.18; P4 acceptance passed)
+### Phase 3: Persistence (implemented in 0.2.18; closed in 0.2.22)
 
 **Implemented**:
 1. Validate stored favorites and recents, including joint-route and stop identity.

@@ -16,6 +16,39 @@ def write(path: Path, value: object) -> Path:
 
 
 def main() -> None:
+    # Service 2 occurring first must never displace the standard variant.
+    base = {"route": "101", "bound": "O", "orig_en": "East", "dest_en": "West"}
+    stats = {}
+    standard = catalog.source_records({"data": [
+        {**base, "service_type": "2"},
+        {**base, "service_type": 1},
+        {**base, "route": "999", "service_type": "3"},
+        {**base, "co": "LWB", "route": "A31", "service_type": "1"},
+    ]}, "KMB", stats)
+    assert [row["route"] for row in standard] == ["101", "A31"]
+    assert standard[1]["operator"] == "LWB"
+    assert all(row["service_type"] == "1" for row in standard)
+    assert stats == {"source_records": 4, "excluded_nonstandard": 2, "normalized_records": 2}
+    try:
+        catalog.source_records({"data": [base]}, "KMB")
+    except ValueError as error:
+        assert "missing service_type" in str(error)
+    else:
+        raise AssertionError("missing KMB service was silently treated as standard")
+    assert catalog.source_records({"data": [{**base, "service_type": "2"}]}, "KMB") == []
+    ctb = catalog.source_records({"data": [
+        {"company_id": "CTB", "route": "101", "orig_en": "East", "dest_en": "West"},
+    ]}, "CTB")
+    assert [(r["bound"], r["destination_en"], r["service_type"]) for r in ctb] == [("O", "West", "1"), ("I", "East", "1")]
+    snapshot = catalog.source_records({"routeList": [
+        {**base, "co": ["ctb"], "bound": {"ctb": "I"}, "serviceType": 1},
+        {**base, "co": ["ctb"], "bound": {"ctb": "I"}, "serviceType": 2},
+    ]}, "CTB")
+    assert len(snapshot) == 1 and snapshot[0]["bound"] == "I"
+    merged = catalog.route_records(standard, ctb)
+    joint = next(r for r in merged if r["operator"] == "JOINT")
+    assert all(p["service_type"] == "1" for p in joint["parts"])
+    assert any(r["operator"] == "CTB" and r["bound"] == "I" for r in merged)
     with tempfile.TemporaryDirectory(prefix="phase17-catalog-") as directory:
         root = Path(directory)
         kmb_routes = write(
@@ -79,7 +112,7 @@ def main() -> None:
                 for line in (args.output / name).read_text().splitlines()
                 if line
             )
-        assert len(records) == 3
+        assert len(records) == 5
         assert sum(row["operator"] == "JOINT" for row in records) == 1
         assert {row["route"] for row in records} == {"1A", "2", "99"}
         catalog_files = [path for path in args.output.iterdir() if path.is_file()]
@@ -87,7 +120,7 @@ def main() -> None:
         assert sum(path.stat().st_size for path in catalog_files) == manifest["limits"]["total_bytes"]
 
         directory=(args.output/'runtime.txt').read_text()
-        assert 'L A' in directory and 'C 3' in directory and 'Q route-search-000.txt' in directory
+        assert 'L A' in directory and 'C 5' in directory and 'Q route-search-000.txt' in directory
         assert 'R routes-000.jsonl ' in directory
         search_lines=(args.output/'route-search-000.txt').read_text().splitlines()
         assert search_lines and search_lines[0].startswith('1A\t')

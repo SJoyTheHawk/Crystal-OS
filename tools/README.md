@@ -44,6 +44,11 @@ adapter with a scripted host driver under AddressSanitizer and UBSan. It checks
 scanning during saved-network retries and backoff, queued retry callbacks,
 connected scans, scan failures, radio-off/forget cancellation, and late scan
 events. It requires a C++17 compiler and does not simulate ESP32 radio timing.
+It also checks recovery after immediate driver/RPC errors without a disconnect
+event, deferred reconnect-worker dispatch, stale events after radio-off/forget,
+and immediate lease-loss notifications. See the
+[Wi-Fi recovery diagnosis](../docs/WIFI_RECOVERY_DIAGNOSIS.md) for the incident
+evidence, fixes, and remaining hardware checks.
 
 For device verification, boot with a saved SSID out of range and open WiFi
 Networks while it is retrying. Nearby networks should appear; leaving the

@@ -7,7 +7,8 @@ As of November 15, 2026, board bring-up, P4.2 visual/interaction acceptance,
 and P4.3 network expansion pass for their documented scopes. P4.4 performance,
 soak, package/OTA, and remaining feature qualification are still open. Phase 17
 Lua runtime implementation has resumed and is in place; its device acceptance
-checks and Bus script migration are tracked separately.
+checks and Bus script migration are tracked separately. Bus Lite 0.2.23 has
+completed Phase 3 persistence acceptance; Phase 4 refresh and polish remain open.
 
 - [P4.1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md): tested
   rev1.3 board, 720 × 720 display, signed builds, flash layout, and startup.
@@ -55,6 +56,9 @@ instructions in those documents.
 - [Phase 17 step-by-step P4 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
 - [Phase 17.3 Bus Lua comparison and remaining acceptance plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md)
 - [Focused regression guide](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
+- [Bus transformation status](README_BUS_TRANSFORMATION.md), [Phase 3 results](BUS_APP_PHASE_3_RESULTS.md), and [installation guide](BUS_APP_QUICK_START.md)
+- [Standard-service catalog policy and reproduction](BUS_STANDARD_SERVICE_CATALOG.md)
+- [Wi-Fi recovery diagnosis and pending board checks](WIFI_RECOVERY_DIAGNOSIS.md)
 - [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
 - [ESP-IDF commands](ESP_IDF_COMMAND_GUIDE.md): existing S3 instructions.
 - [Host tools](../tools/README.md) and [simulator status](SIMULATOR.md)

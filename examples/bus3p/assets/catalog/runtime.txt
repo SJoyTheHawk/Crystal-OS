@@ -1,49 +1,45 @@
-L ABCDEFGHKMNPRSTWX
-C 2115
-Q route-search-000.txt 16330 281
-Q route-search-001.txt 16328 288
-Q route-search-002.txt 16349 297
-Q route-search-003.txt 16376 212
-Q route-search-004.txt 16315 260
-Q route-search-005.txt 16335 210
-Q route-search-006.txt 16338 231
-Q route-search-007.txt 16382 244
-Q route-search-008.txt 5920 92
-K keypad.txt 2672
-R routes-000.jsonl 12345
-R routes-001.jsonl 156789
-R routes-002.jsonl 1
-R routes-003.jsonl 12
-R routes-004.jsonl 23
-R routes-005.jsonl 34
-R routes-006.jsonl 45
-R routes-007.jsonl 567
-R routes-008.jsonl 7
-R routes-009.jsonl 78
-R routes-010.jsonl 8
-R routes-011.jsonl 89
-R routes-012.jsonl 19
-R routes-013.jsonl 1
-R routes-014.jsonl 12
+L ABCDEFGHKMNOPRSTWX
+C 1968
+Q route-search-000.txt 16357 297
+Q route-search-001.txt 16323 286
+Q route-search-002.txt 16308 256
+Q route-search-003.txt 16366 253
+Q route-search-004.txt 16371 224
+Q route-search-005.txt 16314 244
+Q route-search-006.txt 16340 247
+Q route-search-007.txt 10048 161
+K keypad.txt 2664
+R routes-000.jsonl 123456
+R routes-001.jsonl 16789
+R routes-002.jsonl 12
+R routes-003.jsonl 23
+R routes-004.jsonl 34
+R routes-005.jsonl 456
+R routes-006.jsonl 67
+R routes-007.jsonl 7
+R routes-008.jsonl 78
+R routes-009.jsonl 89
+R routes-010.jsonl 19
+R routes-011.jsonl 1
+R routes-012.jsonl 12
+R routes-013.jsonl 2
+R routes-014.jsonl 2
 R routes-015.jsonl 2
-R routes-016.jsonl 2
-R routes-017.jsonl 2
-R routes-018.jsonl 2
-R routes-019.jsonl 2356
-R routes-020.jsonl 6
-R routes-021.jsonl 6
-R routes-022.jsonl 67
-R routes-023.jsonl 789
-R routes-024.jsonl 9
-R routes-025.jsonl 9
-R routes-026.jsonl 9A
-R routes-027.jsonl AB
-R routes-028.jsonl BE
-R routes-029.jsonl EHN
-R routes-030.jsonl N
-R routes-031.jsonl N
-R routes-032.jsonl NPRST
-R routes-033.jsonl TWX
+R routes-016.jsonl 23
+R routes-017.jsonl 356
+R routes-018.jsonl 6
+R routes-019.jsonl 6
+R routes-020.jsonl 678
+R routes-021.jsonl 89
+R routes-022.jsonl 9
+R routes-023.jsonl 9A
+R routes-024.jsonl AB
+R routes-025.jsonl BE
+R routes-026.jsonl EHN
+R routes-027.jsonl N
+R routes-028.jsonl N
+R routes-029.jsonl NOPRS
+R routes-030.jsonl STWX
 S KMB stops-kmb-000.jsonl 00040ED8B61CA94B 04FC6E130D4953F4
 S KMB stops-kmb-001.jsonl 0511A6AC2CBC9A21 0A4AB87891ABB16A
 S KMB stops-kmb-002.jsonl 0A5D47D2E5823024 0ED8503933F861D8

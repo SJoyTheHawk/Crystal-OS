@@ -58,7 +58,7 @@ def main():
         assert manifest["icon"] == "assets/icon.bin"
         assert "assets/icon.bin" in inspected["files"]
         assert "fixture" in manifest["name"]
-        assert manifest["version"] == "0.2.22"
+        assert manifest["version"] == live["version"]
         assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
@@ -106,11 +106,13 @@ def main():
         assert catalog_manifest["limits"]["file_count"] == len(catalog_files)
         assert catalog_manifest["limits"]["file_count"] <= 128
         assert catalog_manifest["limits"]["total_bytes"] <= 5_632 * 1024
-        assert catalog_manifest["routes"]["records"] == 2115
+        assert catalog_manifest["routes"]["records"] == 1968
+        assert catalog_manifest["routes"]["selection"]["KMB"]["excluded_nonstandard"] == 288
+        assert catalog_manifest["routes"]["selection"]["CTB"]["normalized_records"] == 818
         assert catalog_manifest["routes"]["search_pages"]
         assert all((phase17_bus_fixture.OUTPUT / "assets/catalog" / name).stat().st_size <= 16 * 1024
                    for name in catalog_manifest["routes"]["search_pages"])
-        assert catalog_manifest["routes"]["joint_records"] == 160
+        assert catalog_manifest["routes"]["joint_records"] == 135
         assert catalog_manifest["stops"]["KMB"]["records"] == 6753
         assert catalog_manifest["stops"]["CTB"]["records"] == 2586
         assert catalog_manifest["limits"]["largest_file_bytes"] <= 16 * 1024
@@ -121,6 +123,10 @@ def main():
         for page in catalog_manifest["routes"]["pages"]:
             route_records.extend(json.loads(line) for line in
                                  (phase17_bus_fixture.OUTPUT / "assets" / "catalog" / page).read_text().splitlines())
+        assert len(route_records) == catalog_manifest["routes"]["records"]
+        assert all(row["service_type"] == "1" for row in route_records)
+        assert all(part["service_type"] == "1" for row in route_records for part in row.get("parts", []))
+        assert len({row["key"] for row in route_records}) == len(route_records)
         # Runtime filters must be derived from actual records, never numeric
         # first/last ranges that can omit lexical prefix matches such as 101.
         directory = phase17_bus_fixture.OUTPUT / "assets/catalog/runtime.txt"

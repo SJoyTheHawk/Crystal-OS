@@ -1,4 +1,10 @@
-# Bus Lite live-provider package (0.2.22)
+# Bus Lite live-provider package (0.2.23)
+
+Version 0.2.23 adds the three-column Favorites layout, standard-service route
+catalogs and icon tabs with full-width touch targets. The icon, label and
+surrounding tab space all select the tab. This uses the existing app ABI;
+install the rebuilt package through the control panel without a firmware flash.
+Phase 3 persistence is accepted; Phase 4 refresh/countdown and polish remain open.
 
 Version 0.2.20 enlarged route labels to 28 px and added a **Recent:** heading
 above recent searches. Version 0.2.21 tightens the detail page's top spacing and

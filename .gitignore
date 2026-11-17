@@ -23,6 +23,8 @@ __pycache__/
 # Keep published PNG/JPG assets in docs/images/ under version control.
 # Use .cache/ for local --output-dir previews.
 /.cache/
+/compile_commands.json
+/Testing/
 /*.ppm
 /sim/**/*.ppm
 /docs/images/**/*.ppm
@@ -32,6 +34,10 @@ __pycache__/
 *.capp
 *.log
 *.trace
+*.core
+*.swp
+*.swo
+*~
 
 # macOS metadata.
 .DS_Store
@@ -41,6 +47,9 @@ __pycache__/
 *.pem
 /session.json
 /closure-session.json
+/.crystal_keys/
+/.env
+/.env.local
 
 # Locally extracted video frames used during hardware validation.
 video_frames_*/

@@ -445,7 +445,7 @@ public:
             const esp_err_t err = esp_wifi_connect();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
-                notify(ConnectFailed);
+                connection_failed();
             }
         }
     }
@@ -490,7 +490,10 @@ public:
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (enabled == enabled_) return;
         enabled_ = enabled;
-        if (!enabled) associated_.store(false);
+        if (!enabled) {
+            associated_.store(false);
+            has_ip_ = false;
+        }
         write_enabled(enabled_);
         // The service task starts after the UI. Preserve an early toggle now;
         // start() will read the same persisted value before touching the radio.
@@ -503,7 +506,9 @@ public:
             // esp_wifi_start() the station is not yet up and connect() returns
             // ESP_ERR_WIFI_STATE.
             pending_connect_ = last_ssid_[0] != 0;
-            if (esp_wifi_start() != ESP_OK) {
+            const esp_err_t err = esp_wifi_start();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "WiFi enable failed: %s", esp_err_to_name(err));
                 pending_connect_ = false;
                 notify(Disconnected);
                 return;
@@ -516,7 +521,10 @@ public:
             // networks from before the toggle.
             cancel_scan();
             scan_count_ = 0;
-            (void)esp_wifi_disconnect(); (void)esp_wifi_stop(); notify(Disconnected);
+            (void)esp_wifi_disconnect();
+            const esp_err_t err = esp_wifi_stop();
+            if (err != ESP_OK) ESP_LOGE(TAG, "WiFi stop failed: %s", esp_err_to_name(err));
+            notify(Disconnected);
         }
     }
     const char *last_ssid() const override { return last_ssid_; }
@@ -571,7 +579,7 @@ public:
             if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
             (void)esp_wifi_disconnect();
             pending_connect_ = false;
-            (void)esp_wifi_connect();
+            schedule_retry();
         }
         return true;
     }
@@ -672,21 +680,23 @@ private:
         if (self == nullptr) return;
         std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
         if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            // Events already queued before disable/forget must not restore a
+            // route after the user deliberately took the station offline.
+            if (!self->enabled_ || self->last_ssid_[0] == '\0') return;
             self->associated_.store(true);
             self->has_ip_ = true;
+            ESP_LOGI(TAG, "WiFi IP acquired; clearing reconnect backoff");
             self->notify(GotIp);
         } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
             self->has_ip_ = false;
+            self->notify(Disconnected);
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
             if (self->pending_connect_ && !self->scan_active_ && self->enabled_) {
                 self->pending_connect_ = false;
-                const esp_err_t err = esp_wifi_connect();
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
-                    self->notify(ConnectFailed);
-                }
+                self->schedule_retry();
             }
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+            if (!self->enabled_ || self->last_ssid_[0] == '\0') return;
             self->associated_.store(true);
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
             self->associated_.store(false);
@@ -695,11 +705,15 @@ private:
             self->has_ip_ = false;
             const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
             const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
-            if (disconnected != nullptr) ESP_LOGW(TAG, "WiFi disconnected, reason=%u", reason);
+            if (disconnected != nullptr) {
+                ESP_LOGW(TAG, "WiFi disconnected, reason=%u rssi=%d enabled=%d",
+                         reason, disconnected->rssi, self->enabled_.load());
+            }
             if (self->scan_active_) {
                 // Includes the intentional disconnect that made room for the
                 // scan, and a link loss during a connected background scan.
                 self->resume_after_scan_ = self->enabled_ && self->last_ssid_[0] != '\0';
+                self->notify(Disconnected);
                 return;
             }
             // AUTH_EXPIRE / handshake timeouts are routinely transient, especially
@@ -708,15 +722,7 @@ private:
             // backoff. A missing AP is also retried: it may simply be out of
             // range temporarily and should not disable automatic recovery.
             if (self->enabled_ && self->last_ssid_[0] != 0) {
-                ++self->retries_;
-                if (self->retries_ <= kMaxRetries) {
-                    ESP_LOGW(TAG, "Retrying connect (%u/%u)", self->retries_, kMaxRetries);
-                    self->schedule_retry();
-                } else {
-                    self->retries_ = 0;
-                    self->schedule_backoff();
-                }
-                self->notify(Connecting);
+                self->connection_failed();
                 return;
             }
             self->retries_ = 0;
@@ -816,11 +822,33 @@ private:
         }
     }
 
-    // Reconnect off the event-loop task: esp_wifi_connect() from inside the
-    // disconnect handler re-enters the driver while it is still tearing the
-    // previous association down.
-    void schedule_retry()
+    // A synchronous driver/RPC failure may not emit DISCONNECTED. It must
+    // advance the same recovery policy as a failed over-the-air attempt.
+    void connection_failed()
     {
+        ++retries_;
+        if (retries_ <= kMaxRetries) {
+            ESP_LOGW(TAG, "Retrying connect (%u/%u)", retries_, kMaxRetries);
+            schedule_retry();
+        } else {
+            retries_ = 0;
+            schedule_backoff();
+        }
+        notify(Connecting);
+    }
+
+    bool ensure_retry_timer()
+    {
+        // P4 driver calls wait for a C6 RPC response. Never do that (or wait
+        // for state_mutex_) on the shared esp_timer task. Keep one worker for
+        // the lifetime of this HAL adapter, and coalesce timer notifications.
+        if (retry_task_ == nullptr &&
+                xTaskCreate(&DeviceWifi::retry_worker, "wifi_reconnect", 4096,
+                            this, 4, &retry_task_) != pdPASS) {
+            ESP_LOGE(TAG, "Cannot create WiFi reconnect worker");
+            notify(ConnectFailed);
+            return false;
+        }
         if (retry_timer_ == nullptr) {
             const esp_timer_create_args_t args = {
                 .callback = &DeviceWifi::retry_cb,
@@ -829,8 +857,19 @@ private:
                 .name = "wifi_retry",
                 .skip_unhandled_events = true,
             };
-            if (esp_timer_create(&args, &retry_timer_) != ESP_OK) return;
+            const esp_err_t err = esp_timer_create(&args, &retry_timer_);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Cannot create WiFi retry timer: %s", esp_err_to_name(err));
+                notify(ConnectFailed);
+                return false;
+            }
         }
+        return true;
+    }
+
+    void schedule_retry()
+    {
+        if (!ensure_retry_timer()) return;
         (void)esp_timer_stop(retry_timer_);
         // Keep the first ten attempts responsive; the long backoff starts only
         // after all ten have failed.
@@ -840,16 +879,7 @@ private:
 
     void schedule_backoff()
     {
-        if (retry_timer_ == nullptr) {
-            const esp_timer_create_args_t args = {
-                .callback = &DeviceWifi::retry_cb,
-                .arg = this,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "wifi_retry",
-                .skip_unhandled_events = true,
-            };
-            if (esp_timer_create(&args, &retry_timer_) != ESP_OK) return;
-        }
+        if (!ensure_retry_timer()) return;
         static constexpr uint32_t kBackoffMinutes[] = {1, 3, 5, 10, 30};
         const uint32_t minutes = kBackoffMinutes[backoff_index_];
         backoff_index_ = (backoff_index_ + 1) % (sizeof(kBackoffMinutes) / sizeof(kBackoffMinutes[0]));
@@ -862,14 +892,26 @@ private:
     static void retry_cb(void *arg)
     {
         auto *self = static_cast<DeviceWifi *>(arg);
-        if (self == nullptr) return;
-        std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
-        if (!self->enabled_ || !self->started_ || self->scan_active_ ||
-                self->last_ssid_[0] == '\0' || self->connected()) return;
-        const esp_err_t err = esp_wifi_connect();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Retry esp_wifi_connect failed: %s", esp_err_to_name(err));
-            self->notify(ConnectFailed);
+        if (self != nullptr && self->retry_task_ != nullptr) xTaskNotifyGive(self->retry_task_);
+    }
+
+    static void retry_worker(void *arg)
+    {
+        auto *self = static_cast<DeviceWifi *>(arg);
+        for (;;) {
+            (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
+            if (!self->enabled_ || !self->started_ || self->scan_active_ ||
+                    self->last_ssid_[0] == '\0' || self->connected()) continue;
+            ESP_LOGI(TAG, "WiFi reconnect attempt: retry=%u internal=%u largest_internal=%u",
+                     self->retries_,
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+            const esp_err_t err = esp_wifi_connect();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Retry esp_wifi_connect failed: %s", esp_err_to_name(err));
+                self->connection_failed();
+            }
         }
     }
 
@@ -882,7 +924,7 @@ private:
         if (callback_ != nullptr) callback_(event, callback_context_);
     }
     static constexpr uint8_t kMaxRetries = 10;
-    // UI, ESP event-loop and retry-timer tasks all issue driver operations.
+    // UI, ESP event-loop and reconnect-worker tasks issue driver operations.
     // Recursive because startup applies stored IP settings through this class.
     mutable std::recursive_mutex state_mutex_;
     bool scan_active_ = false;
@@ -891,20 +933,20 @@ private:
     esp_netif_t *netif_ = nullptr;
     bool started_ = false;
     std::atomic<bool> associated_{false};
-    bool enabled_ = true;
+    std::atomic<bool> enabled_{true};
     EventCallback callback_ = nullptr;
     void *callback_context_ = nullptr;
     Network scan_results_[20] = {};
     size_t scan_count_ = 0;
     bool has_connected_ = false;
-    // Written from the esp_event task, read from the service task, so keep the
-    // compiler from caching it. Single byte, one writer: no lock needed.
-    volatile bool has_ip_ = false;
+    // Read by route/service tasks without taking the driver-operation lock.
+    std::atomic<bool> has_ip_{false};
     bool dhcp_enabled_ = true;
     volatile bool pending_connect_ = false;
     uint8_t retries_ = 0;
     uint8_t backoff_index_ = 0;
     esp_timer_handle_t retry_timer_ = nullptr;
+    TaskHandle_t retry_task_ = nullptr;
     char last_ssid_[33] = {};
 };
 

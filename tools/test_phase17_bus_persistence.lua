@@ -35,16 +35,19 @@ local original_favorites=saved.favorites
 local original_recents=saved.recent_routes
 local app=assert(loadfile(package_path))()
 assert(app.onCreate())
+local search_tab='Search'
+assert(has_text('Favorites') and has_text(search_tab) and has_icon('Favorites') and has_icon(search_tab),
+  'tabs retain their text with image icons')
 assert(has_text("Some saved stops were skipped"))
-assert(has_text("101   JOINT") and has_text("Joint Stop"))
-assert(has_text("2   CTB") and has_text("Central Stop"))
-assert(has_text("8   KMB") and not has_text("9   KMB"))
+assert(has_text("101") and has_text("KMB/CTB") and has_text("To Kwun Tong") and has_text("Joint Stop"))
+assert(has_text("2") and has_text("CTB") and has_text("To Central") and has_text("Central Stop"))
+assert(has_text("8") and has_text("KMB") and not has_text("9"))
 assert(saved.favorites==original_favorites and saved.recent_routes==original_recents,
   "loading must not silently rewrite the stored lists")
-click("Search")
+click(search_tab)
 ticks(8)
-assert(has_text("1A   KMB") and has_text("Some recent routes were skipped"))
-assert(text_count("1A   KMB")==1,"duplicate recent routes must collapse to one identity")
-assert(not has_text("101   JOINT"),"the malformed recent route must be skipped")
+assert(has_text("To Star Ferry") and has_text("Some recent routes were skipped"))
+assert(text_count("To Star Ferry")==1,"duplicate recent routes must collapse to one identity")
+assert(not has_text("KMB/CTB"),"the malformed recent route must be skipped")
 assert(app.onDestroy())
 print("PASS: persisted favorites/recents validation, duplicate removal and bounds")

@@ -1548,8 +1548,16 @@ Lua callback slot per row.
 package. It accepts recorded provider JSON (plain or gzip), writes normalized
 JSON Lines route/stop pages, operator-qualified stop pages, and small descriptor indexes under
 `examples/bus3p/assets/catalog/`, and records each source's timestamp and
-SHA-256 in `manifest.json`. It mirrors the Flutter `RouteMerger`: KMB/LWB
-service variants collapse by route and bound, compatible KMB/CTB destinations
+SHA-256 in `manifest.json`. KMB/LWB records are explicitly filtered to
+`service_type == "1"` before collapsing by route and bound. A missing KMB
+service ID fails generation. Citybus's official route API has no service-type
+selector: each endpoint pair becomes outbound and reversed inbound, both with
+internal `service_type="1"`. That value is never sent to Citybus URLs.
+The Flutter reference keeps the first KMB variant rather than explicitly
+requiring service 1; its Citybus adapter already uses this normalization.
+The release uses official route snapshots, not routeFareList variant numbers
+as Citybus service IDs. See `BUS_STANDARD_SERVICE_CATALOG.md` for provenance,
+regeneration and acceptance checks. Compatible KMB/CTB destinations
 become a `JOINT` record with both constituent identities, and unrelated
 same-number routes remain separate.
 

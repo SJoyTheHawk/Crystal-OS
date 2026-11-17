@@ -53,7 +53,7 @@ size_t heap_caps_get_free_size(unsigned) { return 65536; }
 size_t heap_caps_get_largest_free_block(unsigned) { return 32768; }
 struct wifi_init_config_t { int static_rx_buf_num=10, static_tx_buf_num=8; };
 #define WIFI_INIT_CONFIG_DEFAULT() {}
-struct wifi_event_sta_disconnected_t { uint8_t reason=201; };
+struct wifi_event_sta_disconnected_t { uint8_t reason=201; int8_t rssi=-79; };
 struct wifi_event_sta_scan_done_t { uint32_t status=0; };
 struct address { uint32_t addr=0; };
 struct esp_netif_ip_info_t { address ip, netmask, gw; };
@@ -62,7 +62,28 @@ struct esp_timer_create_args_t { void (*callback)(void *); void *arg; int dispat
 struct Timer { void (*callback)(void *)=nullptr; void *arg=nullptr; bool armed=false; uint64_t delay=0; };
 using esp_timer_handle_t = Timer *;
 static Timer timer;
+using TaskHandle_t = void *;
+constexpr int pdPASS=1, pdTRUE=1, portMAX_DELAY=-1;
+static void (*worker_fn)(void *);
+static void *worker_arg;
+static bool worker_pending, in_timer;
+struct WorkerIdle {};
+int xTaskCreate(void (*fn)(void *), const char *, unsigned, void *arg, unsigned, TaskHandle_t *out) {
+    worker_fn=fn; worker_arg=arg; *out=arg; return pdPASS;
+}
+void xTaskNotifyGive(TaskHandle_t) { worker_pending=true; }
+unsigned ulTaskNotifyTake(int, int) {
+    if (!worker_pending) throw WorkerIdle{};
+    worker_pending=false; return 1;
+}
+static void pump_worker() {
+    if (worker_pending) { try { worker_fn(worker_arg); } catch (WorkerIdle &) {} }
+}
+static void fire_timer() {
+    in_timer=true; timer.callback(timer.arg); in_timer=false; pump_worker();
+}
 static bool associated, connecting, scanning;
+static int connect_error;
 static int connect_calls, disconnect_calls, scan_calls, clear_calls, scan_error, count_error, records_error, status_queries;
 static int init_error, mode_error, netif_created, netif_destroyed, deinit_calls;
 static wifi_config_t saved;
@@ -92,7 +113,11 @@ int esp_wifi_set_config(int, const wifi_config_t *in) { saved=*in; return 0; }
 int esp_wifi_start() { return 0; }
 int esp_wifi_stop() { associated=connecting=scanning=false; return 0; }
 int esp_wifi_disconnect() { ++disconnect_calls; associated=connecting=false; return 0; }
-int esp_wifi_connect() { ++connect_calls; if (scanning) return ESP_ERR_WIFI_STATE; connecting=true; return 0; }
+int esp_wifi_connect() {
+    assert(!in_timer); ++connect_calls;
+    if (connect_error) return connect_error;
+    if (scanning) return ESP_ERR_WIFI_STATE; connecting=true; return 0;
+}
 int esp_wifi_sta_get_ap_info(wifi_ap_record_t *out) {
     ++status_queries;
     if (!associated) return ESP_FAIL;
@@ -139,10 +164,12 @@ static void on_event(IWifi::Event e, void *) { notifications.push_back(e); }
 static size_t scans_done() { return std::count(notifications.begin(),notifications.end(),IWifi::ScanDone); }
 static void boot(DeviceWifi &wifi, const char *ssid="missing") {
     associated=connecting=scanning=false;
+    worker_pending=in_timer=false; connect_error=0;
     connect_calls=disconnect_calls=scan_calls=clear_calls=scan_error=count_error=records_error=0;
     saved={}; timer={}; aps.clear(); notifications.clear();
     strlcpy(reinterpret_cast<char *>(saved.sta.ssid),ssid,sizeof(saved.sta.ssid));
     wifi.set_event_callback(on_event,nullptr); wifi.start(); emit(WIFI_EVENT,WIFI_EVENT_STA_START);
+    if (timer.armed) { timer.armed=false; fire_timer(); }
 }
 static void drop() {
     associated=connecting=false; wifi_event_sta_disconnected_t d; emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&d);
@@ -182,18 +209,18 @@ int main() {
     }
     { // Out-of-range saved SSID, including a timer callback already dispatched.
         DeviceWifi w; boot(w); drop(); assert(timer.armed);
-        timer.armed=false; timer.callback(timer.arg); assert(connecting);
+        timer.armed=false; fire_timer(); assert(connecting);
         w.scan(); assert(scanning && !connecting && !timer.armed && disconnect_calls==1);
-        const int connects=connect_calls; timer.callback(timer.arg); assert(connect_calls==connects);
+        const int connects=connect_calls; fire_timer(); assert(connect_calls==connects);
         drop(); assert(!timer.armed);
         w.scan(); assert(scan_calls==1);
         add_ap("weak",-80); add_ap("nearby",-30); add_ap("nearby",-45); add_ap("",-20);
         complete(); IWifi::Network rows[20]{};
         assert(w.scan_results(rows,20)==2 && std::strcmp(rows[0].ssid,"nearby")==0);
         assert(scans_done()==1 && timer.armed && timer.delay>=1000000);
-        timer.armed=false; timer.callback(timer.arg); assert(connect_calls==connects+1);
+        timer.armed=false; fire_timer(); assert(connect_calls==connects+1);
     }
-    { // First startup attempt: no retry timer exists yet.
+    { // Scanning during the first startup attempt resumes the saved SSID.
         DeviceWifi w; boot(w); w.scan(); assert(scanning && !connecting); complete();
         assert(timer.armed && timer.delay==1000000 && scans_done()==1);
     }
@@ -207,7 +234,9 @@ int main() {
         add_ap("nearby",-30); add_ap("missing",-80); complete();
         IWifi::Network rows[2]{}; assert(w.scan_results(rows,2)==2);
         assert(std::strcmp(rows[0].ssid,"missing")==0 && !timer.armed);
-        w.scan(); drop(); assert(!timer.armed); complete(); assert(timer.armed);
+        w.scan(); notifications.clear(); drop();
+        assert(!timer.armed && !w.has_ip() && notifications.back()==IWifi::Disconnected);
+        complete(); assert(timer.armed);
     }
     for(int failure=0;failure<4;++failure) {
         DeviceWifi w; boot(w);
@@ -222,13 +251,13 @@ int main() {
     { // Forgetting during a scan must not reconnect when it completes.
         DeviceWifi w; boot(w); drop(); w.scan(); w.forget(); complete();
         assert(!timer.armed && w.last_ssid()[0]==0);
-        int connects=connect_calls; timer.callback(timer.arg); assert(connect_calls==connects);
+        int connects=connect_calls; fire_timer(); assert(connect_calls==connects);
     }
     { // Turning off the radio drops late results and completes the UI request.
         DeviceWifi w; boot(w); drop(); w.scan(); w.set_enabled(false);
         add_ap("stale",-20); complete();
         assert(scans_done()==1 && !timer.armed && w.scan_results(nullptr,0)==0 && aps.empty());
-        int connects=connect_calls; timer.callback(timer.arg); assert(connect_calls==connects);
+        int connects=connect_calls; fire_timer(); assert(connect_calls==connects);
         w.scan(); assert(scans_done()==2);
     }
     { // A cancelled scan's queued completion cannot finish a newer scan.
@@ -242,7 +271,50 @@ int main() {
     { // Successful association invalidates previously scheduled retry work.
         DeviceWifi w; boot(w); drop(); assert(timer.armed);
         associated=true; emit(IP_EVENT,IP_EVENT_STA_GOT_IP); assert(!timer.armed);
-        int connects=connect_calls; timer.callback(timer.arg); assert(connect_calls==connects);
+        int connects=connect_calls; fire_timer(); assert(connect_calls==connects);
+    }
+    { // RPC/driver errors have no disconnect event: recovery must stay alive.
+        DeviceWifi w; boot(w); connecting=false; connect_error=ESP_FAIL;
+        w.connect("replacement","password");
+        assert(timer.armed && timer.delay==1000000);
+        for (int i=0;i<10;++i) {
+            timer.armed=false; fire_timer(); assert(timer.armed);
+        }
+        assert(timer.delay==60000000);
+        connect_error=0; timer.armed=false; fire_timer(); assert(connecting);
+        emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED); emit(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        assert(w.has_ip() && !timer.armed);
+    }
+    { // Boot/radio start schedules work without a synchronous driver call.
+        DeviceWifi w; boot(w); w.set_enabled(false); w.set_enabled(true);
+        const int calls=connect_calls;
+        emit(WIFI_EVENT,WIFI_EVENT_STA_START);
+        assert(connect_calls==calls && timer.armed);
+        connect_error=ESP_FAIL; timer.armed=false; fire_timer();
+        assert(connect_calls==calls+1 && timer.armed);
+    }
+    { // The timer only notifies, and queued work is rechecked after radio-off.
+        DeviceWifi w; boot(w); drop();
+        const int calls=connect_calls;
+        in_timer=true; timer.callback(timer.arg); in_timer=false;
+        assert(worker_pending && connect_calls==calls);
+        w.set_enabled(false); pump_worker();
+        assert(connect_calls==calls && !timer.armed);
+    }
+    { // Disabling clears the lease even if DISCONNECTED never arrives.
+        DeviceWifi w; boot(w); emit(IP_EVENT,IP_EVENT_STA_GOT_IP); assert(w.has_ip());
+        w.set_enabled(false); assert(!w.has_ip() && !w.connected());
+        emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED); emit(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        assert(!w.has_ip() && !w.connected());
+        w.set_enabled(true); emit(WIFI_EVENT,WIFI_EVENT_STA_START);
+        timer.armed=false; fire_timer(); emit(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        assert(w.has_ip());
+        w.forget(); emit(IP_EVENT,IP_EVENT_STA_GOT_IP); assert(!w.has_ip());
+    }
+    { // IP loss immediately publishes a route change without a WiFi drop.
+        DeviceWifi w; boot(w); emit(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        notifications.clear(); emit(IP_EVENT,IP_EVENT_STA_LOST_IP);
+        assert(!w.has_ip() && notifications.size()==1 && notifications[0]==IWifi::Disconnected);
     }
     { DeviceWifi w; boot(w,""); w.scan(); complete(); assert(scans_done()==1 && !timer.armed); }
     { DeviceWifi w; notifications.clear(); w.set_event_callback(on_event,nullptr); w.scan(); assert(scans_done()==1); }

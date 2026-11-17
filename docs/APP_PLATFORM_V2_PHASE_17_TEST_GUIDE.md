@@ -520,17 +520,17 @@ Mac fixture server or a live provider. Generate the package assets with:
 
 ```sh
 python3 tools/build_phase17_bus_catalog.py \
-  --kmb-routes examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
-  --ctb-routes examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
+  --kmb-routes examples/bus_app/artifacts/bus_catalog/sources/kmb-routes-20261118.json.gz \
+  --ctb-routes examples/bus_app/artifacts/bus_catalog/sources/ctb-routes-20261118.json.gz \
   --kmb-stops examples/bus_app/artifacts/bus_catalog/sources/kmb-stop-20261002.json.gz \
   --ctb-stops examples/bus_app/artifacts/bus_catalog/sources/hkbus-routeFareList-20261002.json.gz \
   --output examples/bus3p/assets/catalog \
-  --generated-at 2026-10-02T22:37:17+08:00 \
-  --source-revision pinned-20261002 \
-  --kmb-route-label recorded-hkbus-routeFareList-kmb \
-  --ctb-route-label recorded-hkbus-routeFareList-ctb \
-  --kmb-route-timestamp 2026-10-02T00:00:00Z \
-  --ctb-route-timestamp 2026-10-02T00:00:00Z \
+  --generated-at 2026-11-18T03:59:23+08:00 \
+  --source-revision official-routes-20261118-stops-20261002 \
+  --kmb-route-label https://data.etabus.gov.hk/v1/transport/kmb/route/ \
+  --ctb-route-label https://rt.data.gov.hk/v2/transport/citybus/route/CTB \
+  --kmb-route-timestamp 2026-11-18T03:59:23+08:00 \
+  --ctb-route-timestamp 2026-11-18T03:59:23+08:00 \
   --kmb-stop-timestamp 2026-10-02T22:37:17+08:00 \
   --ctb-stop-timestamp 2026-10-02T01:18:18Z
 ```

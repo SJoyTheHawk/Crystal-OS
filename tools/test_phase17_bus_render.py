@@ -33,6 +33,7 @@ extern "C" {
 #include "lualib.h"
 #include "cJSON.h"
 }
+static std::string asset_root;
 constexpr size_t kMaxFileBytes=64*1024;
 constexpr size_t kMaxLuaString=4096, kMaxJsonNodes=512, kMaxCallbacks=64;
 constexpr unsigned kMaxJsonDepth=16;
@@ -47,6 +48,7 @@ static void json_release(void *ptr) {if(ptr)--native_json_allocations;free(ptr);
 static size_t heap_caps_get_free_size(int) {return 1024*1024;}
 class ScriptApp {
 public:
+    struct ImageAsset { std::vector<lv_color_t> pixels; lv_img_dsc_t descriptor{}; };
     CrystalResources resources_;
     CrystalUI ui_{resources_};
     lua_State *lua_=nullptr;
@@ -67,6 +69,7 @@ public:
     void runtime_error(const char *msg) {runtime_failed_=true; fprintf(stderr,"contained: %s\n",msg);}
     struct CallbackRef { ScriptApp *app=nullptr; int ref=LUA_NOREF; };
     std::list<std::unique_ptr<CallbackRef>> callbacks_;
+    std::map<std::string,std::unique_ptr<ImageAsset>> image_assets_;
     std::map<std::pair<uint32_t,std::string>,CallbackRef*> event_callbacks_;
     static ScriptApp *self(lua_State *L) { return static_cast<ScriptApp*>(lua_touserdata(L,lua_upvalueindex(1))); }
     CallbackRef *make_callback(int);
@@ -80,7 +83,7 @@ public:
     size_t json_peak_internal_bytes_=0,json_peak_psram_bytes_=0;
     static lv_obj_t *build_widget(const cJSON*,lv_obj_t*,void*);
     static bool apply_style(lv_obj_t*,const cJSON*);
-    bool load_image(lv_obj_t*,const char*) { return false; }
+    bool load_image(lv_obj_t*,const char*);
     static int ui_create(lua_State*),ui_screen(lua_State*),ui_get_size(lua_State*),ui_set_text(lua_State*),
         ui_get_text(lua_State*),ui_set_hidden(lua_State*),ui_set_enabled(lua_State*),ui_set_style(lua_State*),
         ui_scroll_to(lua_State*),ui_delete(lua_State*),ui_list_add(lua_State*),ui_list_insert(lua_State*),
@@ -101,13 +104,28 @@ static int run_callback(lua_State *state) {
     if(!ok)return luaL_error(state,"timer exceeded production callback budget");
     return 0;
 }
-static std::string asset_root;
 static int read_asset(lua_State *state) {
     const char *path=luaL_checkstring(state,1);
     std::ifstream file(asset_root+"/"+path,std::ios::binary);
     if(!file){lua_pushnil(state);return 1;}
     std::ostringstream bytes;bytes<<file.rdbuf();const auto value=bytes.str();
     lua_pushlstring(state,value.data(),value.size());return 1;
+}
+bool ScriptApp::load_image(lv_obj_t *object,const char *path) {
+    if(!object||!path||strncmp(path,"assets/",7))return false;
+    auto found=image_assets_.find(path);
+    if(found==image_assets_.end()){
+        std::ifstream file(asset_root+"/"+path,std::ios::binary);std::string magic;unsigned width=0,height=0;
+        if(!(file>>magic>>width>>height)||magic!="CR16"||!width||!height||width>480||height>480)return false;
+        auto asset=std::make_unique<ImageAsset>();asset->pixels.resize(static_cast<size_t>(width)*height);
+        for(auto &pixel:asset->pixels){unsigned color=0;if(!(file>>std::hex>>color)||color>0xffffff)return false;pixel=lv_color_hex(color);}
+        asset->descriptor.header.cf=LV_IMG_CF_TRUE_COLOR;asset->descriptor.header.always_zero=0;
+        asset->descriptor.header.reserved=0;asset->descriptor.header.w=width;asset->descriptor.header.h=height;
+        asset->descriptor.data_size=asset->pixels.size()*sizeof(lv_color_t);
+        asset->descriptor.data=reinterpret_cast<const uint8_t*>(asset->pixels.data());
+        found=image_assets_.emplace(path,std::move(asset)).first;
+    }
+    lv_img_set_src(object,&found->second->descriptor);return true;
 }
 static int memory_stats(lua_State *state) {
     auto &app=*test_app;size_t largest=0,occupied=0;
@@ -139,6 +157,9 @@ static int click(lua_State *state) {
     int remaining=luaL_optinteger(state,2,1);assert(remaining>0);
     auto *label=find_nth(lv_scr_act(),luaL_checkstring(state,1),remaining); assert(label);
     auto *target=lv_obj_get_parent(label);
+    int ancestors=luaL_optinteger(state,3,0);assert(ancestors>=0);
+    while(ancestors-- && target) target=lv_obj_get_parent(target);
+    assert(target);
     lv_obj_scroll_to_view(target,LV_ANIM_OFF); lv_obj_update_layout(lv_scr_act());
     if(lv_obj_has_state(target,LV_STATE_DISABLED)) return 0;
     *static_cast<ScriptApp **>(lua_getextraspace(state))=test_app;
@@ -148,12 +169,33 @@ static int click(lua_State *state) {
     if(test_app->runtime_failed_)return luaL_error(state,"touch callback failed production guard");
     return 0;
 }
+static int check_tab_hit_area(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *target=lv_obj_get_parent(label);lv_obj_update_layout(lv_scr_act());
+    lv_area_t area{};lv_obj_get_coords(target,&area);
+    assert(lv_obj_get_width(target)==lv_disp_get_hor_res(nullptr)/2);
+    assert(lv_obj_get_height(target)==48*lv_disp_get_hor_res(nullptr)/480-3);
+    for(int y=area.y1;y<=area.y2;++y) for(int x=area.x1;x<=area.x2;++x) {
+        lv_point_t point{static_cast<lv_coord_t>(x),static_cast<lv_coord_t>(y)};
+        assert(lv_indev_search_obj(lv_scr_act(),&point)==target);
+    }
+    return 0;
+}
 static int is_enabled(lua_State *state) {
     auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
     auto *target=lv_obj_get_parent(label);
     lua_pushboolean(state,!lv_obj_has_state(target,LV_STATE_DISABLED));return 1;
 }
 static int has_text(lua_State *state) {lua_pushboolean(state,find(lv_scr_act(),luaL_checkstring(state,1))!=nullptr);return 1;}
+static int has_icon(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));if(!label){lua_pushboolean(state,false);return 1;}
+    auto *button=lv_obj_get_parent(label);auto *group=button?lv_obj_get_parent(button):nullptr;bool found=false;
+    for(unsigned i=0;i<lv_obj_get_child_cnt(button);++i)
+        if(lv_obj_check_type(lv_obj_get_child(button,i),&lv_img_class)){found=true;break;}
+    for(unsigned i=0;!found && group && i<lv_obj_get_child_cnt(group);++i)
+        if(lv_obj_check_type(lv_obj_get_child(group,i),&lv_img_class)){found=true;break;}
+    lua_pushboolean(state,found);return 1;
+}
 static int position(lua_State *state) {
     auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
     auto *button=lv_obj_get_parent(label);lv_obj_update_layout(lv_scr_act());lv_area_t area{};
@@ -243,7 +285,7 @@ int main(int argc,char **argv) {
         {"list_set_text",ScriptApp::ui_list_set_text},{"list_remove",ScriptApp::ui_list_remove},
         {"list_count",ScriptApp::ui_list_count},{"list_clear",ScriptApp::ui_list_clear},{nullptr,nullptr}};
     for(auto *m=methods;m->name;++m){lua_pushlightuserdata(L,&app);lua_pushcclosure(L,m->func,1);lua_setfield(L,-2,m->name);}
-    for(auto type:{"col","row","scroll_view","label","button","list"}){
+    for(auto type:{"col","row","scroll_view","label","button","image","list"}){
         lua_pushlightuserdata(L,&app);lua_pushstring(L,type);lua_pushcclosure(L,ScriptApp::ui_create,2);lua_setfield(L,-2,type);
     }
     lua_setglobal(L,"ui");
@@ -252,8 +294,10 @@ int main(int argc,char **argv) {
     lua_pushcfunction(L,memory_stats);lua_setglobal(L,"memory_stats");
     lua_pushcfunction(L,run_callback);lua_setglobal(L,"run_callback");
     lua_pushcfunction(L,click);lua_setglobal(L,"click");
+    lua_pushcfunction(L,check_tab_hit_area);lua_setglobal(L,"check_tab_hit_area");
     lua_pushcfunction(L,is_enabled);lua_setglobal(L,"is_enabled");
     lua_pushcfunction(L,has_text);lua_setglobal(L,"has_text");
+    lua_pushcfunction(L,has_icon);lua_setglobal(L,"has_icon");
     lua_pushcfunction(L,position);lua_setglobal(L,"position");
     lua_pushcfunction(L,widget_metrics);lua_setglobal(L,"widget_metrics");
     lua_pushcfunction(L,label_bounds);lua_setglobal(L,"label_bounds");
@@ -390,6 +434,8 @@ target_link_libraries(check PRIVATE lvgl)
     records=[json.loads(line) for page in (ROOT/'examples/bus3p/assets/catalog').glob('routes-*.jsonl')
              for line in page.read_text().splitlines()]
     counts={prefix:sum(row['route'].startswith(prefix) for row in records) for prefix in '123456789ABEN'}
+    manifest=json.loads((ROOT/'examples/bus3p/assets/catalog/manifest.json').read_text())
+    counts['_preload_reads']=len(manifest['routes']['search_pages'])+1
     (output/'prefix-counts.json').write_text(json.dumps(counts))
     quota=args.arena_kb or json.loads((ROOT/'examples/bus3p/app.yaml').read_text())['memory_kb']
     for width in (480,720):

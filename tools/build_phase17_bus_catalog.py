@@ -68,7 +68,7 @@ def bound_name(value: Any) -> str:
     return {"OUTBOUND": "O", "INBOUND": "I", "OUT": "O", "IN": "I"}.get(value, value)
 
 
-def source_records(root: Any, requested: str) -> list[dict[str, Any]]:
+def source_records(root: Any, requested: str, stats: dict[str, int] | None = None) -> list[dict[str, Any]]:
     """Read official-style ``data`` or the recorded routeFareList shape."""
     requested = provider_name(requested)
     if isinstance(root, dict) and isinstance(root.get("data"), list):
@@ -83,16 +83,31 @@ def source_records(root: Any, requested: str) -> list[dict[str, Any]]:
         raise ValueError("route source must contain a data or routeList array/object")
 
     result: list[dict[str, Any]] = []
+    counts = {"source_records": 0, "excluded_nonstandard": 0, "normalized_records": 0}
+    seen_provider = False
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("route source contains a non-object record")
-        operators = row.get("co", row.get("operator", row.get("operator_code", requested)))
+        operators = row.get("co", row.get("operator", row.get("operator_code", row.get("company_id", requested))))
         if isinstance(operators, list):
             has_provider = requested.lower() in {str(item).lower() for item in operators}
         else:
             has_provider = provider_name(operators) == requested
+        if requested == "KMB" and provider_name(operators) == "LWB":
+            has_provider = True
         if not has_provider:
             continue
+        seen_provider = True
+        counts["source_records"] += 1
+        # CTB's API has no service selector. routeFareList's serviceType
+        # describes aggregator variants, not Citybus API service IDs.
+        service_type = text(row, "service_type", "serviceType", "service")
+        if requested == "KMB" and not service_type:
+            raise ValueError("KMB route record is missing service_type")
+        if service_type and service_type != "1":
+            counts["excluded_nonstandard"] += 1
+            continue
+        service_type = "1"
 
         bounds = row.get("bound")
         bound = bounds.get(requested.lower()) if isinstance(bounds, dict) else bounds
@@ -100,7 +115,6 @@ def source_records(root: Any, requested: str) -> list[dict[str, Any]]:
         route = text(row, "route", "route_no", "routeNumber")
         if not route:
             raise ValueError(f"{requested}: route record has no route number")
-        service_type = text(row, "service_type", "serviceType", "service") or "1"
         orig_en = text(row, "orig_en", "origin_en") or localized(row.get("orig"), "en", "name")
         orig_tc = text(row, "orig_tc", "origin_tc") or localized(row.get("orig"), "zh", "tc", "name")
         dest_en = text(row, "dest_en", "destination_en") or localized(row.get("dest"), "en", "name")
@@ -109,7 +123,7 @@ def source_records(root: Any, requested: str) -> list[dict[str, Any]]:
             raise ValueError(f"{requested} {route}: route record has no destination")
         result.append(
             {
-                "operator": requested,
+                "operator": "LWB" if requested == "KMB" and provider_name(operators) == "LWB" else requested,
                 "route": route.upper(),
                 "bound": bound,
                 "service_type": service_type,
@@ -120,8 +134,17 @@ def source_records(root: Any, requested: str) -> list[dict[str, Any]]:
                 "source_order": len(result),
             }
         )
-    if not result:
+        # Official CTB supplies one endpoint pair per route. Flutter expands
+        # it into O and reversed I. Explicit snapshot bounds stay unchanged.
+        if requested == "CTB" and not bounds and not row.get("direction") and not row.get("bound_code"):
+            result.append({**result[-1], "bound": "I", "source_order": len(result),
+                           "origin_en": dest_en, "origin_tc": dest_tc,
+                           "destination_en": orig_en, "destination_tc": orig_tc})
+    if not seen_provider:
         raise ValueError(f"route source contains no {requested} records")
+    counts["normalized_records"] = len(result)
+    if stats is not None:
+        stats.update(counts)
     return result
 
 
@@ -457,8 +480,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
 
     kmb_root, kmb_raw, kmb_sha = read_json(args.kmb_routes)
     ctb_root, ctb_raw, ctb_sha = read_json(args.ctb_routes)
-    kmb = source_records(kmb_root, "KMB")
-    ctb = source_records(ctb_root, "CTB")
+    selection: dict[str, dict[str, int]] = {"KMB": {}, "CTB": {}}
+    kmb = source_records(kmb_root, "KMB", selection["KMB"])
+    ctb = source_records(ctb_root, "CTB", selection["CTB"])
     routes = route_records(kmb, ctb)
     route_letters = sorted({character for row in routes for character in row["route"] if character.isalpha()})
     route_pages, route_desc = write_pages(args.output, "routes", routes, "route")
@@ -498,6 +522,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "source_revision": args.source_revision,
         "routes": {
             "records": len(routes),
+            "service_policy": "KMB/LWB service_type=1; CTB canonical directions use internal service_type=1",
+            "selection": selection,
             "pages": route_pages,
             "search_pages": route_search_pages,
             "index_pages": route_index_pages,

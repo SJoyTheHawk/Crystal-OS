@@ -1,75 +1,78 @@
-{"bound":"O","destination_en":"TAI PO MARKET STATION","destination_tc":"大埔墟站","key":"KMB|75P|O|1","operator":"KMB","origin_en":"TAI MEI TUK","origin_tc":"大美督","route":"75P","service_type":"1"}
-{"bound":"I","destination_en":"TAI PO (FU SHIN)","destination_tc":"大埔(富善)","key":"KMB|75X|I|1","operator":"KMB","origin_en":"KOWLOON CITY FERRY","origin_tc":"九龍城碼頭","route":"75X","service_type":"1"}
-{"bound":"O","destination_en":"KOWLOON CITY FERRY","destination_tc":"九龍城碼頭","key":"KMB|75X|O|1","operator":"KMB","origin_en":"TAI PO (FU SHIN)","origin_tc":"大埔(富善)","route":"75X","service_type":"1"}
-{"bound":"I","destination_en":"Wong Chuk Hang Station ／ Shek Pai Wan","destination_tc":"黃竹坑站／石排灣","key":"CTB|76|I|1","operator":"CTB","origin_en":"Causeway Bay (Pennington Street)","origin_tc":"銅鑼灣 (邊寧頓街)","route":"76","service_type":"1"}
-{"bound":"O","destination_en":"Causeway Bay (Pennington Street)","destination_tc":"銅鑼灣 (邊寧頓街)","key":"CTB|76|O|1","operator":"CTB","origin_en":"Wong Chuk Hang Station ／ Shek Pai Wan","origin_tc":"黃竹坑站／石排灣","route":"76","service_type":"1"}
-{"bound":"O","destination_en":"Pennington Street","destination_tc":"邊寧頓街","key":"CTB|76|O|2","operator":"CTB","origin_en":"Wong Chuk Hang Station","origin_tc":"黃竹坑站","route":"76","service_type":"2"}
-{"bound":"OI","destination_en":"Wong Chuk Hang Station","destination_tc":"黃竹坑站","key":"CTB|76|OI|1","operator":"CTB","origin_en":"Wong Chuk Hang Station","origin_tc":"黃竹坑站","route":"76","service_type":"1"}
-{"bound":"OI","destination_en":"Shek Pai Wan","destination_tc":"石排灣","key":"CTB|76|OI|2","operator":"CTB","origin_en":"Shek Pai Wan","origin_tc":"石排灣","route":"76","service_type":"2"}
-{"bound":"O","destination_en":"SHEUNG SHUI STATION (CHOI YUEN ROAD) (CIRCULAR)","destination_tc":"上水站 (彩園路) (循環線)","key":"KMB|76|O|1","operator":"KMB","origin_en":"YAU POK ROAD LIGHT PUBLIC HOUSING (SOUTH)","origin_tc":"攸壆路簡約公屋 (南)","route":"76","service_type":"1"}
-{"bound":"O","destination_en":"Sheung Shui Station","destination_tc":"上水站","key":"KMB|76A|O|1","operator":"KMB","origin_en":"Sheung Shui Station","origin_tc":"上水站","route":"76A","service_type":"1"}
-{"bound":"I","destination_en":"SHEUNG SHUI (CHING HO)","destination_tc":"上水(清河)","key":"KMB|76K|I|1","operator":"KMB","origin_en":"LONG PING ESTATE","origin_tc":"朗屏邨","route":"76K","service_type":"1"}
-{"bound":"O","destination_en":"LONG PING ESTATE","destination_tc":"朗屏邨","key":"KMB|76K|O|1","operator":"KMB","origin_en":"SHEUNG SHUI (CHING HO)","origin_tc":"上水(清河)","route":"76K","service_type":"1"}
-{"bound":"I","destination_en":"FANLING STATION","destination_tc":"粉嶺站","key":"KMB|76S|I|1","operator":"KMB","origin_en":"WO HOP SHEK","origin_tc":"和合石","route":"76S","service_type":"1"}
-{"bound":"O","destination_en":"WO HOP SHEK","destination_tc":"和合石","key":"KMB|76S|O|1","operator":"KMB","origin_en":"FANLING STATION","origin_tc":"粉嶺站","route":"76S","service_type":"1"}
-{"bound":"I","destination_en":"Tin Wan","destination_tc":"田灣","key":"CTB|77|I|1","operator":"CTB","origin_en":"Shau Kei Wan","origin_tc":"筲箕灣","route":"77","service_type":"1"}
-{"bound":"O","destination_en":"Shau Kei Wan","destination_tc":"筲箕灣","key":"CTB|77|O|1","operator":"CTB","origin_en":"Tin Wan","origin_tc":"田灣","route":"77","service_type":"1"}
-{"bound":"I","destination_en":"FUNG WONG LENG ESTATE","destination_tc":"鳳凰嶺邨","key":"KMB|77|I|1","operator":"KMB","origin_en":"SHEUNG SHUI (TAI PING)","origin_tc":"上水(太平)","route":"77","service_type":"1"}
-{"bound":"O","destination_en":"SHEUNG SHUI (TAI PING)","destination_tc":"上水(太平)","key":"KMB|77|O|1","operator":"KMB","origin_en":"FUNG WONG LENG ESTATE","origin_tc":"鳳凰嶺邨","route":"77","service_type":"1"}
-{"bound":"I","destination_en":"SHEUNG SHUI","destination_tc":"上水","key":"KMB|77K|I|1","operator":"KMB","origin_en":"YUEN LONG (FUNG CHEUNG ROAD)","origin_tc":"元朗(鳳翔路)","route":"77K","service_type":"1"}
-{"bound":"O","destination_en":"YUEN LONG (FUNG CHEUNG ROAD)","destination_tc":"元朗(鳳翔路)","key":"KMB|77K|O|1","operator":"KMB","origin_en":"SHEUNG SHUI","origin_tc":"上水","route":"77K","service_type":"1"}
-{"bound":"O","destination_en":"Sai Wan Ho","destination_tc":"西灣河","key":"CTB|77X|O|1","operator":"CTB","origin_en":"Wah Kwai Estate","origin_tc":"華貴邨","route":"77X","service_type":"1"}
-{"bound":"I","destination_en":"Wong Chuk Hang","destination_tc":"黃竹坑","key":"CTB|78|I|1","operator":"CTB","origin_en":"Wah Kwai Estate","origin_tc":"華貴邨","route":"78","service_type":"1"}
-{"bound":"O","destination_en":"Wah Kwai Estate","destination_tc":"華貴邨","key":"CTB|78|O|1","operator":"CTB","origin_en":"Wong Chuk Hang","origin_tc":"黃竹坑","route":"78","service_type":"1"}
-{"bound":"OI","destination_en":"Wong Chuk Hang (Nam Long Shan)","destination_tc":"黃竹坑 (南朗山)","key":"CTB|78|OI|1","operator":"CTB","origin_en":"Wong Chuk Hang (Nam Long Shan)","origin_tc":"黃竹坑 (南朗山)","route":"78","service_type":"1"}
-{"bound":"O","destination_en":"SHEUNG SHUI (TAI PING)","destination_tc":"上水(太平)","key":"KMB|78|O|1","operator":"KMB","origin_en":"SHA TAU KOK","origin_tc":"沙頭角","route":"78","service_type":"1"}
-{"bound":"O","destination_en":"FANLING STATION (CIRCULAR)","destination_tc":"粉嶺站 (循環線)","key":"KMB|78A|O|1","operator":"KMB","origin_en":"QUEEN'S HILL","origin_tc":"皇后山","route":"78A","service_type":"1"}
-{"bound":"I","destination_en":"QUEEN'S HILL","destination_tc":"皇后山","key":"KMB|78B|I|1","operator":"KMB","origin_en":"SHEUNG SHUI (CHOI YUEN)","origin_tc":"上水(彩園)","route":"78B","service_type":"1"}
-{"bound":"O","destination_en":"SHEUNG SHUI (CHOI YUEN)","destination_tc":"上水(彩園)","key":"KMB|78B|O|1","operator":"KMB","origin_en":"QUEEN'S HILL","origin_tc":"皇后山","route":"78B","service_type":"1"}
-{"bound":"I","destination_en":"Queen's Hill Fanling","destination_tc":"粉嶺皇后山","key":"CTB|78C|I|1","operator":"CTB","origin_en":"Kai Tak (Via: Kwun Tong)","origin_tc":"啟德 (經: 觀塘)","route":"78C","service_type":"1"}
-{"bound":"O","destination_en":"Kai Tak (Via: Kwun Tong)","destination_tc":"啟德 (經: 觀塘)","key":"CTB|78C|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling","origin_tc":"粉嶺皇后山","route":"78C","service_type":"1"}
-{"bound":"I","destination_en":"SHEUNG SHUI (TAI PING)","destination_tc":"上水(太平)","key":"KMB|78K|I|1","operator":"KMB","origin_en":"SHA TAU KOK","origin_tc":"沙頭角","route":"78K","service_type":"1"}
-{"bound":"O","destination_en":"SHA TAU KOK","destination_tc":"沙頭角","key":"KMB|78K|O|1","operator":"KMB","origin_en":"SHEUNG SHUI (TAI PING)","origin_tc":"上水(太平)","route":"78K","service_type":"1"}
-{"bound":"O","destination_en":"Kwun Tong","destination_tc":"觀塘","key":"CTB|78P|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling","origin_tc":"粉嶺皇后山","route":"78P","service_type":"1"}
-{"bound":"I","destination_en":"SHEUNG SHUI","destination_tc":"上水","key":"KMB|78S|I|1","operator":"KMB","origin_en":"SHA TAU KOK","origin_tc":"沙頭角","route":"78S","service_type":"1"}
-{"bound":"O","destination_en":"SHA TAU KOK","destination_tc":"沙頭角","key":"KMB|78S|O|1","operator":"KMB","origin_en":"SHEUNG SHUI","origin_tc":"上水","route":"78S","service_type":"1"}
-{"bound":"O","destination_en":"Kai Tak (via: Kwun Tong)","destination_tc":"啟德 (經: 觀塘)","key":"CTB|78X|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling","origin_tc":"粉嶺皇后山","route":"78X","service_type":"1"}
-{"bound":"I","destination_en":"Queen's Hill Fanling (via: Tai Po)","destination_tc":"粉嶺皇后山 (經:大埔)","key":"CTB|79|I|1","operator":"CTB","origin_en":"Tai Wai Station (via: Tai Po)","origin_tc":"大圍站 (經:大埔)","route":"79","service_type":"1"}
-{"bound":"O","destination_en":"Tai Wai Station (via: Tai Po)","destination_tc":"大圍站 (經:大埔)","key":"CTB|79|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling (via: Tai Po)","origin_tc":"粉嶺皇后山 (經:大埔)","route":"79","service_type":"1"}
-{"bound":"I","destination_en":"CHOI SHEK ESTATE","destination_tc":"彩石邨","key":"KMB|79K|I|1","operator":"KMB","origin_en":"TA KWU LING (LIANTANG PORT)","origin_tc":"打鼓嶺 (蓮塘口岸)","route":"79K","service_type":"1"}
-{"bound":"O","destination_en":"TA KWU LING (LIANTANG PORT)","destination_tc":"打鼓嶺 (蓮塘口岸)","key":"KMB|79K|O|1","operator":"KMB","origin_en":"CHOI SHEK ESTATE","origin_tc":"彩石邨","route":"79K","service_type":"1"}
-{"bound":"I","destination_en":"Queen's Hill Fanling","destination_tc":"粉嶺皇后山","key":"CTB|79P|I|1","operator":"CTB","origin_en":"High Speed Rail West Kowloon Station","origin_tc":"高鐵西九龍站","route":"79P","service_type":"1"}
-{"bound":"O","destination_en":"High Speed Rail West Kowloon Station","destination_tc":"高鐵西九龍站","key":"CTB|79P|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling","origin_tc":"粉嶺皇后山","route":"79P","service_type":"1"}
-{"bound":"I","destination_en":"Queen's Hill Fanling","destination_tc":"粉嶺皇后山","key":"CTB|79X|I|1","operator":"CTB","origin_en":"Cheung Sha Wan (Kom Tsun Street) (via: Mong Kok)","origin_tc":"長沙灣 (甘泉街) (經: 旺角)","route":"79X","service_type":"1"}
-{"bound":"O","destination_en":"Cheung Sha Wan (Kom Tsun Street) (via: Mong Kok)","destination_tc":"長沙灣 (甘泉街) (經: 旺角)","key":"CTB|79X|O|1","operator":"CTB","origin_en":"Queen's Hill Fanling","origin_tc":"粉嶺皇后山","route":"79X","service_type":"1"}
-{"bound":"I","destination_en":"MEI LAM","destination_tc":"美林","key":"KMB|80|I|1","operator":"KMB","origin_en":"KWUN TONG FERRY","origin_tc":"觀塘碼頭","route":"80","service_type":"1"}
-{"bound":"O","destination_en":"KWUN TONG FERRY","destination_tc":"觀塘碼頭","key":"KMB|80|O|1","operator":"KMB","origin_en":"MEI LAM","origin_tc":"美林","route":"80","service_type":"1"}
-{"bound":"O","destination_en":"KWUN TONG FERRY","destination_tc":"觀塘碼頭","key":"KMB|80A|O|1","operator":"KMB","origin_en":"MEI LAM","origin_tc":"美林","route":"80A","service_type":"1"}
-{"bound":"I","destination_en":"SUN CHUI","destination_tc":"新翠","key":"KMB|80K|I|1","operator":"KMB","origin_en":"YU CHUI COURT","origin_tc":"愉翠苑","route":"80K","service_type":"1"}
-{"bound":"O","destination_en":"YU CHUI COURT","destination_tc":"愉翠苑","key":"KMB|80K|O|1","operator":"KMB","origin_en":"SUN CHUI","origin_tc":"新翠","route":"80K","service_type":"1"}
-{"bound":"O","destination_en":"KWUN TONG FERRY","destination_tc":"觀塘碼頭","key":"KMB|80P|O|1","operator":"KMB","origin_en":"HIN KENG","origin_tc":"顯徑","route":"80P","service_type":"1"}
-{"bound":"I","destination_en":"CHUN SHEK","destination_tc":"秦石","key":"KMB|80X|I|1","operator":"KMB","origin_en":"KWUN TONG FERRY","origin_tc":"觀塘碼頭","route":"80X","service_type":"1"}
-{"bound":"O","destination_en":"KWUN TONG FERRY","destination_tc":"觀塘碼頭","key":"KMB|80X|O|1","operator":"KMB","origin_en":"CHUN SHEK","origin_tc":"秦石","route":"80X","service_type":"1"}
-{"bound":"I","destination_en":"Hing Wah Estate","destination_tc":"興華邨","key":"CTB|81|I|1","operator":"CTB","origin_en":"Lai Tak Tsuen","origin_tc":"勵德邨","route":"81","service_type":"1"}
-{"bound":"O","destination_en":"Lai Tak Tsuen","destination_tc":"勵德邨","key":"CTB|81|O|1","operator":"CTB","origin_en":"Hing Wah Estate","origin_tc":"興華邨","route":"81","service_type":"1"}
-{"bound":"I","destination_en":"WO CHE","destination_tc":"禾輋","key":"KMB|81|I|1","operator":"KMB","origin_en":"HIGH SPEED RAIL WEST KOWLOON STATION","origin_tc":"高鐵(西九龍站)","route":"81","service_type":"1"}
-{"bound":"O","destination_en":"HIGH SPEED RAIL WEST KOWLOON STATION","destination_tc":"高鐵(西九龍站)","key":"KMB|81|O|1","operator":"KMB","origin_en":"WO CHE","origin_tc":"禾輋","route":"81","service_type":"1"}
-{"bound":"I","destination_en":"Hing Wah Estate","destination_tc":"興華邨","key":"CTB|81A|I|1","operator":"CTB","origin_en":"Lai Tak Tsuen","origin_tc":"勵德邨","route":"81A","service_type":"1"}
-{"bound":"O","destination_en":"Lai Tak Tsuen","destination_tc":"勵德邨","key":"CTB|81A|O|1","operator":"CTB","origin_en":"Hing Wah Estate","origin_tc":"興華邨","route":"81A","service_type":"1"}
-{"bound":"I","destination_en":"YIU ON","destination_tc":"耀安","key":"KMB|81C|I|1","operator":"KMB","origin_en":"TSIM SHA TSUI EAST (MODY ROAD)","origin_tc":"尖沙咀東(麼地道)","route":"81C","service_type":"1"}
-{"bound":"O","destination_en":"TSIM SHA TSUI EAST (MODY ROAD)","destination_tc":"尖沙咀東(麼地道)","key":"KMB|81C|O|1","operator":"KMB","origin_en":"YIU ON","origin_tc":"耀安","route":"81C","service_type":"1"}
-{"bound":"I","destination_en":"SUN TIN WAI","destination_tc":"新田圍","key":"KMB|81K|I|1","operator":"KMB","origin_en":"SUI WO COURT","origin_tc":"穗禾苑","route":"81K","service_type":"1"}
-{"bound":"O","destination_en":"SUI WO COURT","destination_tc":"穗禾苑","key":"KMB|81K|O|1","operator":"KMB","origin_en":"SUN TIN WAI","origin_tc":"新田圍","route":"81K","service_type":"1"}
-{"bound":"I","destination_en":"Siu Sai Wan (Island Resort)","destination_tc":"小西灣 (藍灣半島)","key":"CTB|82|I|1","operator":"CTB","origin_en":"North Point Ferry Pier","origin_tc":"北角碼頭","route":"82","service_type":"1"}
-{"bound":"I","destination_en":"Siu Sai Wan (Island Resort)","destination_tc":"小西灣 (藍灣半島)","key":"CTB|82|I|2","operator":"CTB","origin_en":"North Point Ferry Pier","origin_tc":"北角碼頭","route":"82","service_type":"2"}
-{"bound":"O","destination_en":"North Point Ferry Pier","destination_tc":"北角碼頭","key":"CTB|82|O|1","operator":"CTB","origin_en":"Siu Sai Wan (Island Resort)","origin_tc":"小西灣 (藍灣半島)","route":"82","service_type":"1"}
-{"bound":"O","destination_en":"TAI WAI STATION","destination_tc":"大圍站","key":"KMB|82B|O|1","operator":"KMB","origin_en":"MEI TIN","origin_tc":"美田","route":"82B","service_type":"1"}
-{"bound":"I","destination_en":"KWONG YUEN","destination_tc":"廣源","key":"KMB|82C|I|1","operator":"KMB","origin_en":"HONG KONG SCIENCE PARK","origin_tc":"香港科學園","route":"82C","service_type":"1"}
-{"bound":"O","destination_en":"HONG KONG SCIENCE PARK","destination_tc":"香港科學園","key":"KMB|82C|O|1","operator":"KMB","origin_en":"KWONG YUEN","origin_tc":"廣源","route":"82C","service_type":"1"}
-{"bound":"I","destination_en":"PAK SHEK KOK","destination_tc":"白石角","key":"KMB|82D|I|1","operator":"KMB","origin_en":"TAI WAI STATION","origin_tc":"大圍站","route":"82D","service_type":"1"}
-{"bound":"O","destination_en":"TAI WAI STATION","destination_tc":"大圍站","key":"KMB|82D|O|1","operator":"KMB","origin_en":"PAK SHEK KOK","origin_tc":"白石角","route":"82D","service_type":"1"}
-{"bound":"I","destination_en":"MEI TIN","destination_tc":"美田","key":"KMB|82K|I|1","operator":"KMB","origin_en":"YU CHUI COURT","origin_tc":"愉翠苑","route":"82K","service_type":"1"}
-{"bound":"O","destination_en":"YU CHUI COURT","destination_tc":"愉翠苑","key":"KMB|82K|O|1","operator":"KMB","origin_en":"MEI TIN","origin_tc":"美田","route":"82K","service_type":"1"}
-{"bound":"I","destination_en":"Siu Sai Wan (Island Resort)","destination_tc":"小西灣 (藍灣半島)","key":"CTB|82S|I|1","operator":"CTB","origin_en":"Yiu Tung (Wai Hang Street)","origin_tc":"耀東 (惠亨街)","route":"82S","service_type":"1"}
-{"bound":"O","destination_en":"Yiu Tung (Wai Hang Street)","destination_tc":"耀東 (惠亨街)","key":"CTB|82S|O|1","operator":"CTB","origin_en":"Siu Sai Wan (Island Resort)","origin_tc":"小西灣 (藍灣半島)","route":"82S","service_type":"1"}
-{"bound":"I","destination_en":"Siu Sai Wan (Island Resort)","destination_tc":"小西灣 (藍灣半島)","key":"CTB|82X|I|1","operator":"CTB","origin_en":"Quarry Bay","origin_tc":"鰂魚涌","route":"82X","service_type":"1"}
+{"bound":"I","destination_en":"LEE ON","destination_tc":"利安","key":"KMB|86C|I|1","operator":"KMB","origin_en":"CHEUNG SHA WAN","origin_tc":"長沙灣","route":"86C","service_type":"1"}
+{"bound":"O","destination_en":"CHEUNG SHA WAN","destination_tc":"長沙灣","key":"KMB|86C|O|1","operator":"KMB","origin_en":"LEE ON","origin_tc":"利安","route":"86C","service_type":"1"}
+{"bound":"I","destination_en":"KAM YING COURT","destination_tc":"錦英苑","key":"KMB|86K|I|1","operator":"KMB","origin_en":"SHATIN STATION","origin_tc":"沙田站","route":"86K","service_type":"1"}
+{"bound":"O","destination_en":"SHATIN STATION","destination_tc":"沙田站","key":"KMB|86K|O|1","operator":"KMB","origin_en":"KAM YING COURT","origin_tc":"錦英苑","route":"86K","service_type":"1"}
+{"bound":"I","destination_en":"KAM YING COURT","destination_tc":"錦英苑","key":"KMB|86S|I|1","operator":"KMB","origin_en":"SHATIN STATION","origin_tc":"沙田站","route":"86S","service_type":"1"}
+{"bound":"O","destination_en":"SHATIN STATION","destination_tc":"沙田站","key":"KMB|86S|O|1","operator":"KMB","origin_en":"KAM YING COURT","origin_tc":"錦英苑","route":"86S","service_type":"1"}
+{"bound":"I","destination_en":"SUN TIN WAI","destination_tc":"新田圍","key":"KMB|87B|I|1","operator":"KMB","origin_en":"ISLAND HARBOURVIEW","origin_tc":"維港灣","route":"87B","service_type":"1"}
+{"bound":"O","destination_en":"ISLAND HARBOURVIEW","destination_tc":"維港灣","key":"KMB|87B|O|1","operator":"KMB","origin_en":"SUN TIN WAI","origin_tc":"新田圍","route":"87B","service_type":"1"}
+{"bound":"I","destination_en":"KAM YING COURT","destination_tc":"錦英苑","key":"KMB|87C|I|1","operator":"KMB","origin_en":"HUNG HOM STATION","origin_tc":"紅磡站","route":"87C","service_type":"1"}
+{"bound":"O","destination_en":"HUNG HOM STATION","destination_tc":"紅磡站","key":"KMB|87C|O|1","operator":"KMB","origin_en":"KAM YING COURT","origin_tc":"錦英苑","route":"87C","service_type":"1"}
+{"bound":"I","destination_en":"KAM YING COURT","destination_tc":"錦英苑","key":"KMB|87D|I|1","operator":"KMB","origin_en":"HUNG HOM STATION","origin_tc":"紅磡站","route":"87D","service_type":"1"}
+{"bound":"O","destination_en":"HUNG HOM STATION","destination_tc":"紅磡站","key":"KMB|87D|O|1","operator":"KMB","origin_en":"KAM YING COURT","origin_tc":"錦英苑","route":"87D","service_type":"1"}
+{"bound":"I","destination_en":"NAI CHUNG","destination_tc":"泥涌","key":"KMB|87E|I|1","operator":"KMB","origin_en":"TSIM SHA TSUI EAST (MODY ROAD)","origin_tc":"尖沙咀東(麼地道)","route":"87E","service_type":"1"}
+{"bound":"O","destination_en":"TSIM SHA TSUI","destination_tc":"尖沙咀","key":"KMB|87E|O|1","operator":"KMB","origin_en":"NAI CHUNG","origin_tc":"泥涌","route":"87E","service_type":"1"}
+{"bound":"O","destination_en":"KAM YING COURT (CIRCULAR)","destination_tc":"錦英苑(循環線)","key":"KMB|87K|O|1","operator":"KMB","origin_en":"UNIVERSITY STATION","origin_tc":"大學站","route":"87K","service_type":"1"}
+{"bound":"O","destination_en":"CHUNG ON","destination_tc":"頌安","key":"KMB|87P|O|1","operator":"KMB","origin_en":"LEE ON","origin_tc":"利安","route":"87P","service_type":"1"}
+{"bound":"O","destination_en":"WU KAI SHA STATION","destination_tc":"烏溪沙站","key":"KMB|87R|O|1","operator":"KMB","origin_en":"HONG KONG COLISEUM","origin_tc":"紅磡香港體育館","route":"87R","service_type":"1"}
+{"bound":"I","destination_en":"UNIVERSITY STATION (CIRCULAR)","destination_tc":"大學站 (循環線)","key":"KMB|87S|I|1","operator":"KMB","origin_en":"KAM YING COURT","origin_tc":"錦英苑","route":"87S","service_type":"1"}
+{"bound":"O","destination_en":"KAM YING COURT (CIRCULAR)","destination_tc":"錦英苑 (循環線)","key":"KMB|87S|O|1","operator":"KMB","origin_en":"UNIVERSITY STATION","origin_tc":"大學站","route":"87S","service_type":"1"}
+{"bound":"I","destination_en":"SAU MAU PING (CENTRAL)","destination_tc":"中秀茂坪","key":"KMB|88|I|1","operator":"KMB","origin_en":"TAI WAI STATION","origin_tc":"大圍站","route":"88","service_type":"1"}
+{"bound":"O","destination_en":"TAI WAI STATION","destination_tc":"大圍站","key":"KMB|88|O|1","operator":"KMB","origin_en":"SAU MAU PING (CENTRAL)","origin_tc":"中秀茂坪","route":"88","service_type":"1"}
+{"bound":"I","destination_en":"HIN KENG","destination_tc":"顯徑","key":"KMB|88K|I|1","operator":"KMB","origin_en":"ROYAL ASCOT","origin_tc":"駿景園","route":"88K","service_type":"1"}
+{"bound":"O","destination_en":"ROYAL ASCOT","destination_tc":"駿景園","key":"KMB|88K|O|1","operator":"KMB","origin_en":"HIN KENG","origin_tc":"顯徑","route":"88K","service_type":"1"}
+{"bound":"I","destination_en":"City One Shatin","destination_tc":"沙田第一城","key":"CTB|88R|I|1","operator":"CTB","origin_en":"Central","origin_tc":"中環","route":"88R","service_type":"1"}
+{"bound":"O","destination_en":"Central","destination_tc":"中環","key":"CTB|88R|O|1","operator":"CTB","origin_en":"City One Shatin","origin_tc":"沙田第一城","route":"88R","service_type":"1"}
+{"bound":"I","destination_en":"Siu Sai Wan (Island Resort)","destination_tc":"小西灣 (藍灣半島)","key":"CTB|88X|I|1","operator":"CTB","origin_en":"Kennedy Town (Belcher Bay)","origin_tc":"堅尼地城 (卑路乍灣)","route":"88X","service_type":"1"}
+{"bound":"O","destination_en":"Kennedy Town (Belcher Bay)","destination_tc":"堅尼地城 (卑路乍灣)","key":"CTB|88X|O|1","operator":"CTB","origin_en":"Siu Sai Wan (Island Resort)","origin_tc":"小西灣 (藍灣半島)","route":"88X","service_type":"1"}
+{"bound":"I","destination_en":"SUI WO COURT","destination_tc":"穗禾苑","key":"KMB|88X|I|1","operator":"KMB","origin_en":"PING TIN","origin_tc":"平田","route":"88X","service_type":"1"}
+{"bound":"O","destination_en":"PING TIN","destination_tc":"平田","key":"KMB|88X|O|1","operator":"KMB","origin_en":"SUI WO COURT","origin_tc":"穗禾苑","route":"88X","service_type":"1"}
+{"bound":"I","destination_en":"LEK YUEN","destination_tc":"瀝源","key":"KMB|89|I|1","operator":"KMB","origin_en":"KWUN TONG (TSUI PING NORTH ESTATE)","origin_tc":"觀塘(翠屏北邨)","route":"89","service_type":"1"}
+{"bound":"O","destination_en":"KWUN TONG (TSUI PING NORTH ESTATE)","destination_tc":"觀塘(翠屏北邨)","key":"KMB|89|O|1","operator":"KMB","origin_en":"LEK YUEN","origin_tc":"瀝源","route":"89","service_type":"1"}
+{"bound":"I","destination_en":"SHATIN WAI","destination_tc":"沙田圍","key":"KMB|89B|I|1","operator":"KMB","origin_en":"CHOI HUNG","origin_tc":"彩虹","route":"89B","service_type":"1"}
+{"bound":"O","destination_en":"CHOI HUNG","destination_tc":"彩虹","key":"KMB|89B|O|1","operator":"KMB","origin_en":"SHATIN WAI","origin_tc":"沙田圍","route":"89B","service_type":"1"}
+{"bound":"I","destination_en":"HENG ON","destination_tc":"恆安","key":"KMB|89C|I|1","operator":"KMB","origin_en":"KWUN TONG (TSUI PING ROAD)","origin_tc":"觀塘(翠屏道)","route":"89C","service_type":"1"}
+{"bound":"O","destination_en":"KWUN TONG (TSUI PING ROAD)","destination_tc":"觀塘(翠屏道)","key":"KMB|89C|O|1","operator":"KMB","origin_en":"HENG ON","origin_tc":"恆安","route":"89C","service_type":"1"}
+{"bound":"I","destination_en":"WU KAI SHA STATION","destination_tc":"烏溪沙站","key":"KMB|89D|I|1","operator":"KMB","origin_en":"LAM TIN STATION","origin_tc":"藍田站","route":"89D","service_type":"1"}
+{"bound":"O","destination_en":"LAM TIN STATION","destination_tc":"藍田站","key":"KMB|89D|O|1","operator":"KMB","origin_en":"WU KAI SHA STATION","origin_tc":"烏溪沙站","route":"89D","service_type":"1"}
+{"bound":"O","destination_en":"LAM TIN STATION","destination_tc":"藍田站","key":"KMB|89P|O|1","operator":"KMB","origin_en":"MA ON SHAN TOWN CENTRE","origin_tc":"馬鞍山市中心","route":"89P","service_type":"1"}
+{"bound":"I","destination_en":"SHUI CHUEN O","destination_tc":"水泉澳","key":"KMB|89S|I|1","operator":"KMB","origin_en":"WU KAI SHA STATION","origin_tc":"烏溪沙站","route":"89S","service_type":"1"}
+{"bound":"O","destination_en":"WU KAI SHA STATION","destination_tc":"烏溪沙站","key":"KMB|89S|O|1","operator":"KMB","origin_en":"SHUI CHUEN O","origin_tc":"水泉澳","route":"89S","service_type":"1"}
+{"bound":"I","destination_en":"SHATIN STATION","destination_tc":"沙田站","key":"KMB|89X|I|1","operator":"KMB","origin_en":"KWUN TONG (TSUI PING ROAD)","origin_tc":"觀塘(翠屏道)","route":"89X","service_type":"1"}
+{"bound":"O","destination_en":"KWUN TONG (TSUI PING ROAD)","destination_tc":"觀塘(翠屏道)","key":"KMB|89X|O|1","operator":"KMB","origin_en":"SHATIN STATION","origin_tc":"沙田站","route":"89X","service_type":"1"}
+{"bound":"I","destination_en":"Ap Lei Chau Estate","destination_tc":"鴨脷洲邨","key":"CTB|90|I|1","operator":"CTB","origin_en":"Central (Exchange Square)","origin_tc":"中環 (交易廣場)","route":"90","service_type":"1"}
+{"bound":"O","destination_en":"Central (Exchange Square)","destination_tc":"中環 (交易廣場)","key":"CTB|90|O|1","operator":"CTB","origin_en":"Ap Lei Chau Estate","origin_tc":"鴨脷洲邨","route":"90","service_type":"1"}
+{"bound":"O","destination_en":"TSEUNG KWAN O (CHOI MING)","destination_tc":"將軍澳(彩明)","key":"KMB|90|O|1","operator":"KMB","origin_en":"SHEK MUN ESTATE","origin_tc":"碩門邨","route":"90","service_type":"1"}
+{"bound":"I","destination_en":"South Horizons","destination_tc":"海怡半島","key":"CTB|90B|I|1","operator":"CTB","origin_en":"Admiralty (East)","origin_tc":"金鐘 (東)","route":"90B","service_type":"1"}
+{"bound":"O","destination_en":"Admiralty (East)","destination_tc":"金鐘 (東)","key":"CTB|90B|O|1","operator":"CTB","origin_en":"South Horizons","origin_tc":"海怡半島","route":"90B","service_type":"1"}
+{"bound":"I","destination_en":"Main Street Ap Lei Chau","destination_tc":"鴨脷洲大街","key":"CTB|90C|I|1","operator":"CTB","origin_en":"Central (Jardine House)","origin_tc":"中環 (怡和大廈)","route":"90C","service_type":"1"}
+{"bound":"O","destination_en":"Central (Jardine House)","destination_tc":"中環 (怡和大廈)","key":"CTB|90C|O|1","operator":"CTB","origin_en":"Main Street Ap Lei Chau","origin_tc":"鴨脷洲大街","route":"90C","service_type":"1"}
+{"bound":"I","destination_en":"Ap Lei Chau Estate","destination_tc":"鴨脷洲邨","key":"CTB|91|I|1","operator":"CTB","origin_en":"Central (Ferry Piers)","origin_tc":"中環碼頭","route":"91","service_type":"1"}
+{"bound":"O","destination_en":"Central (Ferry Piers)","destination_tc":"中環碼頭","key":"CTB|91|O|1","operator":"CTB","origin_en":"Ap Lei Chau Estate","origin_tc":"鴨脷洲邨","route":"91","service_type":"1"}
+{"bound":"I","destination_en":"CLEAR WATER BAY","destination_tc":"清水灣","key":"KMB|91|I|1","operator":"KMB","origin_en":"DIAMOND HILL STATION","origin_tc":"鑽石山站","route":"91","service_type":"1"}
+{"bound":"O","destination_en":"DIAMOND HILL STATION","destination_tc":"鑽石山站","key":"KMB|91|O|1","operator":"KMB","origin_en":"CLEAR WATER BAY","origin_tc":"清水灣","route":"91","service_type":"1"}
+{"bound":"I","destination_en":"Ap Lei Chau Estate","destination_tc":"鴨脷洲邨","key":"CTB|91A|I|1","operator":"CTB","origin_en":"Wah Fu (South)","origin_tc":"華富 (南)","route":"91A","service_type":"1"}
+{"bound":"O","destination_en":"Wah Fu (South)","destination_tc":"華富 (南)","key":"CTB|91A|O|1","operator":"CTB","origin_en":"Ap Lei Chau Estate","origin_tc":"鴨脷洲邨","route":"91A","service_type":"1"}
+{"bound":"O","destination_en":"HKUST","destination_tc":"香港科技大學","key":"KMB|91B|O|1","operator":"KMB","origin_en":"HANG HAU STATION","origin_tc":"坑口站","route":"91B","service_type":"1"}
+{"bound":"I","destination_en":"PO LAM","destination_tc":"寶林","key":"KMB|91M|I|1","operator":"KMB","origin_en":"DIAMOND HILL STATION","origin_tc":"鑽石山站","route":"91M","service_type":"1"}
+{"bound":"O","destination_en":"DIAMOND HILL STATION","destination_tc":"鑽石山站","key":"KMB|91M|O|1","operator":"KMB","origin_en":"PO LAM","origin_tc":"寶林","route":"91M","service_type":"1"}
+{"bound":"I","destination_en":"PING SHEK / CHOI HUNG STATION","destination_tc":"坪石 / 彩虹站","key":"KMB|91P|I|1","operator":"KMB","origin_en":"H.K.U.S.T. (SOUTH)","origin_tc":"香港科技大學(南)","route":"91P","service_type":"1"}
+{"bound":"O","destination_en":"HONG KONG UNIVERSITY OF SCIENCE AND TEHNOLOGY","destination_tc":"香港科技大學","key":"KMB|91P|O|1","operator":"KMB","origin_en":"DIAMOND HILL STATION","origin_tc":"鑽石山站","route":"91P","service_type":"1"}
+{"bound":"O","destination_en":"KWUN TONG","destination_tc":"觀塘","key":"KMB|91S|O|1","operator":"KMB","origin_en":"CLEAR WATER BAY","origin_tc":"清水灣","route":"91S","service_type":"1"}
+{"bound":"I","destination_en":"SAI KUNG","destination_tc":"西貢","key":"KMB|92|I|1","operator":"KMB","origin_en":"DIAMOND HILL STATION","origin_tc":"鑽石山站","route":"92","service_type":"1"}
+{"bound":"O","destination_en":"DIAMOND HILL STATION","destination_tc":"鑽石山站","key":"KMB|92|O|1","operator":"KMB","origin_en":"SAI KUNG","origin_tc":"西貢","route":"92","service_type":"1"}
+{"bound":"I","destination_en":"SAI KUNG","destination_tc":"西貢","key":"KMB|92R|I|1","operator":"KMB","origin_en":"STAR FERRY","origin_tc":"尖沙咀碼頭","route":"92R","service_type":"1"}
+{"bound":"O","destination_en":"YAU MA TEI (KOWLOON CENTRAL POST OFFICE)","destination_tc":"油麻地(九龍中央郵政局)","key":"KMB|92R|O|1","operator":"KMB","origin_en":"SAI KUNG","origin_tc":"西貢","route":"92R","service_type":"1"}
+{"bound":"I","destination_en":"South Horizons / Ap Lei Chau Estate","destination_tc":"海怡半島／鴨脷洲邨","key":"CTB|93|I|1","operator":"CTB","origin_en":"Robinson Road","origin_tc":"羅便臣道","route":"93","service_type":"1"}
+{"bound":"O","destination_en":"Robinson Road","destination_tc":"羅便臣道","key":"CTB|93|O|1","operator":"CTB","origin_en":"South Horizons / Ap Lei Chau Estate","origin_tc":"海怡半島／鴨脷洲邨","route":"93","service_type":"1"}
+{"bound":"I","destination_en":"Lei Tung Estate","destination_tc":"利東邨","key":"CTB|93A|I|1","operator":"CTB","origin_en":"Robinson Road","origin_tc":"羅便臣道","route":"93A","service_type":"1"}
+{"bound":"O","destination_en":"Robinson Road","destination_tc":"羅便臣道","key":"CTB|93A|O|1","operator":"CTB","origin_en":"Lei Tung Estate","origin_tc":"利東邨","route":"93A","service_type":"1"}
+{"bound":"I","destination_en":"PO LAM","destination_tc":"寶林","key":"KMB|93A|I|1","operator":"KMB","origin_en":"KWUN TONG FERRY","origin_tc":"觀塘碼頭","route":"93A","service_type":"1"}
+{"bound":"O","destination_en":"KWUN TONG FERRY","destination_tc":"觀塘碼頭","key":"KMB|93A|O|1","operator":"KMB","origin_en":"PO LAM","origin_tc":"寶林","route":"93A","service_type":"1"}
+{"bound":"I","destination_en":"Main Street Ap Lei Chau / Tin Wan","destination_tc":"鴨脷洲大街／田灣","key":"CTB|93C|I|1","operator":"CTB","origin_en":"Caine Road","origin_tc":"堅道","route":"93C","service_type":"1"}
+{"bound":"O","destination_en":"Caine Road","destination_tc":"堅道","key":"CTB|93C|O|1","operator":"CTB","origin_en":"Main Street Ap Lei Chau / Tin Wan","origin_tc":"鴨脷洲大街／田灣","route":"93C","service_type":"1"}
+{"bound":"I","destination_en":"TSUI LAM","destination_tc":"翠林","key":"KMB|93K|I|1","operator":"KMB","origin_en":"MONG KOK EAST STATION","origin_tc":"旺角東站","route":"93K","service_type":"1"}
+{"bound":"O","destination_en":"MONG KOK EAST STATION","destination_tc":"旺角東站","key":"KMB|93K|O|1","operator":"KMB","origin_en":"TSUI LAM","origin_tc":"翠林","route":"93K","service_type":"1"}
+{"bound":"O","destination_en":"PO LAM","destination_tc":"寶林","key":"KMB|93M|O|1","operator":"KMB","origin_en":"TSEUNG KWAN O (CHOI MING)","origin_tc":"將軍澳(彩明)","route":"93M","service_type":"1"}
+{"bound":"I","destination_en":"PO LAM","destination_tc":"寶林","key":"KMB|93P|I|1","operator":"KMB","origin_en":"MONG KOK (PARK AVENUE)","origin_tc":"旺角(柏景灣)","route":"93P","service_type":"1"}
+{"bound":"O","destination_en":"MONG KOK (PARK AVENUE)","destination_tc":"旺角(柏景灣)","key":"KMB|93P|O|1","operator":"KMB","origin_en":"PO LAM","origin_tc":"寶林","route":"93P","service_type":"1"}
