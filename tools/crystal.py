@@ -112,6 +112,8 @@ def pack(folder, destination, key_path=None, key_id=0):
         relative = path.relative_to(folder).as_posix()
         if path.is_symlink():
             raise ValueError(f'Symlinks are forbidden: {relative}')
+        if relative == 'README.md':
+            continue  # Package documentation is not a runtime asset.
         if relative == 'data' or relative.startswith('data/'):
             continue  # Never ship developer state.
         if path.is_dir():

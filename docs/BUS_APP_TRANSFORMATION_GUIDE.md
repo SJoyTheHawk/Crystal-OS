@@ -1,11 +1,13 @@
 # Bus App Transformation Guide — S3 Native to P4 Lua
 
-> Current implementation (0.2.18, 2026-11-17): local work finishes without
+> Current implementation (0.2.22, 2026-11-18): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
 > 5/30-second deadline. Phase 3 validates saved data and preserves in-memory
-> state when a persistence write fails. Earlier per-tick/512 KiB/50 ms passages describe the
+> state when a persistence write fails. Detail pages use the same side padding as
+> Favorites and Search; the stop list fills the viewport to its bottom status line.
+> Earlier per-tick/512 KiB/50 ms passages describe the
 > previous implementation. BUS_APP_LUA_CODE_PATTERNS.md and
 > BUS_APP_QUICK_START.md describe the current contract and board retest.
 

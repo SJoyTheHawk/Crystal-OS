@@ -52,10 +52,13 @@ def main():
         package = Path(temp) / "bus.capp"
         manifest = crystal.pack(phase17_bus_fixture.OUTPUT, package)
         inspected = crystal.inspect(package)
+        assert "README.md" not in inspected["files"]
         assert manifest["id"] == "com.example.bus3p"
         assert manifest["runtime"] == "lua"
+        assert manifest["icon"] == "assets/icon.bin"
+        assert "assets/icon.bin" in inspected["files"]
         assert "fixture" in manifest["name"]
-        assert manifest["version"] == "0.2.18"
+        assert manifest["version"] == "0.2.22"
         assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
@@ -72,6 +75,11 @@ def main():
         assert "local function stop_list_step(job)" in source
         assert "render_stop_row = function(index)" in source
         assert "ui.list_add(v.stop_list," in source
+        assert "ui.list_set_item_height(v.stop_list," not in source
+        assert "gap=math.floor(8*scale)" in source
+        assert "local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))" in source
+        assert "local detail_pad=pad" in source
+        assert 'v.recent_heading=text(page,"Recent:"' in source
         assert "on_select=function(index)" in source
         assert "move_stop_page" not in source
         assert "#query<6" in source

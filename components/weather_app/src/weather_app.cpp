@@ -303,6 +303,7 @@ bool WeatherApp::onResume() { return activate(); }
 bool WeatherApp::onDestroy()
 {
     stop();
+    if (root_) lv_obj_del(root_);
     root_ = glyph_ = temperature_ = degree_ = condition_ = nullptr;
     humidity_ = wind_ = location_ = status_ = refresh_button_ = nullptr;
     humidity_caption_ = wind_caption_ = nullptr;

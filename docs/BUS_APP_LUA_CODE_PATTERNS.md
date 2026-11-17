@@ -2,12 +2,19 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1–3 contract (0.2.18, 2026-11-17)
+## Verified Phase 1–3 contract (0.2.22, 2026-11-18)
 
 Phases 1–3 are implemented in `examples/bus3p/main.lua`; use that tested
 source for working API calls. Phase 3 validates persisted records and commits
 candidate favorite/recent lists only after successful writes. Phase 4 remains
-open. The remaining snippets below are design sketches, not a replacement
+open. Version 0.2.19 compacts available alphabetic keypad keys into a
+stable two-column grid. Version 0.2.20 enlarged route labels and labeled the
+empty-query recent list. Version 0.2.21 tightens the detail header and uses
+content-sized stop rows with visible gaps, allowing long names to wrap without
+making short rows oversized. Version 0.2.22 gives detail pages the same 16 px
+scaled side padding as Favorites and Search, and the stop list fills the
+remaining viewport down to its bottom status line. The remaining snippets below
+are design sketches, not a replacement
 entry file. Some use conceptual UI helpers that the current
 ABI does not expose (`container`, `align`, `remove_children`, `timer_stop`).
 Reuse the existing controls and one 100 ms timer through the real API instead.
@@ -37,8 +44,10 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
 - Create UI callbacks once. Stop lists use one shared `on_select(index)`
   callback. Add the complete native list without per-row timer waits and update metadata with
   `crystal.ui.list_set_text(list, zero_based_index, text)` so resolving names
-  does not rebuild the list or reset its scroll position. Selectable lists
-  support up to 256 entries; conventional lists remain capped at 64.
+  does not rebuild the list or reset its scroll position. Use
+  Use the list `gap` option to separate entries; rows grow to fit wrapped text
+  without a fixed item height or a new firmware API. Selectable lists support
+  up to 256 entries; conventional lists remain capped at 64.
 - The real-catalog harness registers 62 callbacks;
   repeated refresh/paging must not grow that count. First launch initializes in
   `onCreate`; pause cancels work, resume refreshes the visible selection.

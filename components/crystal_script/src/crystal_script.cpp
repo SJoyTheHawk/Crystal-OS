@@ -177,6 +177,16 @@ ScriptApp::ScriptApp(const CrystalPackageManifest &manifest)
         [](lv_obj_t *object, const char *path, void *context) {
             return static_cast<ScriptApp *>(context)->load_image(object, path);
         }, this);
+    if (!manifest_.icon.empty()) {
+        launcher_image_ = read_image(manifest_.icon.c_str());
+        if (launcher_image_) {
+            ESP_Brookesia_StyleImage_t icon_image = {};
+            icon_image.resource = &launcher_image_->descriptor;
+            setLauncherIconImage(icon_image);
+        } else {
+            ESP_LOGW(TAG, "%s launcher icon could not be loaded", manifest_.id.c_str());
+        }
+    }
 }
 
 ScriptApp::~ScriptApp()
@@ -902,28 +912,67 @@ bool ScriptApp::apply_style(lv_obj_t *object, const cJSON *style)
 bool ScriptApp::load_image(lv_obj_t *object, const char *path)
 {
     if (!object || !path || strncmp(path, "assets/", 7)) return false;
-    for (const auto &image : images_) if (image->path == path) { lv_img_set_src(object, &image->descriptor); return true; }
-    std::string bytes;
-    if (!crystal_package_read_file(manifest_.id, path, &bytes, 256 * 1024)) return false;
-    unsigned width = 0, height = 0; int consumed = 0;
-    if (sscanf(bytes.c_str(), "CR16 %u %u%n", &width, &height, &consumed) != 2 || !width || !height || width > 480 || height > 480) return false;
-    const size_t count = static_cast<size_t>(width) * height;
-    if (count > 64 * 1024 / sizeof(lv_color_t)) return false;
-    auto image = std::make_unique<Image>(); image->path = path; image->pixels.resize(count * sizeof(lv_color_t));
-    const char *cursor = bytes.c_str() + consumed;
-    for (size_t index = 0; index < count; ++index) {
-        while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' || *cursor == '\t') ++cursor;
-        char *end = nullptr; const unsigned long color = strtoul(cursor, &end, 16);
-        if (end == cursor || color > 0xFFFFFF) return false;
-        const lv_color_t pixel = lv_color_hex(static_cast<uint32_t>(color));
-        memcpy(image->pixels.data() + index * sizeof(pixel), &pixel, sizeof(pixel)); cursor = end;
+    if (launcher_image_ && launcher_image_->path == path) {
+        lv_img_set_src(object, &launcher_image_->descriptor);
+        return true;
     }
-    while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' || *cursor == '\t') ++cursor;
-    if (*cursor) return false;
+    for (const auto &image : images_) if (image->path == path) { lv_img_set_src(object, &image->descriptor); return true; }
+    auto image = read_image(path);
+    if (!image) return false;
+    auto *result = image.get();
+    images_.push_back(std::move(image));
+    lv_img_set_src(object, &result->descriptor);
+    return true;
+}
+
+std::unique_ptr<ScriptApp::Image> ScriptApp::read_image(const char *path)
+{
+    if (!path || strncmp(path, "assets/", 7)) return nullptr;
+    std::string bytes;
+    if (!crystal_package_read_file(manifest_.id, path, &bytes, 256 * 1024)) return nullptr;
+    unsigned width = 0, height = 0;
+    const bool text_cr16 = bytes.size() >= 5 && !memcmp(bytes.data(), "CR16 ", 5);
+    const bool packed_rgb565 = bytes.size() >= 8 && !text_cr16 && !memcmp(bytes.data(), "CR16", 4);
+    size_t pixel_offset = 0;
+    if (!packed_rgb565 && !text_cr16) return nullptr;
+    if (packed_rgb565) {
+        width = static_cast<uint8_t>(bytes[4]) | static_cast<unsigned>(static_cast<uint8_t>(bytes[5])) << 8;
+        height = static_cast<uint8_t>(bytes[6]) | static_cast<unsigned>(static_cast<uint8_t>(bytes[7])) << 8;
+        pixel_offset = 8;
+    } else {
+        int consumed = 0;
+        if (sscanf(bytes.c_str(), "CR16 %u %u%n", &width, &height, &consumed) != 2) return nullptr;
+        pixel_offset = static_cast<size_t>(consumed);
+    }
+    if (!width || !height || width > 480 || height > 480) return nullptr;
+    const size_t count = static_cast<size_t>(width) * height;
+    if (count > 64 * 1024 / sizeof(lv_color_t)) return nullptr;
+    auto image = std::make_unique<Image>();
+    image->path = path;
+    image->pixels.resize(count * sizeof(lv_color_t));
+    if (packed_rgb565) {
+#if LV_COLOR_DEPTH == 16 && LV_COLOR_16_SWAP == 0
+        if (bytes.size() - pixel_offset != image->pixels.size()) return nullptr;
+        memcpy(image->pixels.data(), bytes.data() + pixel_offset, image->pixels.size());
+#else
+        return nullptr;
+#endif
+    } else {
+        const char *cursor = bytes.c_str() + pixel_offset;
+        for (size_t index = 0; index < count; ++index) {
+            while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' || *cursor == '\t') ++cursor;
+            char *end = nullptr; const unsigned long color = strtoul(cursor, &end, 16);
+            if (end == cursor || color > 0xFFFFFF) return nullptr;
+            const lv_color_t pixel = lv_color_hex(static_cast<uint32_t>(color));
+            memcpy(image->pixels.data() + index * sizeof(pixel), &pixel, sizeof(pixel)); cursor = end;
+        }
+        while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' || *cursor == '\t') ++cursor;
+        if (*cursor) return nullptr;
+    }
     image->descriptor.header.cf = LV_IMG_CF_TRUE_COLOR; image->descriptor.header.always_zero = 0; image->descriptor.header.reserved = 0;
     image->descriptor.header.w = width; image->descriptor.header.h = height;
     image->descriptor.data_size = image->pixels.size(); image->descriptor.data = image->pixels.data();
-    auto *result = image.get(); images_.push_back(std::move(image)); lv_img_set_src(object, &result->descriptor); return true;
+    return image;
 }
 
 int ScriptApp::ui_screen(lua_State *state)

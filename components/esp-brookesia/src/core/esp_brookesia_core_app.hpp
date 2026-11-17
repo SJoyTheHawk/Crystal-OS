@@ -265,6 +265,10 @@ protected:
     /**
      * @brief Set the icon image of the app.
      *
+     * Before installation, also saves the icon in the initial configuration
+     * so it survives installation and reinstallation. The resource must remain
+     * valid while the app uses it.
+     *
      * @param icon_image The icon image of the app.
      *
      */

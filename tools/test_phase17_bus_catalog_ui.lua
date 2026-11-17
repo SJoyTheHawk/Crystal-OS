@@ -51,6 +51,10 @@ ticks(1);assert(reads==10,'preload still waits for a separate tick per file')
 preload=false
 assert(is_enabled('1') and has_text('0') and not is_enabled('0'),'unavailable numeric keys remain visible and disabled')
 assert(not has_text('M') and not has_text('Z'),'letters without a matching route prefix must be hidden')
+local ax,ay=position('A');local bx,by=position('B')
+local ex,ey=position('E');local hx,hy=position('H')
+assert(by==ay and bx>ax and ey>ay and ey==hy and hx>ex,
+  'possible letters must compact alphabetically into two fixed columns')
 assert(memory_stats().peak<768*1024,'preload must retain compact pages, not expand the full catalog')
 local startup_reads=0
 local original_read=crystal.fs.read
@@ -60,6 +64,11 @@ crystal.fs.read=function(path)
 end
 click('1');assert(is_enabled('A') and is_enabled('0') and is_enabled('9'))
 assert(has_text('M') and not has_text('Z'),'valid letters must appear for the prefix')
+ax,ay=position('A');local mx,my=position('M');local px,py=position('P')
+assert(my==ay and mx>ax and py>ay and px==ax,
+  'sparse prefix letters must remain in consecutive two-column rows')
+click('M');assert(has_text('1M'),'reused letter slots must dispatch their current letter')
+click(utf8.char(0xF00D));click('1');assert(has_text('M'))
 click('A');assert(not has_text('M'),'letters must hide when the new prefix makes them impossible')
 click(utf8.char(0xF00D));assert(not has_text('M'))
 click('1');assert(has_text('M'),'valid letters must appear again when the prefix changes back')
@@ -106,6 +115,11 @@ click(utf8.char(0xF021))
 complete('{"data":[{"stop":"00040ED8B61CA94B","seq":1},{"stop":"FFFB0F940CA7BEA7","seq":2}]}')
 assert(not has_text('Loading...') and not pending,'stop lookup still waits between catalog pages')
 assert(has_text('Tap a stop for arrivals'))
+local expected_margin=math.floor(16*screen_width/480)
+local _,status_y,_,status_h=label_bounds('Tap a stop for arrivals')
+local status_bottom_margin=screen_height-(status_y+status_h)
+assert(status_bottom_margin>=-1 and status_bottom_margin<=expected_margin+2,
+  'stop list should extend to the bottom status with the standard page padding')
 -- More than 64 missing names spread over 40 packaged files must all resolve
 -- before this single response callback returns.
 click(utf8.char(0xF021))
@@ -130,13 +144,29 @@ checkpoint('eighty_stop_metadata')
 -- Long sequences retain every occurrence in one continuous scrolling list.
 click(utf8.char(0xF021))
 local rows={}
-for i=1,80 do rows[i]='{"stop":"same-stop-'..i..'","seq":'..i..',"name_en":"Test stop '..i..'"}' end
+for i=1,80 do
+  local name=i==1 and 'A very long stop name that should wrap naturally onto two lines in this viewport' or 'Test stop '..i
+  rows[i]='{"stop":"same-stop-'..i..'","seq":'..i..',"name_en":"'..name..'"}'
+end
 complete('{"data":['..table.concat(rows,',')..']}')
-assert(has_text('1. Test stop 1') and has_text('65. Test stop 65') and has_text('80. Test stop 80'),
+local first_name='1. A very long stop name that should wrap naturally onto two lines in this viewport'
+assert(has_text(first_name) and has_text('65. Test stop 65') and has_text('80. Test stop 80'),
   'full response/list must complete immediately, including more than 64 stops')
+local list_x,list_w=list_bounds(first_name)
+assert(list_x==expected_margin and screen_width-list_x-list_w==expected_margin,
+  'detail stop list margins must match Favorites and Search')
+local first_y,first_h=list_row_metrics(first_name)
+local second_y,second_h=list_row_metrics('2. Test stop 2')
+local expected_gap=math.floor(8*screen_width/480)
+assert(first_h>second_h and second_h<math.floor(88*screen_width/480) and
+  second_y-first_y-first_h>=expected_gap-1,
+  'wrapped rows should grow to fit text while shorter rows stay compact and separated')
 assert(not has_text('Next') and not has_text('Page 1 /'))
 assert(list_scroll_y('80. Test stop 80')>0,'last stop must be reachable by scrolling')
 click('80. Test stop 80')
+local eta_x,_,eta_w=label_bounds('NEXT ARRIVALS')
+assert(eta_x==expected_margin and eta_w==screen_width-2*expected_margin,
+  'ETA page margins must match Favorites and Search')
 assert(pending.url:find('/eta/same-stop-80/1A/1',1,true));complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}');ticks()
 assert(has_text('3 min'));click('Save stop');assert(#saved.favorites==1)
 click(utf8.char(0xF021));local late=pending

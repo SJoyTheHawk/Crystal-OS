@@ -1,8 +1,13 @@
 # Bus Phases 1–3 — install and board test
 
-Updated 2026-11-18. Package **0.2.18** implements direct KMB/LWB and Citybus
+Updated 2026-11-18. Package **0.2.22** implements direct KMB/LWB and Citybus
 stop sequences, metadata fallback, joint-provider ETA merging, and Phase 3
-persistence validation. The user reports the Phase 3 P4 board checklist passed.
+persistence validation. Possible alphabetic route keys now reflow into a
+consistent two-column grid. The detail header is more compact, and stop entries
+use content-sized heights with visible spacing. Detail pages now use the same
+16 px scaled side padding as Favorites and Search, and the stop list fills the
+remaining screen height to its bottom status line. The user reports the Phase 3 P4
+board checklist passed.
 
 Favorite and recent-route records are validated on load. Failed writes preserve
 the current lists and show an error. The board checklist includes app restart
@@ -13,8 +18,8 @@ duplicate guidance above route results and stops. Check Search, open a route,
 wait for stops, open arrivals, and return to Favorites: all bottom statuses
 use the same larger 20 px font. There should be no upper "Choose a route and
 direction" or "Loading bus stops..." line, and "Tap a stop for arrivals"
-appears only at the bottom. Install the updated CAPP through the Control Panel;
-this change needs no additional firmware flash on the current runtime.
+appears only at the bottom. The compact header and stop-row spacing use APIs
+already present in current firmware, so this visual adjustment needs no flash.
 
 For 0.2.14 and later, first flash the updated firmware using the app-flash command below,
 then uninstall the old Bus Lite package and install /tmp/phase17-bus-live.capp
@@ -92,10 +97,16 @@ Manual refresh, existing saved stops and recent routes remain available.
 
 ## 1. Install the firmware once
 
+The package-owned Bus Lite icon also requires the launcher icon fix in the
+current firmware. Earlier firmware reset constructor-assigned package icons
+during installation, replacing them with the default. Flash the rebuilt OS
+with `app-flash` and reboot; an installed package already containing
+`assets/icon.bin` does not need to be uninstalled or reinstalled for this fix.
+
 This firmware includes the shared native list-selection and row-update APIs
 used by the continuous stop list, plus native JSON cleanup when conversion
-exhausts the Lua arena. OS version remains **0.17.0**; install the newly built
-binary even if the board already reports that version.
+exhausts the Lua arena. OS version remains **0.17.0**; install
+the newly built binary even if the board already reports that version.
 
 From the repository terminal with ESP-IDF 6.1 enabled:
 
@@ -114,7 +125,7 @@ No flash has been performed as part of the implementation.
 
 Build `/tmp/phase17-bus-live.capp` from the current source below. The previous
 signed package may be an older version; confirm the package is **Bus Lite
-0.2.18**, key ID 240, with network permissions for `data.etabus.gov.hk` and
+0.2.22**, key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
 1. On P4, open Settings → Developer Tools → Control Panel and pair as usual.
@@ -124,7 +135,7 @@ signed package may be an older version; confirm the package is **Bus Lite
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.18**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.22**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the
@@ -148,7 +159,10 @@ python3 tools/crystal.py inspect /tmp/phase17-bus-live.capp
    keys become active. At an empty query only catalog-leading characters should
    be enabled; after typing **1**, `A` and valid numeric continuations should be
    enabled while unrelated letters stay disabled. Clear and backspace should
-   recompute the key state. Then type **1A** and open the KMB
+   recompute the key state. Available letters should always pack alphabetically
+   into consecutive two-column rows, even when only sparse letters remain.
+   Tap a reflowed letter and confirm it enters the displayed character. Then
+   type **1A** and open the KMB
    card **To STAR FERRY** (outbound). The opposite card is **To SAU MAU PING
    (CENTRAL)**. These destinations come from the packaged snapshot; provider
    sequence data is fetched live.

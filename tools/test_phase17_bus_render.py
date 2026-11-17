@@ -154,6 +154,23 @@ static int is_enabled(lua_State *state) {
     lua_pushboolean(state,!lv_obj_has_state(target,LV_STATE_DISABLED));return 1;
 }
 static int has_text(lua_State *state) {lua_pushboolean(state,find(lv_scr_act(),luaL_checkstring(state,1))!=nullptr);return 1;}
+static int position(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *button=lv_obj_get_parent(label);lv_obj_update_layout(lv_scr_act());lv_area_t area{};
+    lv_obj_get_coords(button,&area);lua_pushinteger(state,area.x1);lua_pushinteger(state,area.y1);return 2;
+}
+static int widget_metrics(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *widget=lv_obj_get_parent(label);lv_obj_update_layout(lv_scr_act());lv_area_t area{};
+    lv_obj_get_coords(widget,&area);lua_pushinteger(state,area.x1);lua_pushinteger(state,area.y1);
+    lua_pushinteger(state,area.x2-area.x1+1);lua_pushinteger(state,area.y2-area.y1+1);return 4;
+}
+static int label_bounds(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    lv_obj_update_layout(lv_scr_act());lv_area_t area{};lv_obj_get_coords(label,&area);
+    lua_pushinteger(state,area.x1);lua_pushinteger(state,area.y1);
+    lua_pushinteger(state,area.x2-area.x1+1);lua_pushinteger(state,area.y2-area.y1+1);return 4;
+}
 static int text_font_size(lua_State *state) {
     auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
     auto *font=lv_obj_get_style_text_font(label,LV_PART_MAIN);
@@ -171,6 +188,17 @@ static int list_scroll_y(lua_State *state) {
     auto *row=lv_obj_get_parent(label);auto *list=row?lv_obj_get_parent(row):nullptr;assert(list);
     lv_obj_scroll_to_view(row,LV_ANIM_OFF);lv_obj_update_layout(lv_scr_act());
     lua_pushinteger(state,lv_obj_get_scroll_y(list));return 1;
+}
+static int list_row_metrics(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *row=lv_obj_get_parent(label);lv_obj_update_layout(lv_scr_act());lv_area_t area{};
+    lv_obj_get_coords(row,&area);lua_pushinteger(state,area.y1);lua_pushinteger(state,area.y2-area.y1+1);return 2;
+}
+static int list_bounds(lua_State *state) {
+    auto *label=find(lv_scr_act(),luaL_checkstring(state,1));assert(label);
+    auto *row=lv_obj_get_parent(label);auto *list=row?lv_obj_get_parent(row):nullptr;assert(list);
+    lv_obj_update_layout(lv_scr_act());lv_area_t area{};lv_obj_get_coords(list,&area);
+    lua_pushinteger(state,area.x1);lua_pushinteger(state,area.x2-area.x1+1);return 2;
 }
 static void flush(lv_disp_drv_t *d,const lv_area_t*,lv_color_t*) {lv_disp_flush_ready(d);}
 static int snapshot(lua_State *state) {
@@ -197,6 +225,8 @@ int main(int argc,char **argv) {
     auto *first=static_cast<ScriptApp::Block*>(app.arena_);
     *first={app.arena_size_-sizeof(ScriptApp::Block),nullptr,nullptr,true};
     L=app.lua_=lua_newstate(observed_allocate,&app);assert(L);luaL_openlibs(L);
+    lua_pushinteger(L,width);lua_setglobal(L,"screen_width");
+    lua_pushinteger(L,width-40);lua_setglobal(L,"screen_height");
     for(auto name:{"os","io","package","require","debug","collectgarbage"}){lua_pushnil(L);lua_setglobal(L,name);}
     app.root_=lv_obj_create(lv_scr_act());lv_obj_remove_style_all(app.root_);
     lv_obj_set_size(app.root_,width,width-40);lv_obj_set_style_bg_opa(app.root_,LV_OPA_COVER,0);
@@ -224,9 +254,14 @@ int main(int argc,char **argv) {
     lua_pushcfunction(L,click);lua_setglobal(L,"click");
     lua_pushcfunction(L,is_enabled);lua_setglobal(L,"is_enabled");
     lua_pushcfunction(L,has_text);lua_setglobal(L,"has_text");
+    lua_pushcfunction(L,position);lua_setglobal(L,"position");
+    lua_pushcfunction(L,widget_metrics);lua_setglobal(L,"widget_metrics");
+    lua_pushcfunction(L,label_bounds);lua_setglobal(L,"label_bounds");
     lua_pushcfunction(L,text_font_size);lua_setglobal(L,"text_font_size");
     lua_pushcfunction(L,text_count);lua_setglobal(L,"text_count");
     lua_pushcfunction(L,list_scroll_y);lua_setglobal(L,"list_scroll_y");
+    lua_pushcfunction(L,list_row_metrics);lua_setglobal(L,"list_row_metrics");
+    lua_pushcfunction(L,list_bounds);lua_setglobal(L,"list_bounds");
     lua_pushcfunction(L,snapshot);lua_setglobal(L,"snapshot");
     lua_pushstring(L,argv[5]);lua_setglobal(L,"expected_counts");
     lua_pushstring(L,argv[1]);lua_setglobal(L,"package_path");

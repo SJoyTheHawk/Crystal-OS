@@ -145,12 +145,12 @@ end
 local function update_keypad_state()
   if not v.key_buttons then return end
   v.key_enabled=v.key_enabled or {}
-  v.key_hidden=v.key_hidden or {}
-  v.key_row_hidden=v.key_row_hidden or {}
+  v.letter_enabled=v.letter_enabled or {}
+  v.letter_hidden=v.letter_hidden or {}
+  v.letter_row_hidden=v.letter_row_hidden or {}
   local ready=Catalog.ready
   local possible=catalog_next_characters(query)
   for value,handle in pairs(v.key_buttons) do
-    local is_letter=#value==1 and value>="A" and value<="Z"
     local is_possible=ready and possible:find(value,1,true)~=nil
     local enabled=false
     if ready then
@@ -160,22 +160,31 @@ local function update_keypad_state()
     if v.key_enabled[value]~=enabled then
       ui.set_enabled(handle,enabled);v.key_enabled[value]=enabled
     end
-    if is_letter then
-      local hidden=not is_possible
-      if v.key_hidden[value]~=hidden then
-        ui.set_hidden(handle,hidden);v.key_hidden[value]=hidden
-      end
+  end
+  local letters={}
+  for i=1,26 do
+    local value=string.char(64+i)
+    if ready and possible:find(value,1,true) then letters[#letters+1]=value end
+  end
+  for slot,handle in ipairs(v.letter_buttons or {}) do
+    local value=letters[slot]
+    if v.letter_slots[slot]~=value then
+      ui.set_text(handle,value or "")
+      v.letter_slots[slot]=value
+    end
+    local enabled=ready and value~=nil
+    if v.letter_enabled[slot]~=enabled then
+      ui.set_enabled(handle,enabled);v.letter_enabled[slot]=enabled
+    end
+    local hidden=value==nil
+    if v.letter_hidden[slot]~=hidden then
+      ui.set_hidden(handle,hidden);v.letter_hidden[slot]=hidden
     end
   end
-  -- Collapse empty paired-letter rows as the prefix narrows.
-  for row,values in pairs(v.key_rows or {}) do
-    local visible=false
-    for _,value in ipairs(values) do
-      if not v.key_hidden[value] then visible=true;break end
-    end
-    local hidden=not visible
-    if v.key_row_hidden[row]~=hidden then
-      ui.set_hidden(row,hidden);v.key_row_hidden[row]=hidden
+  for row_index,row in ipairs(v.letter_rows or {}) do
+    local hidden=letters[row_index*2-1]==nil
+    if v.letter_row_hidden[row_index]~=hidden then
+      ui.set_hidden(row,hidden);v.letter_row_hidden[row_index]=hidden
     end
   end
 end
@@ -809,8 +818,9 @@ render_route_page = function(slot)
   ui.set_hidden(v.route_next, route_page>=pages)
   ui.set_text(v.route_page, #route_results>0 and ("Page "..route_page.." / "..pages) or "")
 end
-render_route_rows = function(rows, message)
+render_route_rows = function(rows, message, recent_view)
   route_results=rows or {}; route_total=#route_results; route_page=math.max(1,math.min(route_page,math.max(1,math.ceil(route_total/8))))
+  ui.set_hidden(v.recent_heading, not recent_view)
   render_route_page()
   status(message)
 end
@@ -819,7 +829,7 @@ show_recent_routes = function()
   for i=1,math.min(#recents,5) do rows[i]=recents[i] end
   render_route_rows(rows,
     recent_load_warning and "Some recent routes were skipped" or
-      (#rows>0 and "Recent routes saved on this device" or "Enter a route number"))
+      (#rows>0 and "Recent routes saved on this device" or "Enter a route number"),true)
 end
 local function button(parent, title, width, height, callback)
   return assert(ui.button(parent, {text=title, width=width, height=height, on_click=callback,
@@ -1222,6 +1232,7 @@ local function key(value)
   elseif value=="<" then query=query:sub(1,-2)
   elseif tostring(value):match("^[A-Za-z0-9]$") and #query<6 then query=(query..value):upper() end
   print("BUS_SEARCH","key",query)
+  if query~="" then ui.set_hidden(v.recent_heading,true) end
   routes={};v.search_checkpoint=nil
   ui.set_text(v.query,query)
   update_keypad_state()
@@ -1346,7 +1357,7 @@ show_page = function(name)
       (#favorites>0 and "Tap a saved stop for live arrivals" or ""))
   elseif name=="search" then
     if Catalog.ready then
-      if query=="" then show_recent_routes() end
+      if query=="" then show_recent_routes() else ui.set_hidden(v.recent_heading,true) end
     elseif Catalog.load_failed then
       render_route_rows({},"Reinstall the package with its bundled catalog")
     else
@@ -1364,15 +1375,18 @@ function M.onCreate()
   favorites,favorite_load_warning=Store.load_favorites()
   recents,recent_load_warning=Store.load_recents()
   v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={},
-    key_buttons={}, key_rows={}, key_hidden={}, key_row_hidden={}}
+    key_buttons={},letter_buttons={},letter_slots={},letter_rows={},letter_enabled={},
+    letter_hidden={},letter_row_hidden={}}
   catalog_load()
   local screen=ui.screen()
   local size=ui.get_size(screen)
   local W,H=size.w,size.h
   local scale=W/480
   local pad,gap=math.floor(16*scale),math.floor(5*scale)
+  local detail_pad=pad
   local tab_h,key_h=math.floor(48*scale),math.floor(40*scale)
   local width=W-2*pad
+  local detail_width=width
   local readable_font=W>=600 and "large" or "normal"
   local readable_size=W>=600 and 28 or 20
   assert(ui.set_style(screen, {padding=0, bg_color=C.bg}))
@@ -1388,7 +1402,9 @@ function M.onCreate()
     v.tab_lines[name]=assert(ui.col(slot, {height=3,style={bg_color=C.bg,bg_opa=255}}))
   end
   for _, name in ipairs({"favorites","search","detail"}) do
-    local page=assert(ui.scroll_view(root, {height=name=="detail" and H or H-tab_h,gap=math.floor(12*scale),style={padding=pad}}))
+    local page_pad=name=="detail" and detail_pad or pad
+    local page_gap=name=="detail" and math.floor(6*scale) or math.floor(12*scale)
+    local page=assert(ui.scroll_view(root, {height=name=="detail" and H or H-tab_h,gap=page_gap,style={padding=page_pad}}))
     v.pages[name]=page
   end
   local page=v.pages.favorites
@@ -1424,7 +1440,6 @@ function M.onCreate()
       local key_button=button(row,caption,(numeric_w-2*gap)//3,key_h,function() key(value) end)
       ui.set_style(key_button,{border_width=0})
       v.key_buttons[value]=key_button
-      v.key_hidden[value]=false
     end
   end
   local letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1432,24 +1447,25 @@ function M.onCreate()
   local bank=assert(ui.scroll_view(keypad,{width=bank_w,height=4*key_h+3*gap,gap=gap}))
   for i=1,#letters,2 do
     local row=assert(ui.row(bank,{gap=gap}))
-    local row_keys={}
+    v.letter_rows[#v.letter_rows+1]=row
     for j=i,math.min(i+1,#letters) do
-      local value=letters:sub(j,j)
-      local key_button=button(row,value,(bank_w-gap)//2,key_h,function() key(value) end)
+      local slot=#v.letter_buttons+1
+      local key_button=button(row,"",(bank_w-gap)//2,key_h,function()
+        local value=v.letter_slots[slot]
+        if value then key(value) end
+      end)
       ui.set_style(key_button,{border_width=0})
-      v.key_buttons[value]=key_button
-      v.key_hidden[value]=false
-      row_keys[#row_keys+1]=value
+      v.letter_buttons[slot]=key_button
+      v.letter_hidden[slot]=false
     end
-    v.key_rows[row]=row_keys
-    v.key_row_hidden[row]=false
   end
+  v.recent_heading=text(page,"Recent:",width,"normal",C.muted)
+  ui.set_hidden(v.recent_heading,true)
   for i=1,8 do
-    local box=assert(ui.row(page,{gap=12,on_click=function() if routes[i] then open_route(routes[i]) end end,
+    local box=assert(ui.col(page,{gap=4,on_click=function() if routes[i] then open_route(routes[i]) end end,
       style={padding=16,radius=8,bg_color=C.card,bg_opa=255,border_width=1,border_color=C.border}}))
-    local row=box
-    v.routes[i]={box=box,route=text(row,"",math.floor(108*scale),readable_font),
-      destination=text(row,"",width-44-math.floor(108*scale),readable_font,C.muted)}
+    v.routes[i]={box=box,route=text(box,"",width-32,"large"),
+      destination=text(box,"",width-32,readable_font,C.muted)}
     ui.set_hidden(box,true)
   end
   v.route_nav=assert(ui.row(page,{gap=gap}))
@@ -1459,37 +1475,39 @@ function M.onCreate()
   v.route_next=button(v.route_nav,"Next",math.floor(width/3),key_h,function() move_route_page(1) end)
   ui.set_hidden(v.route_nav,true)
   page=v.pages.detail
-  -- Keep header actions at the platform's 56 px logical tap target.
-  local header_h=math.floor(56*scale)
+  -- Tighten the detail header while keeping generous 48 px tap targets.
+  local header_h=math.floor(48*scale)
   local header=assert(ui.row(page,{height=header_h,gap=gap}))
   v.detail_header=header
   local icon_w=header_h
   local back=button(header,ICON.back,icon_w,header_h,function() M.onBack() end)
   ui.set_style(back,{bg_color=C.bg,border_width=0,text_color=C.accent})
-  v.route_title=text(header,"",width-2*icon_w-2*gap,"large")
+  v.route_title=assert(ui.button(header,{text="",width=detail_width-2*icon_w-2*gap,height=header_h,font="large",
+    style={bg_color=C.bg,text_color=C.text,border_width=0,align="left"}}))
   local refresh_button=button(header,ICON.refresh,icon_w,header_h,refresh)
   ui.set_style(refresh_button,{bg_color=C.bg,border_width=0,text_color=C.accent,font_size=28})
   ui.set_style(back,{font_size=28})
-  v.destination=text(page,"",width,readable_font,C.muted)
-  v.stop_section=assert(ui.col(page,{gap=12}))
-  v.stop_list=assert(ui.list(v.stop_section,{width=width,height=H-math.floor(210*scale),
+  v.destination=text(page,"",detail_width,readable_font,C.muted)
+  v.stop_section=assert(ui.col(page,{gap=math.floor(8*scale)}))
+  local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))
+  v.stop_list=assert(ui.list(v.stop_section,{width=detail_width,height=stop_list_h,gap=math.floor(8*scale),
     on_select=function(index) select_stop(index) end,
     style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
   v.eta_section=assert(ui.col(page,{gap=math.floor(16*scale)}))
-  v.stop_name=text(v.eta_section,"Choose a stop",width,"large")
-  text(v.eta_section,"NEXT ARRIVALS",width,"small",C.muted)
+  v.stop_name=text(v.eta_section,"Choose a stop",detail_width,"large")
+  text(v.eta_section,"NEXT ARRIVALS",detail_width,"small",C.muted)
   local board=card(v.eta_section,nil)
   for i=1,3 do
     local row=assert(ui.row(board,{gap=12}))
     v.arrivals[i]={box=row,minutes=text(row,"",math.floor(118*scale),"large",i==1 and C.accent or C.text),
-      remark=text(row,"",width-44-math.floor(118*scale),"small",C.muted)}
+      remark=text(row,"",detail_width-44-math.floor(118*scale),"small",C.muted)}
     ui.set_hidden(row,true)
   end
-  v.no_eta=text(board,"No arrivals available",width-32,"normal",C.muted)
+  v.no_eta=text(board,"No arrivals available",detail_width-32,"normal",C.muted)
   ui.set_hidden(v.no_eta,true)
-  v.save=button(v.eta_section,"Save stop",width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
+  v.save=button(v.eta_section,"Save stop",detail_width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
   for _, name in ipairs({"favorites","search","detail"}) do
-    v.status[name]=text(v.pages[name],"",width,"normal",C.muted)
+    v.status[name]=text(v.pages[name],"",name=="detail" and detail_width or width,"normal",C.muted)
   end
   v.search_timer=ui.timer(100,search_tick)
   update_keypad_state(); update_actions(); show_page("favorites")

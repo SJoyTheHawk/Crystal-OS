@@ -1,6 +1,6 @@
 # Bus App Transformation — Complete Documentation Index
 
-> Current implementation (0.2.18, 2026-11-17): local work finishes without
+> Current implementation (0.2.22, 2026-11-18): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools

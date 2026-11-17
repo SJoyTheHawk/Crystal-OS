@@ -57,6 +57,7 @@ private:
     };
     struct HttpContext { std::shared_ptr<AsyncState> state; };
     struct Image { std::string path; lv_img_dsc_t descriptor{}; std::vector<uint8_t> pixels; };
+    std::unique_ptr<Image> read_image(const char *path);
 
     static void *lua_allocate(void *context, void *pointer, size_t old_size, size_t new_size);
     void *arena_allocate(size_t bytes);
@@ -186,5 +187,6 @@ private:
     std::set<uint32_t> active_requests_;
     std::list<std::unique_ptr<CallbackRef>> callbacks_;
     std::map<std::pair<uint32_t, std::string>, CallbackRef *> event_callbacks_;
+    std::unique_ptr<Image> launcher_image_;
     std::vector<std::unique_ptr<Image>> images_;
 };

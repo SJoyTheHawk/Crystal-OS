@@ -1,4 +1,17 @@
-# Bus Lite live-provider package (0.2.18)
+# Bus Lite live-provider package (0.2.22)
+
+Version 0.2.20 enlarged route labels to 28 px and added a **Recent:** heading
+above recent searches. Version 0.2.21 tightens the detail page's top spacing and
+header height, then gives stop rows content-sized heights with a visible gap so
+long names wrap while short rows stay compact. Version 0.2.22 gives the detail
+header, stop list, destination and ETA controls the same 16 px scaled side
+padding as Favorites and Search. The stop list now fills the remaining viewport
+down to its bottom status line. It does not require a new firmware API.
+
+Version 0.2.19 packs possible alphabetic route keys into consecutive rows of
+two columns. Unavailable letters remain hidden; reusable key slots update their
+labels and selected letter with the current route prefix. The production LVGL
+host test checks keypad positions and key dispatch at 480 px and 720 px.
 
 Version 0.2.18 hardens favorites and recent-route persistence. Stored records
 are validated on load; invalid entries are skipped with a visible notice.

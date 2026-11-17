@@ -90,7 +90,7 @@ description: "A simple clock app with timer and alarm"
 # Runtime and entry
 runtime: lua                      # lua | declarative | native
 entry: main.lua                   # Module/file to execute first
-icon: assets/icon.bin             # bundled icon; current Lua loader accepts bounded CR16 text
+icon: assets/icon.bin             # bundled CR16 text or native RGB565 binary icon
 
 # Visual configuration
 bar_style: dark                   # Status bar contrast: dark | light (DESIGN.md §2)

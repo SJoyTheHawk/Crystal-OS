@@ -24,6 +24,19 @@ static lv_obj_t *switcher(lv_obj_t *incoming_card,const void *icon_resource,lv_c
 static void flush(lv_disp_drv_t *d,const lv_area_t *,lv_color_t *){lv_disp_flush_ready(d);}
 static void touch(lv_indev_drv_t *,lv_indev_data_t *d){d->state=LV_INDEV_STATE_RELEASED;}
 static void advance(){for(int i=0;i<10;++i){lv_tick_inc(10);lv_timer_handler();}}
+class PackageIconApp : public ESP_Brookesia_PhoneApp {
+public:
+    explicit PackageIconApp(const void *icon)
+        : ESP_Brookesia_PhoneApp("Package icon", nullptr, true) {
+        if (icon) {
+            ESP_Brookesia_StyleImage_t image = {};
+            image.resource = icon;
+            setLauncherIconImage(image);
+        }
+    }
+    bool run() override { return true; }
+    bool back() override { return true; }
+};
 static lv_obj_t *find_image(lv_obj_t *root,const void *src){
     if(lv_obj_check_type(root,&lv_img_class) && lv_img_get_src(root)==src)return root;
     for(uint32_t i=0;i<lv_obj_get_child_cnt(root);++i)
@@ -80,6 +93,21 @@ int main(){
     static lv_color_t white[64*64];for(auto &c:white)c=lv_color_white();
     lv_img_dsc_t artwork={};artwork.header.cf=LV_IMG_CF_TRUE_COLOR;artwork.header.w=artwork.header.h=64;
     artwork.data_size=sizeof(white);artwork.data=reinterpret_cast<const uint8_t *>(white);
+    // ScriptApp sets its package-owned descriptor in its constructor, before
+    // installApp copies initial data into active data. It must survive that
+    // copy and reach the actual launcher, including after reinstallation.
+    PackageIconApp package_app(&artwork);
+    for (int cycle=0;cycle<2;++cycle) {
+        assert(phone.installApp(&package_app)>0);advance();
+        assert(package_app.getLauncherIcon().resource==&artwork);
+        assert(find_image(phone.getCoreHome().getMainScreenObject(),&artwork));
+        assert(phone.uninstallApp(&package_app));
+    }
+    PackageIconApp fallback_app(nullptr);
+    assert(phone.installApp(&fallback_app)>0);advance();
+    assert(fallback_app.getLauncherIcon().resource==phone.getHome().getData().app_launcher.default_image.resource);
+    assert(phone.uninstallApp(&fallback_app));
+    std::puts("PASS: constructor-set package icon survives install/reinstall and missing icons retain default fallback");
     ESP_Brookesia_AppLauncherIconInfo_t info={};info.name="Test";info.image.resource=&artwork;info.id=999;
     auto data=phone.getHome().getData().app_launcher.data.icon;
     ESP_Brookesia_AppLauncherIcon launcher(phone,info,data);assert(launcher.begin(panel));advance();

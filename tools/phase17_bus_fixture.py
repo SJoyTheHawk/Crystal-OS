@@ -111,7 +111,10 @@ def create(host: str) -> None:
             continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.read_text(encoding="utf-8").replace(HOST_TOKEN, host), encoding="utf-8")
+        if relative == Path("assets/icon.bin"):
+            target.write_bytes(source.read_bytes())
+        else:
+            target.write_text(source.read_text(encoding="utf-8").replace(HOST_TOKEN, host), encoding="utf-8")
     manifest_path=destination / "app.yaml"
     manifest=json.loads(manifest_path.read_text())
     manifest["permissions"]["network_hosts"]=[host]

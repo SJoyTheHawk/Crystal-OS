@@ -93,6 +93,11 @@ bool ESP_Brookesia_CoreApp::notifyCoreClosed(void) const
 
 void ESP_Brookesia_CoreApp::setLauncherIconImage(const ESP_Brookesia_StyleImage_t &icon_image)
 {
+    // Package apps load their descriptor before install. processInstall()
+    // copies initial data over active data, so retain that configuration too.
+    if (!checkInitialized()) {
+        _core_init_data.launcher_icon = icon_image;
+    }
     _core_active_data.launcher_icon = icon_image;
 }
 
