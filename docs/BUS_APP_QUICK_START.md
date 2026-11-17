@@ -1,9 +1,12 @@
-# Bus Phases 1–2 — install and board test
+# Bus Phases 1–3 — install and board test
 
-Updated 2026-11-17. Package **0.2.17** implements direct KMB/LWB and Citybus stop
-sequences, metadata fallback, single-provider ETA and Phase 2 joint-provider
-ETA merging. Host checks and the P4 firmware build pass. Physical-board
-acceptance is pending.
+Updated 2026-11-18. Package **0.2.18** implements direct KMB/LWB and Citybus
+stop sequences, metadata fallback, joint-provider ETA merging, and Phase 3
+persistence validation. The user reports the Phase 3 P4 board checklist passed.
+
+Favorite and recent-route records are validated on load. Failed writes preserve
+the current lists and show an error. The board checklist includes app restart
+and persistence-write failure cases.
 
 Version 0.2.17 keeps notifications in the bottom status field and removes the
 duplicate guidance above route results and stops. Check Search, open a route,
@@ -109,8 +112,9 @@ No flash has been performed as part of the implementation.
 
 ## 2. Install the live package through the Control Panel
 
-Use **`/tmp/phase17-bus-live.capp`**. It is the signed **Bus Lite 0.2.16** package,
-key ID 240, with network permissions for `data.etabus.gov.hk` and
+Build `/tmp/phase17-bus-live.capp` from the current source below. The previous
+signed package may be an older version; confirm the package is **Bus Lite
+0.2.18**, key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
 1. On P4, open Settings → Developer Tools → Control Panel and pair as usual.
@@ -120,7 +124,7 @@ key ID 240, with network permissions for `data.etabus.gov.hk` and
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.16**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.18**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the
@@ -203,13 +207,25 @@ https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/<six-digit-stop-id>/2
    provider, route, service, stop ID and sequence are requested.
 2. Favorites says **Tap to load live arrivals** instead of persisting an old
    minute countdown as current information. Reopening fetches fresh ETA.
-3. Remove it and reopen the app; confirm the final favorite stays removed.
-4. Start a request, then immediately leave the page or app. Return and refresh.
+3. Remove it, close and relaunch Bus Lite; confirm the final favorite stays
+   removed. Save another stop and relaunch to confirm the save persists.
+4. Confirm failed save/remove writes leave the existing list and action intact.
+   A failed recent-route write must not add that route to the recent list.
+5. Start a request, then immediately leave the page or app. Return and refresh.
    No old stop name or arrival should replace the current selection. Repeated
    refresh may briefly wait for a cancelled native worker to finish retiring.
-5. Disconnect Wi-Fi, refresh, then reconnect and retry. Confirm a visible error,
+6. Disconnect Wi-Fi, refresh, then reconnect and retry. Confirm a visible error,
    recovery and no crash. An unsynchronized clock shows **Time unavailable**;
    allow system time synchronization before judging countdown values.
+
+### Phase 3 P4 acceptance result — 2026-11-18
+
+The user reports that all seven Phase 3 checks passed on the P4: favorite save,
+relaunch and reboot persistence; removal persistence across relaunch and reboot;
+recent-route display, identity, deduplication/order and five-item cap; joint
+favorite reopening with both provider arrivals; and the eight-favorite limit.
+Host tests separately cover malformed stored entries and simulated write
+failures. The board checklist did not inject a storage write failure.
 
 ## 6. Capture P4 resource evidence
 
@@ -248,7 +264,8 @@ python3 tools/test_phase17_bindings.py
 The render suite uses production Lua allocator, JSON conversion and UI bindings
 with real LVGL at 480/720 pixels. It checks complete catalog paging, repeated
 stop occurrences, exact provider URLs, metadata fallback, timestamp offsets,
-ETA sorting, stale callbacks, async cancellation, pause/resume and UI reuse.
+ETA sorting, stale callbacks, async cancellation, pause/resume, UI reuse,
+malformed persisted records, duplicate/over-limit entries and failed state writes.
 It forces JSON conversion OOM repeatedly and verifies native trees are freed.
 HTTP and storage are controlled adapters; these checks do not establish board
 TLS, touch, timing or resource acceptance.

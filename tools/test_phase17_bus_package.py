@@ -55,7 +55,7 @@ def main():
         assert manifest["id"] == "com.example.bus3p"
         assert manifest["runtime"] == "lua"
         assert "fixture" in manifest["name"]
-        assert manifest["version"] == "0.2.17"
+        assert manifest["version"] == "0.2.18"
         assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
@@ -77,9 +77,15 @@ def main():
         assert "#query<6" in source
         assert "v.search_due=2" in source
         assert "http.cancel(old)" in source
-        assert "state.set(\"favorites\", favorites)" in source
-        assert "state.set(\"recent_routes\", recents)" in source
-        assert "while #recents>5 do table.remove(recents) end" in source
+        assert "local Store = {}" in source
+        assert 'store_write("favorites",candidate)' in source
+        assert 'store_write("recent_routes",candidate)' in source
+        assert "function Store.load_favorites()" in source
+        assert "function Store.remove_favorite(index)" in source
+        assert "function Store.add_recent(route)" in source
+        assert "Could not save favorite" in source
+        assert "Could not remove favorite" in source
+        assert "state.flush" not in source
         source_bytes = len(source.encode("utf-8"))
         assert 0 < source_bytes <= 64 * 1024
         assert len(inspected["files"]) <= 128

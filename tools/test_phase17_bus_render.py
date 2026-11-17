@@ -359,7 +359,8 @@ target_link_libraries(check PRIVATE lvgl)
     quota=args.arena_kb or json.loads((ROOT/'examples/bus3p/app.yaml').read_text())['memory_kb']
     for width in (480,720):
         folder=output/str(width);folder.mkdir(parents=True,exist_ok=True)
-        drivers=['test_phase17_bus_catalog_ui.lua'] if args.catalog_only else ['test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua']
+        drivers=['test_phase17_bus_catalog_ui.lua'] if args.catalog_only else [
+            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua']
         for driver in drivers:
             subprocess.run([str(work/'build/check'),str(ROOT/'examples/bus3p/main.lua'),
                             str(ROOT/'tools'/driver),str(width),str(quota),json.dumps(counts)],cwd=folder,check=True)

@@ -1,10 +1,11 @@
 # Bus App Transformation Guide — S3 Native to P4 Lua
 
-> Current implementation (0.2.16, 2026-11-17): local work finishes without
+> Current implementation (0.2.18, 2026-11-17): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
-> 5/30-second deadline. Earlier per-tick/512 KiB/50 ms passages describe the
+> 5/30-second deadline. Phase 3 validates saved data and preserves in-memory
+> state when a persistence write fails. Earlier per-tick/512 KiB/50 ms passages describe the
 > previous implementation. BUS_APP_LUA_CODE_PATTERNS.md and
 > BUS_APP_QUICK_START.md describe the current contract and board retest.
 
@@ -38,6 +39,20 @@ sequentially. Arrivals retain their provider labels and are merged by timestamp
 with stable source order. If one source or the stop match fails, successful
 arrivals remain visible with an explicit partial-data status. Host joint-flow
 coverage passes; P4 joint-route acceptance remains pending.
+
+## Phase 3 implementation update — 2026-11-17
+
+Bus Lite **0.2.18** validates favorite and recent-route records when loading
+state, preserves joint-provider route identity and stop occurrence, and shows
+when malformed entries are skipped. Add, remove and recent-route operations
+build candidate lists and publish them in memory only after `state.set()`
+succeeds. Failed writes leave the existing list intact and report an error.
+P4 board acceptance passed on 2026-11-18 for favorite save/reopen across app
+relaunch and reboot, persistent removal across relaunch and reboot, recent-route
+ordering/deduplication and five-route limit, joint-route favorite reopening,
+and the eight-favorite limit. Simulated failed-write handling is covered by host
+tests; an injected storage failure was not part of the board checklist. The
+accepted UI remains unchanged.
 
 The original status/estimates below describe the planning baseline. S3 was
 resource limited and incomplete; its reports do not establish P4 capacity.
@@ -147,7 +162,7 @@ and Phase 2 updates above supersede the provider and joint-route entries):
 2. **No joint route ETA** — resolved in Bus Lite 0.2.9; P4 acceptance remains
    pending
 3. **Incomplete stop metadata resolution** — async catalog lookup but no fallback to provider API
-4. **Persistence hardening** — save/remove/reopen UI already exists; validate stored records and write failures in Phase 3
+4. **Persistence hardening** — resolved in 0.2.18; user-reported P4 acceptance passed 2026-11-18
 5. **No ETA refresh** — one-shot requests only, no 20s periodic refresh
 6. **Incomplete Flutter logic at planning time** — route merging was in the
    Python catalog generator; stop matching and ETA merging are implemented in
@@ -469,16 +484,18 @@ Timer tick (every 100ms)
 
 **Deliverable**: Joint routes display merged ETA with provider labels
 
-### Phase 3: Persistence (2 days)
+### Phase 3: Persistence (implemented in 0.2.18; P4 acceptance passed)
 
-**Tasks**:
-1. Implement `Store.add_favorite()`, `remove_favorite()`, `load_favorites()`
-2. Add Favorites tab UI (reuse S3's card grid)
-3. Add "Save" button to ETA page
-4. Add "Remove" button to favorite cards
-5. Test save/exit/relaunch cycle
+**Implemented**:
+1. Validate stored favorites and recents, including joint-route and stop identity.
+2. Build candidate lists and publish changes only after `state.set()` succeeds.
+3. Keep the accepted Favorites/Search and ETA save/remove UI.
+4. Host-test malformed state, duplicates, limits, failed writes and save/reopen/remove.
 
-**Deliverable**: Favorites persist across app restarts
+**P4 acceptance passed (2026-11-18)**: Save, relaunch, reboot, remove, recent
+route behavior, joint-route persistence and the eight-favorite limit passed the
+user's board checklist. Host tests cover simulated failed writes; actual storage
+failure injection remains untested on hardware.
 
 ### Phase 4: Refresh and Polish (1-2 days)
 

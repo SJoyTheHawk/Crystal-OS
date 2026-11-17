@@ -1,4 +1,10 @@
-# Bus Lite live-provider package (0.2.17)
+# Bus Lite live-provider package (0.2.18)
+
+Version 0.2.18 hardens favorites and recent-route persistence. Stored records
+are validated on load; invalid entries are skipped with a visible notice.
+Saving, removing, or recording a route updates the live list only after
+`crystal.state.set()` succeeds, so a failed write does not discard the current
+data. The saved-stop layout and interaction remain unchanged.
 
 Version 0.2.17 removes the duplicate guidance above route results and the
 stop list. Loading, instructions, results and errors remain in the bottom
@@ -57,8 +63,10 @@ Joint-provider ETA merging is implemented in Phase 2. A JOINT catalog route
 uses the KMB sequence, matches the nearest CTB stop using the Flutter
 coordinate rule, then fetches and merges both providers sequentially. A failed
 source leaves successful arrivals visible with a partial-data status.
-Persistence hardening and scheduled refresh/countdown remain Phases 3 and 4;
-existing manual refresh, saved-stop reopening and recent routes are retained.
+Phase 3 persistence hardening is implemented in 0.2.18; the user reports its P4
+save/reopen/reboot/remove, recents, joint favorite and limit checklist passed on
+2026-11-18. Phase 4 scheduled refresh/countdown remains open. Existing manual
+refresh, saved-stop reopening and recent routes are retained.
 The final functional release remains 0.3.0 after acceptance.
 
 The host fixture tool can still produce an explicitly named **Bus Lite

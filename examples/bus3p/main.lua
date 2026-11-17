@@ -6,9 +6,8 @@ local C = {bg=0x0F172A, card=0x1E293B, text=0xF8FAFC, muted=0x94A3B8, border=0x3
 local ICON={clear=utf8.char(0xF00D),backspace=utf8.char(0xF55A),back=utf8.char(0xF053),refresh=utf8.char(0xF021)}
 local M, v = {}, {}
 local Catalog = {manifest=nil, route_pages=nil, route_index_pages=nil, stop_pages={}, routes={}, next_keys={}, available=false, ready=false}
-local favorites = state.get("favorites")
-if type(favorites)~="table" then favorites={} end
-local recents = {}
+local favorites, recents = {}, {}
+local favorite_load_warning, recent_load_warning = false, false
 local metric_marks = {}
 local selected, selected_stop, routes, stops = {}, nil, {}, {}
 local route_results, stop_results = {}, {}
@@ -42,10 +41,7 @@ local function catalog_normalize(record)
     parts={}
     for _, part in ipairs(record.parts) do
       if type(part)=="table" then
-        -- Keep only identity fields in the bounded search result. The
-        -- catalog's localized origin/destination fields are not needed after
-        -- the card is rendered and would multiply Lua arena usage on broad
-        -- prefixes; provider display data remains in the source pages.
+        -- Keep route identity compact; localized display fields stay in source pages.
         parts[#parts+1]={operator=tostring(part.operator or ""),route=tostring(part.route or ""),
           bound=tostring(part.bound or "O"),service_type=tostring(part.service_type or "1")}
       end
@@ -93,8 +89,7 @@ local function catalog_load()
     end
   end
   Catalog.available=#Catalog.route_index_pages>0 or #Catalog.route_pages>0
-  -- Keep compact pages resident; expand only visible records. Thousands of
-  -- record/field allocations make the PSRAM arena's first-fit scan expensive.
+  -- Keep compact pages resident; expand only visible records.
   Catalog.ready=false
   if Catalog.available then
     Catalog.load_job={index=1,raw=nil,position=1,count=0,
@@ -172,8 +167,7 @@ local function update_keypad_state()
       end
     end
   end
-  -- The letters are arranged in paired rows. Collapse rows with no valid
-  -- next characters so the scroll bank stays compact as the prefix narrows.
+  -- Collapse empty paired-letter rows as the prefix narrows.
   for row,values in pairs(v.key_rows or {}) do
     local visible=false
     for _,value in ipairs(values) do
@@ -196,8 +190,7 @@ local function catalog_load_step()
     v.catalog_ready_notice=true
     return true
   end
-  -- New packages carry a host-built prefix map. Retain compact strings; the
-  -- controller loads all available pages without per-file timer delays.
+  -- New packages carry a host-built prefix map and load compact pages together.
   if job.compact and Catalog.keypad_descriptor then
     local descriptor=Catalog.route_index_pages[job.index]
     local is_keypad=not descriptor
@@ -263,8 +256,7 @@ local function catalog_load_step()
     return false
   end
 
-  -- Inspect route numbers only: no destination unescaping, record tables or
-  -- provider parts during preload. Repeated directions share a keypad prefix.
+  -- Inspect route numbers only; repeated directions share a keypad prefix.
   local batch=1
   for _=1,batch do
     local start=job.position
@@ -294,8 +286,7 @@ local function catalog_load_step()
   return false
 end
 
--- Keep one source page and decode individual matching records. The controller
--- drains these steps together, without waiting for a timer between records.
+-- Decode individual matching records without per-record timer waits.
 local function catalog_line(job, pages)
   if not job.raw then
     local descriptor=pages[job.index]
@@ -316,8 +307,7 @@ local function catalog_line(job, pages)
     return nil,false
   end
   if not job.prefix then
-    -- Generated pages have canonical, unescaped ID keys. A bounded native
-    -- string search avoids scanning thousands of unrelated stop lines in Lua.
+    -- Search canonical IDs directly in the source page.
     local id=job.ids[job.id_index];job.id_index=job.id_index+1
     if not id then job.raw=nil;return nil,false end
     local position=job.raw:find('"id":"'..id..'"',1,true)
@@ -327,10 +317,7 @@ local function catalog_line(job, pages)
     local last=job.raw:find("\n",position,true) or (#job.raw+1)
     return job.raw:sub(first,last-1),false
   end
-  -- Cheap field checks are bounded too. Generated JSON uses canonical keys;
-  -- provider parts preserve the same route number as their parent record.
-  -- Legacy file-backed catalog work remains staged; current route searches
-  -- use resident compact pages in catalog_search_step instead.
+  -- Current searches use resident compact pages in catalog_search_step.
   for _=1,4 do
     local start=job.position
     if start>#job.raw then job.raw=nil;return nil,false end
@@ -356,8 +343,7 @@ local function catalog_search_step(job)
     if v.catalog_job==job then v.catalog_job=nil end
     return true
   end
-  -- Scan resident compact pages without allocating each skipped record.
-  -- Complete the resident scan in one callback; retain only the visible page.
+  -- Scan compact pages and retain only the visible result page.
   while job.index<=#Catalog.routes do
     local record=Catalog.routes[job.index]
     local matches, line
@@ -431,7 +417,6 @@ local function catalog_stop_step(job)
   return false
 end
 
--- Called at explicit workflow checkpoints only. Keep idle serial output quiet.
 resource_checkpoint = function(name)
   if metric_marks[name] then return end
   metric_marks[name] = true
@@ -479,7 +464,6 @@ status = function(message)
   local label=v.status and v.status[v.page]
   if label then ui.set_text(label,message); ui.set_hidden(label,message=="") end
 end
--- Provider records stay operator-qualified; IDs are strings, never numbers.
 local Providers, Arrivals, Controller = {}, {}, {}
 local KMB_BASE = "https://data.etabus.gov.hk/v1/transport/kmb"
 local CTB_BASE = "https://rt.data.gov.hk/v2/transport/citybus"
@@ -520,8 +504,7 @@ function Providers.parse_stop_details(operator,id,decoded)
   return {operator=operator,id=id,name_en=nonempty(data.name_en),name_tc=nonempty(data.name_tc),
     lat=tonumber(data.lat),lon=tonumber(data.long)}
 end
--- Exact epoch seconds for the firmware's signed 32-bit Lua integer/time range.
--- No os library or epoch milliseconds; validate dates and explicit offsets.
+-- Epoch seconds and explicit offsets keep timestamps within Lua's safe range.
 function Arrivals.parse_timestamp(value)
   if type(value)~="string" then return nil end
   local y,m,d,h,mi,s,zone=value:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)(.*)$")
@@ -551,9 +534,7 @@ local function joint_distance(lat1,lon1,lat2,lon2)
   a=math.max(0,math.min(1,a))
   return r*2*math.atan(math.sqrt(a),math.sqrt(1-a))
 end
--- Flutter's reference matcher chooses the nearest valid CTB coordinate. It
--- deliberately has no radius cutoff; a missing primary coordinate falls back
--- to the first route stop so a usable provider can still supply arrivals.
+-- Use Flutter's nearest valid coordinate rule with a first-stop fallback.
 function Arrivals.match_joint_stop(primary,secondary)
   if type(secondary)~="table" or #secondary==0 then return nil end
   local plat=tonumber(primary and primary.lat);local plon=tonumber(primary and primary.lon)
@@ -572,8 +553,7 @@ function Arrivals.match_joint_stop(primary,secondary)
   return best
 end
 function Arrivals.select(entries)
-  -- Preserve all valid provider timestamps, including optional metadata
-  -- disagreements. Accuracy filtering is a separate refinement milestone.
+  -- Keep valid timestamps even when optional metadata disagrees.
   table.sort(entries,function(a,b)
     if a.epoch_sec~=b.epoch_sec then return a.epoch_sec<b.epoch_sec end
     return a.source_order<b.source_order
@@ -594,8 +574,7 @@ function Providers.eta_record(part,stop,item,order)
   return {operator=item.co=="LWB" and "LWB" or part.operator,stop_id=stop.id,
     epoch_sec=epoch,remark_en=tostring(item.rmk_en or ""),remark_tc=tostring(item.rmk_tc or ""),source_order=order}
 end
--- Decode individual records through the complete response in one callback,
--- avoiding a second full provider response tree in the Lua arena.
+-- Decode records in-place to avoid a duplicate response tree.
 function Providers.array_job(body,normalize,complete)
   if type(body)~="string" then return nil end
   local _,first=body:find('"data"%s*:%s*%[')
@@ -630,7 +609,6 @@ function Providers.array_step(job)
       job.mode="record";job.start=job.pos;job.depth=1;job.quoted=false;job.escaped=false
     elseif job.mode=="separator" and c=="," then job.mode="value"
     elseif (job.mode=="first" or job.mode=="separator") and c=="]" then
-      -- Validate the envelope and any trailing fields without decoding data.
       local envelope=json.decode(body:sub(1,job.first).."]"..body:sub(job.pos+1))
       if type(envelope)~="table" or type(envelope.data)~="table" or next(envelope.data) then
         return true,"Invalid provider response"
@@ -661,6 +639,115 @@ local function operator_label(route)
   end
   return tostring((type(route) == "table" and route.operator) or "KMB")
 end
+local Store = {}
+local store_operators = {KMB=true,LWB=true,CTB=true}
+local function store_text(value,limit)
+  if type(value)~="string" or value=="" or #value>limit or value:find("%c") then return nil end
+  return value
+end
+local function store_part(part)
+  if type(part)~="table" or not store_operators[part.operator] then return nil end
+  local route=part.route;local bound=part.bound;local service=tostring(part.service_type or "1")
+  if not store_text(route,8) or not route:match("^[A-Za-z0-9]+$") or
+      (bound~="O" and bound~="I") or #service>4 or not service:match("^%d+$") then return nil end
+  return {operator=part.operator,route=route,bound=bound,service_type=service}
+end
+local function store_route(route)
+  if type(route)~="table" then return nil end
+  local number=route.route;local operator=route.operator
+  if not store_text(number,8) or not number:match("^[A-Za-z0-9]+$") or
+      (operator~="JOINT" and not store_operators[operator]) then return nil end
+  local bound=route.bound or "O";local service=tostring(route.service_type or "1")
+  if (bound~="O" and bound~="I") or #service>4 or not service:match("^%d+$") then return nil end
+  local result={route=number,operator=operator,bound=bound,service_type=service}
+  result.destination=store_text(route.destination,160)
+  if operator=="JOINT" then
+    if type(route.parts)~="table" or #route.parts~=2 then return nil end
+    result.parts={store_part(route.parts[1]),store_part(route.parts[2])}
+    if not result.parts[1] or not result.parts[2] or
+        result.parts[1].route~=number or result.parts[2].route~=number or
+        result.parts[1].operator==result.parts[2].operator then return nil end
+  end
+  return result
+end
+local function store_favorite(value)
+  local result=store_route(value)
+  if not result then return nil end
+  local id=store_text(value.stop_id,64)
+  local seq=tonumber(value.stop_seq)
+  local operator=value.stop_operator or (result.operator=="JOINT" and result.parts[1].operator or result.operator)
+  local compatible=operator==result.operator or (result.operator=="JOINT" and
+    (operator==result.parts[1].operator or operator==result.parts[2].operator))
+  if not id or not store_operators[operator] or not compatible or
+      not seq or seq<1 or seq>1000 or seq%1~=0 then return nil end
+  result.stop_id=id;result.stop_seq=seq;result.stop_operator=operator
+  result.stop_name=store_text(value.stop_name or value.stop_name_en or value.stop_name_tc,160)
+  local lat,lon=tonumber(value.stop_lat),tonumber(value.stop_lon)
+  if lat and lon and lat==lat and lon==lon and lat>=-90 and lat<=90 and lon>=-180 and lon<=180 then
+    result.stop_lat=lat;result.stop_lon=lon
+  end
+  return result
+end
+local function store_load(key,limit,normalize,key_for)
+  local data=state.get(key)
+  if data==nil then return {},false end
+  if type(data)~="table" then return {},true end
+  local count,invalid=0,false
+  for index in pairs(data) do
+    if type(index)=="number" and index>=1 and index%1==0 then count=count+1 else invalid=true end
+  end
+  local rows,seen={},{}
+  for index=1,count do
+    local row=normalize(data[index]);local key_value=row and key_for(row)
+    if not row or seen[key_value] or #rows>=limit then invalid=true
+    else rows[#rows+1]=row;seen[key_value]=true end
+  end
+  if count>limit then invalid=true end
+  return rows,invalid
+end
+local function store_write(key,candidate)
+  return state.set(key,candidate)==true
+end
+local function favorite_key(value)
+  return table.concat({identity(value),value.stop_operator,value.stop_id,tostring(value.stop_seq)},"\31")
+end
+function Store.load_favorites()
+  return store_load("favorites",8,store_favorite,favorite_key)
+end
+function Store.load_recents()
+  return store_load("recent_routes",5,store_route,identity)
+end
+function Store.add_favorite(route,stop)
+  local favorite=store_route(route)
+  if not favorite or type(stop)~="table" then return false,"invalid" end
+  favorite.stop_id=stop.id;favorite.stop_seq=stop.seq;favorite.stop_operator=stop.operator
+  favorite.stop_name=stop.name_en or stop.name_tc;favorite.stop_lat=stop.lat;favorite.stop_lon=stop.lon
+  favorite=store_favorite(favorite)
+  if not favorite then return false,"invalid" end
+  local key=favorite_key(favorite)
+  if #favorites>=8 then return false,"full" end
+  for _,saved in ipairs(favorites) do if favorite_key(saved)==key then return false,"duplicate" end end
+  local candidate={};for i,row in ipairs(favorites) do candidate[i]=row end
+  candidate[#candidate+1]=favorite
+  if not store_write("favorites",candidate) then return false,"write" end
+  favorites=candidate;return true
+end
+function Store.remove_favorite(index)
+  if type(index)~="number" or index%1~=0 or index<1 or index>#favorites then return false end
+  local candidate={};for i,row in ipairs(favorites) do if i~=index then candidate[#candidate+1]=row end end
+  if not store_write("favorites",candidate) then return false end
+  favorites=candidate;return true
+end
+function Store.add_recent(route)
+  local recent=store_route(route)
+  if not recent then return false end
+  local key=identity(recent);local candidate={recent}
+  for _,saved in ipairs(recents) do
+    if identity(saved)~=key and #candidate<5 then candidate[#candidate+1]=saved end
+  end
+  if not store_write("recent_routes",candidate) then return false end
+  recents=candidate;return true
+end
 local function invalidate_requests()
   v.generation=(v.generation or 0)+1
   v.catalog_generation=(v.catalog_generation or 0)+1
@@ -670,8 +757,7 @@ local function invalidate_requests()
   local old=v.request_id;v.request_id=nil
   if old then http.cancel(old) end
 end
--- Cancellation is asynchronous: the native worker slot is released only after
--- its completion is dispatched. Retain one current foreground job while waiting.
+-- Cancellation retires asynchronously; retain one foreground job while waiting.
 function Controller.start_request(job)
   if job.generation~=(v.generation or 0) or v.paused then return false end
   local id,err=http.fetch(job.url,{timeout_sec=15},function(req,code,body)
@@ -700,25 +786,8 @@ function Controller.decode_array(body,normalize,complete)
   if not job then complete(nil,"Invalid provider response");return end
   job.generation=v.generation or 0;v.decode_job=job
 end
-local function save_state()
-  state.set("favorites", favorites)
-  state.flush()
-end
-local function save_recents()
-  state.set("recent_routes", recents)
-  state.flush()
-end
 local function remember_route(route)
-  if type(route)~="table" or type(route.route)~="string" or route.route=="" then return end
-  local recent={route=route.route, operator=tostring(route.operator or "KMB"),
-    bound=tostring(route.bound or "O"), service_type=tostring(route.service_type or "1"),
-    destination=tostring(route.destination or "selected destination"), parts=route.parts}
-  for i=#recents,1,-1 do
-    if type(recents[i])~="table" or identity(recents[i])==identity(recent) then table.remove(recents,i) end
-  end
-  table.insert(recents,1,recent)
-  while #recents>5 do table.remove(recents) end
-  save_recents()
+  return Store.add_recent(route)
 end
 render_route_page = function(slot)
   local first=1
@@ -749,7 +818,8 @@ show_recent_routes = function()
   local rows={}
   for i=1,math.min(#recents,5) do rows[i]=recents[i] end
   render_route_rows(rows,
-    #rows>0 and "Recent routes saved on this device" or "Enter a route number")
+    recent_load_warning and "Some recent routes were skipped" or
+      (#rows>0 and "Recent routes saved on this device" or "Enter a route number"))
 end
 local function button(parent, title, width, height, callback)
   return assert(ui.button(parent, {text=title, width=width, height=height, on_click=callback,
@@ -775,6 +845,7 @@ end
 local function is_saved()
   for i, favorite in ipairs(favorites) do
     if selected_stop and identity(favorite)==identity(selected) and favorite.stop_id==selected_stop.id and
+        favorite.stop_operator==selected_stop.operator and
         tonumber(favorite.stop_seq)==tonumber(selected_stop.seq) then return i end
   end
 end
@@ -787,16 +858,21 @@ end
 local function save_stop()
   if not selected_stop then status("Choose a stop first"); return end
   if is_saved() then status("Stop already saved"); return end
-  if #favorites>=8 then status("Eight saved stops maximum"); return end
-  favorites[#favorites+1] = {route=selected.route, operator=selected.operator, bound=selected.bound,
-    service_type=selected.service_type, destination=selected.destination, stop_id=selected_stop.id,
-    stop_name=selected_stop.name_en or selected_stop.name_tc,stop_seq=selected_stop.seq,
-    stop_operator=selected_stop.operator,stop_lat=selected_stop.lat,stop_lon=selected_stop.lon,parts=selected.parts}
-  save_state(); render_favorites(); update_actions(); status("Stop saved to Favorites")
+  local ok,reason=Store.add_favorite(selected,selected_stop)
+  if not ok then
+    status(reason=="full" and "Eight saved stops maximum" or
+      reason=="write" and "Could not save favorite" or "Cannot save this stop")
+    return
+  end
+  render_favorites(); update_actions(); status("Stop saved to Favorites")
 end
 local function remove_stop()
   local index = is_saved()
-  if index then table.remove(favorites, index); save_state(); render_favorites(); update_actions(); status("Removed from Favorites") end
+  if index then
+    if Store.remove_favorite(index) then
+      render_favorites();update_actions();status("Removed from Favorites")
+    else status("Could not remove favorite") end
+  end
 end
 local function stop_row_text(stop,index)
   local name=nonempty(stop.name_en) or nonempty(stop.name_tc)
@@ -1082,8 +1158,7 @@ local function fetch_stops()
 end
 open_route = function(route, favorite)
   invalidate_requests()
-  -- Reopening a saved stop must not perform another synchronous state write.
-  if not favorite then remember_route(route) end
+  local recent_saved=favorite or remember_route(route)
   return_page=v.page
   v.catalog_generation=(v.catalog_generation or 0)+1
   v.catalog_job=nil; v.stop_catalog_job=nil
@@ -1105,7 +1180,10 @@ open_route = function(route, favorite)
     v.board=true
     ui.set_hidden(v.stop_section,true); ui.set_hidden(v.eta_section,false)
     update_actions(); fetch_selected_stop()
-  else fetch_stops() end
+  else
+    fetch_stops()
+    if not recent_saved then status("Recent route not saved") end
+  end
 end
 catalog_search = function(page)
   print("BUS_SEARCH","scan",query,page)
@@ -1264,7 +1342,8 @@ show_page = function(name)
   end
   if name=="favorites" then
     render_favorites()
-    status(#favorites>0 and "Tap a saved stop for live arrivals" or "")
+    status(favorite_load_warning and "Some saved stops were skipped" or
+      (#favorites>0 and "Tap a saved stop for live arrivals" or ""))
   elseif name=="search" then
     if Catalog.ready then
       if query=="" then show_recent_routes() end
@@ -1282,17 +1361,8 @@ end
 function M.onCreate()
   metric_marks={}
   resource_checkpoint("launch_begin")
-  local stored_recents=state.get("recent_routes")
-  if type(stored_recents)=="table" then
-    for i=1,math.min(#stored_recents,5) do
-      local route=stored_recents[i]
-      if type(route)=="table" and type(route.route)=="string" and route.route~="" then
-        recents[#recents+1]={route=route.route,operator=tostring(route.operator or "KMB"),
-          bound=tostring(route.bound or "O"),service_type=tostring(route.service_type or "1"),
-          destination=tostring(route.destination or "selected destination"),parts=route.parts}
-      end
-    end
-  end
+  favorites,favorite_load_warning=Store.load_favorites()
+  recents,recent_load_warning=Store.load_recents()
   v={pages={}, status={}, favorites={}, routes={}, stops={}, arrivals={}, tab_lines={}, tab_buttons={},
     key_buttons={}, key_rows={}, key_hidden={}, key_row_hidden={}}
   catalog_load()
@@ -1340,7 +1410,7 @@ function M.onCreate()
   page=v.pages.search
   v.query=assert(ui.label(page,{text="",width=width,height=58,font="large"}))
   ui.set_style(v.query,{font_size=48,align="center"})
-  -- Native reference: a centered keypad occupying three quarters of the screen.
+  -- Center the keypad within the available width.
   local keypad_w=math.floor(W*3/4)
   local surround=assert(ui.row(page,{gap=0}))
   ui.col(surround,{width=(width-keypad_w)//2,height=1})
@@ -1389,9 +1459,7 @@ function M.onCreate()
   v.route_next=button(v.route_nav,"Next",math.floor(width/3),key_h,function() move_route_page(1) end)
   ui.set_hidden(v.route_nav,true)
   page=v.pages.detail
-  -- Keep the two header actions comfortably tappable on the P4 touch panel.
-  -- Their symbols stay the same size; the surrounding target grows to the
-  -- platform's 56 px logical minimum instead of relying on the glyph bounds.
+  -- Keep header actions at the platform's 56 px logical tap target.
   local header_h=math.floor(56*scale)
   local header=assert(ui.row(page,{height=header_h,gap=gap}))
   v.detail_header=header
@@ -1407,7 +1475,6 @@ function M.onCreate()
   v.stop_list=assert(ui.list(v.stop_section,{width=width,height=H-math.floor(210*scale),
     on_select=function(index) select_stop(index) end,
     style={bg_color=C.bg,border_width=0,padding=2,font_size=readable_size}}))
-  -- ETA is a separate visual board, not a second list below the stop picker.
   v.eta_section=assert(ui.col(page,{gap=math.floor(16*scale)}))
   v.stop_name=text(v.eta_section,"Choose a stop",width,"large")
   text(v.eta_section,"NEXT ARRIVALS",width,"small",C.muted)
@@ -1421,7 +1488,6 @@ function M.onCreate()
   v.no_eta=text(board,"No arrivals available",width-32,"normal",C.muted)
   ui.set_hidden(v.no_eta,true)
   v.save=button(v.eta_section,"Save stop",width,key_h,function() if is_saved() then remove_stop() else save_stop() end end)
-  -- The header refresh action is shared by the stop picker and ETA board.
   for _, name in ipairs({"favorites","search","detail"}) do
     v.status[name]=text(v.pages[name],"",width,"normal",C.muted)
   end

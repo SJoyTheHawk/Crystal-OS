@@ -2,11 +2,13 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1/2 contract (0.2.16, 2026-11-17)
+## Verified Phase 1–3 contract (0.2.18, 2026-11-17)
 
-Phases 1 and 2 are implemented in `examples/bus3p/main.lua`; use that tested
-source for working API calls. The remaining Phase 3–4 snippets below are design sketches,
-not a replacement entry file. Some use conceptual UI helpers that the current
+Phases 1–3 are implemented in `examples/bus3p/main.lua`; use that tested
+source for working API calls. Phase 3 validates persisted records and commits
+candidate favorite/recent lists only after successful writes. Phase 4 remains
+open. The remaining snippets below are design sketches, not a replacement
+entry file. Some use conceptual UI helpers that the current
 ABI does not expose (`container`, `align`, `remove_children`, `timer_stop`).
 Reuse the existing controls and one 100 ms timer through the real API instead.
 
@@ -58,9 +60,9 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
   production binding, including repeated forced OOM.
 
 See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2
-joint matching and sequential ETA merging are implemented in the production
-entry file. Phase 3 persistence hardening and Phase 4 periodic refresh remain
-open.
+joint matching and sequential ETA merging, plus Phase 3 persistence hardening,
+are implemented in the production entry file. P4 acceptance remains pending;
+Phase 4 periodic refresh is still open.
 
 
 ## 1. Provider Module Implementation
@@ -539,130 +541,35 @@ end
 
 ## 4. Store Module — Persistence
 
-### 4.1 Favorites Management
+### 4.1 Favorites and Recent Routes
+
+The production `Store` in `examples/bus3p/main.lua` validates route, provider,
+direction, service, stop ID and stop occurrence when loading state. Joint
+favorites retain both provider identities; stop IDs remain strings. Invalid,
+duplicate or over-limit records are skipped and reported in the relevant tab.
+Favorites are capped at eight and recents at five.
+
+Mutations use a candidate list. The app publishes it only after the persistent
+write succeeds:
 
 ```lua
-local Store = {}
-
-local MAX_FAVORITES = 8
-local MAX_RECENTS = 5
-
-function Store.load_favorites()
-  local data = crystal.state.get("favorites")
-  if type(data) == "table" then
-    return data
-  end
-  return {}
+local candidate = copy_favorites(favorites)
+candidate[#candidate + 1] = favorite
+if not crystal.state.set("favorites", candidate) then
+  return false, "Could not save favorite"
 end
-
-function Store.add_favorite(route, stop)
-  local favorites = Store.load_favorites()
-  
-  -- Check for duplicate
-  for _, fav in ipairs(favorites) do
-    if fav.route_key == route.key and fav.stop_id == stop.id then
-      return false, "Already in favorites"
-    end
-  end
-  
-  -- Check limit
-  if #favorites >= MAX_FAVORITES then
-    return false, "Favorites full (max " .. MAX_FAVORITES .. ")"
-  end
-  
-  -- Add new favorite
-  local favorite = {
-    route_key = route.key,
-    operator = route.operator,
-    route = route.route,
-    bound = route.bound,
-    service_type = route.service_type,
-    destination = route.destination,
-    parts = route.parts,
-    stop_id = stop.id,
-    stop_seq = stop.seq,
-    stop_name_en = stop.name_en,
-    stop_name_tc = stop.name_tc,
-    stop_lat = stop.lat,
-    stop_lon = stop.lon,
-    added_at = crystal.service.time.now()
-  }
-  
-  favorites[#favorites + 1] = favorite
-  
-  local success = crystal.state.set("favorites", favorites)
-  if success then
-    crystal.state.flush()
-  end
-  
-  return success, success and "Saved" or "Failed to save"
-end
-
-function Store.remove_favorite(index)
-  local favorites = Store.load_favorites()
-  
-  if index < 1 or index > #favorites then
-    return false
-  end
-  
-  table.remove(favorites, index)
-  
-  local success = crystal.state.set("favorites", favorites)
-  if success then
-    crystal.state.flush()
-  end
-  
-  return success
-end
+favorites = candidate
+return true
 ```
 
-### 4.2 Recent Routes
-
-```lua
-function Store.load_recents()
-  local data = crystal.state.get("recent_routes")
-  if type(data) == "table" then
-    return data
-  end
-  return {}
-end
-
-function Store.add_recent(route)
-  local recents = Store.load_recents()
-  
-  -- Remove if already exists (move to front)
-  for i, recent in ipairs(recents) do
-    if recent.key == route.key then
-      table.remove(recents, i)
-      break
-    end
-  end
-  
-  -- Add to front
-  table.insert(recents, 1, {
-    key = route.key,
-    operator = route.operator,
-    route = route.route,
-    bound = route.bound,
-    service_type = route.service_type,
-    destination = route.destination,
-    parts = route.parts,
-    accessed_at = crystal.service.time.now()
-  })
-  
-  -- Trim to limit
-  while #recents > MAX_RECENTS do
-    table.remove(recents)
-  end
-  
-  local success = crystal.state.set("recent_routes", recents)
-  if success then
-    crystal.state.flush()
-  end
-  
-  return success
-end
-```
+Removal and recent-route updates follow the same rule. Removing the final
+favorite persists an empty list. A failed write keeps both the displayed list
+and its Save/Remove action unchanged. `state.set()` performs the write;
+`state.flush()` currently succeeds without another write and is unnecessary.
+Host coverage exercises corrupted state, duplicate entries, limits, failed
+writes, and the regular save/reopen/remove flow. The user reported P4 acceptance
+passed on 2026-11-18 for save/relaunch/reboot/remove, recents, joint favorites
+and limits. The board checklist did not inject a storage write failure.
 
 ---
 
@@ -877,9 +784,6 @@ function M.onPause()
     v.timer = nil
   end
   
-  -- Save state
-  crystal.state.flush()
-  
   return true
 end
 ```
@@ -898,9 +802,6 @@ function M.onDestroy()
     crystal.ui.timer_stop(v.timer)
     v.timer = nil
   end
-  
-  -- Save state
-  crystal.state.flush()
   
   -- Clear all references
   v = {}
@@ -995,9 +896,11 @@ end
 - [x] Implement `Arrivals.match_joint_stop()` with the Flutter nearest-coordinate rule
 - [x] Implement `Controller.fetch_joint_eta()` with sequential KMB/CTB flow
 - [x] Host-test joint-route ETA (route 101)
-- [ ] Implement `Store.add_favorite()` and `load_favorites()`
+- [x] Implement `Store.add_favorite()`, remove, load and record recent operations
 - [x] Retain existing Favorites/save/remove UI and recent routes
-- [ ] Test save/exit/relaunch persistence
+- [x] Validate malformed/duplicate/over-limit persisted favorites and recents
+- [x] Host-test failed favorite/recent writes without mutating live lists
+- [x] P4 save/relaunch/reboot/remove, recent-route and joint-favorite acceptance (user reported 2026-11-18)
 - [ ] Implement ETA refresh timer (20s interval)
 - [ ] Implement live minute countdown
 - [x] Host checks for pause/resume, navigation and late callbacks
@@ -1013,5 +916,5 @@ end
 
 These patterns replicate the S3 C++ implementation and Flutter Dart logic in P4 Lua. Follow them faithfully — they're proven to work in production mobile apps and native MCU apps. The adaptation is straightforward: Lua has the necessary primitives (HTTP, JSON, state, timers), and the memory constraints are manageable with bounded processing.
 
-**Next step**: Install 0.2.9 and complete the P4 joint-route acceptance before
-starting Phase 3 persistence hardening.
+**Next step**: Complete Phase 3 persistence acceptance on P4, then implement
+Phase 4 ETA refresh and live countdown.

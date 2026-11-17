@@ -1,10 +1,11 @@
 # Bus App Transformation — Complete Documentation Index
 
-> Current implementation (0.2.16, 2026-11-17): local work finishes without
+> Current implementation (0.2.18, 2026-11-17): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
-> 5/30-second deadline. Earlier per-tick/512 KiB/50 ms passages describe the
+> 5/30-second deadline. Phase 3 validates persisted records and commits
+> candidate state only after successful writes. Earlier per-tick/512 KiB/50 ms passages describe the
 > previous implementation. BUS_APP_LUA_CODE_PATTERNS.md and
 > BUS_APP_QUICK_START.md describe the current contract and board retest.
 
@@ -13,7 +14,7 @@
 
 This directory contains the complete plan for transforming the **S3 native bus app** into a **working P4 Lua implementation** that replicates—not reinvents—the proven functionality.
 
-**Status**: Phases 1 and 2 implemented in Bus Lite 0.2.9; host checks pass and
+**Status**: Phases 1–3 are implemented in Bus Lite 0.2.18; host checks pass and
 the P4 build remains valid. Board acceptance is pending. See
 `BUS_APP_QUICK_START.md` for app-flash and Control Panel installation, and
 `BUS_APP_PHASE_1_RESULTS.md` for Phase 1 evidence, and
@@ -115,16 +116,16 @@ the P4 build remains valid. Board acceptance is pending. See
 ---
 
 ### Phase 3: Persistence
-**Status**: Persistence hardening remains; existing save/reopen/remove UI is retained
+**Status**: Implemented in Bus Lite 0.2.18; user-reported P4 acceptance passed 2026-11-18
 
 **Goal**: Save/restore favorites across app restarts  
 **Deliverable**: Favorites tab with 8 saved stops
 
 **Steps**:
-1. Implement Store module (add/remove/load)
-2. Build Favorites tab UI
-3. Add Save button to ETA page
-4. Test save → exit → relaunch cycle
+1. Validate favorite and recent-route records on load
+2. Commit in-memory changes only after `state.set()` succeeds
+3. P4 save/relaunch/reboot/remove, recents, joint favorite and limit checks passed
+4. Host tests cover malformed state and simulated write failures
 
 **Guide**: `BUS_APP_LUA_CODE_PATTERNS.md` § 4
 
@@ -200,7 +201,7 @@ The functional 0.3.0 release remains gated on host and P4 acceptance.
 **Transformation status**:
 - ✅ Direct KMB/LWB and CTB provider adapters (board validation pending)
 - ✅ Joint route ETA merging with nearest CTB stop matching
-- ✅ Existing save/remove/reopen UI and recents retained; persistence hardening is Phase 3
+- ✅ Favorite/recent validation and candidate writes in Bus Lite 0.2.18; P4 persistence checklist passed 2026-11-18
 - ❌ ETA refresh timer
 - ✅ Bundled stop metadata plus sequential provider fallback and retry states
 
@@ -485,15 +486,14 @@ print("Peak:", info.lua_peak_kb, "KB")
 
 ## Next Steps
 
-### Immediate (Phases 1–2)
+### Immediate (P4 acceptance)
 1. Open `BUS_APP_QUICK_START.md`
 2. Install the signed 0.2.9 CAPP.
 3. Validate KMB 1A, CTB 2, and joint route 101 live on P4; record resource checkpoints.
 
-### Short-term (Phase 3-4)
-1. Harden persistence validation and failed-write handling.
-2. Add scheduled refresh and live countdown.
-4. **Result**: Complete bus app
+### Short-term (Phase 4)
+1. Add scheduled refresh and live countdown.
+2. **Result**: Complete bus app
 
 ### Long-term (Post-0.3.0)
 1. Accuracy refinement (provider exceptions, remark filtering)

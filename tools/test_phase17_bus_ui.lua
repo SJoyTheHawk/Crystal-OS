@@ -1,5 +1,6 @@
 -- Production Lua allocator/JSON/UI with controlled provider, clock and storage.
 local saved, pending, sequence, timer, retire_ticks = {}, nil, 0, nil, 0
+local failed_writes={}
 local checkpoints={}
 local original_print=print
 print=function(...)
@@ -22,7 +23,10 @@ local assets={
     '{"route":"101","operator":"JOINT","bound":"I","service_type":"1","destination_en":"Kwun Tong","parts":[{"operator":"KMB","route":"101","bound":"I","service_type":"1"},{"operator":"CTB","route":"101","bound":"O","service_type":"2"}]}\n'
 }
 crystal={ui=ui,json={decode=decode_json},fs={read=function(path)return assets[path]end},
-  state={get=function(k)return saved[k]end,set=function(k,value)saved[k]=value;return true end,flush=function()return true end},
+  state={get=function(k)return saved[k]end,set=function(k,value)
+    if failed_writes[k] then return false end
+    saved[k]=value;return true
+  end,flush=function()return true end},
   service={time={now=function()return 1794810600 end},http={
     fetch=function(url,options,callback)
       assert(options.timeout_sec==15 and not pending)
@@ -99,7 +103,9 @@ complete('{"data":[{"eta":"2026-11-16T14:41:00+08:00","rmk_en":"Later"},'..
 assert(has_text('2 min') and has_text('3 min') and not has_text('11 min'))
 assert(has_text('KMB | Earliest') and has_text('KMB | First tie') and has_text('KMB | Second tie'))
 assert(text_font_size('Updated just now')==20,'arrival status must use the shared larger font')
-snapshot('arrivals.ppm');click('Save stop')
+snapshot('arrivals.ppm');failed_writes.favorites=true;click('Save stop')
+assert(saved.favorites==nil and has_text('Could not save favorite'))
+failed_writes.favorites=nil;click('Save stop')
 assert(saved.favorites[1].stop_id=='000001' and saved.favorites[1].stop_seq==2)
 assert(saved.favorites[1].eta_text==nil)
 click(back);click(back);click('Favorites')
@@ -125,9 +131,14 @@ for _,bad in ipairs({'{}','{"data":{}}','{"data":[{},]}','{"data":[{"eta":"x"}]'
     '{"data":[]} garbage','{"data":[]}{"data":[]}'}) do
   click(refresh);complete(bad);assert(has_text('Invalid provider response'))
 end
-click('Remove');assert(#saved.favorites==0)
+failed_writes.favorites=true;click('Remove')
+assert(#saved.favorites==1 and has_text('Could not remove favorite'))
+failed_writes.favorites=nil;click('Remove');assert(#saved.favorites==0)
 click(back);click('Search');click(clear);ticks();assert(has_text('Recent routes saved on this device'))
-snapshot('search-recents.ppm');click('2');ticks();click('2   CTB')
+assert(has_text('1A   KMB') and not has_text('2   CTB'))
+snapshot('search-recents.ppm');failed_writes.recent_routes=true;click('2');ticks();click('2   CTB')
+assert(#saved.recent_routes==1 and saved.recent_routes[1].route=='1A')
+assert(has_text('Recent route not saved'));failed_writes.recent_routes=nil
 url(ctb..'/route-stop/CTB/2/outbound')
 complete('{"data":[{"stop":"002737","seq":1}]}');wait_url(ctb..'/stop/002737')
 complete('{"data":{}}');assert(has_text('Loading...'))
