@@ -1530,10 +1530,20 @@ not establish P4 capacity.
 | `crystal.json.decode(text)` | Converts JSON to Lua values subject to depth-16 and app-arena limits (the 512-node limit applies to encoding, not decoding). Invalid JSON returns `nil`. |
 | `crystal.service.http.fetch(url, opts, callback)` | Returns an ID or `nil, error`; callback arguments are `(id, status, body)`. The body cap is 64 KiB, and concurrency is bounded by manifest `worker_threads`. |
 | `crystal.service.http.cancel(id)` | Requests cancellation. A generation/identity check must still discard stale callbacks. |
-| `crystal.service.time.now()` | Returns Unix seconds. |
+| `crystal.service.time.now()` | Returns raw Unix seconds, which can still be boot time before OS clock initialization. Check readiness before computing wall-clock durations. |
+| `crystal.service.time.is_ready()` | Returns OS readiness established by RTC, SNTP or successful manual time setup. |
+| `crystal.service.time.on_ready(callback)` | Registers/replaces one subscriber per app and returns success. Callback receives `"ready"` on the LVGL task after readiness or subsequent corrections. Already-ready clocks replay on a later UI dispatch. Consumes one of 64 callback slots. |
+| `crystal.service.time.off_ready()` | Removes the subscriber and releases its callback slot; returns whether one existed. Runtime also removes it before destruction. |
 | `crystal.ui.timer(period_ms, callback)` | Registers a managed LVGL timer and consumes one of the app's 64 callback slots. |
 | `crystal.state.set(key, value)` | Returns whether the state update was written. `state.flush()` currently returns success without performing a second write. |
 | Package limits | Package tooling enforces 128 files and 5.5 MiB total; Lua source is limited to 64 KiB. Asset files can be read whole, so catalog pages should remain substantially smaller than that ceiling. |
+
+Clock subscriptions require the firmware added on 2026-11-19. Read `is_ready()`
+during creation, then subscribe after creating the UI. Core publishes revisions
+from RTC/SNTP/manual setup and delivers through its existing UI dispatcher; Lua
+never runs on the SNTP thread. Notifications while paused coalesce and run after
+a successful resume. Apps should rebase refresh deadlines on corrections and
+redraw cached timestamps immediately. Readiness does not imply network access.
 
 Native lists may register one shared Lua `on_select(index)` callback in their
 creation options. This index is one-based; list mutation APIs use zero-based

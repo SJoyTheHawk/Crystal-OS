@@ -272,3 +272,19 @@ current port if it changes.
 The new Reboot endpoint also requires the application update. To deploy both
 the page and this firmware change, use `idf.py -p /dev/cu.usbmodem1101 app-flash storage-flash`
 after building, with the serial monitor closed.
+
+## P4 Wi-Fi diagnostics
+
+Run python3 tools/test_wifi_diagnostics.py for the bounded capture and worker
+lifecycle checks, and python3 tools/test_developer_tools_page.py for the
+Developer Tools controls. See [Wi-Fi checks](../docs/WIFI_CHECKS.md) for the
+opt-in on-device viewer and tools/wifi_check.py serial capture procedure.
+Raw captures and local JSON metadata stay untracked; commit reviewed summaries.
+
+## Bus clock readiness
+
+Run python3 tools/test_phase17_bus_render.py to exercise the production clock
+subscriber and Lua bindings, Bus countdowns and UI flows. The harness includes
+tools/test_phase17_clock_ready.lua; it checks deferred replay, replacement,
+pause/resume and teardown. See [Phase 4 results](../docs/BUS_APP_PHASE_4_RESULTS.md)
+for package provenance and remaining board checks.

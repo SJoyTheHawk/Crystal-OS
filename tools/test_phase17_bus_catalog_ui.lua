@@ -38,6 +38,7 @@ end
 local function checkpoint(name)
   local m=memory_stats();print('CATALOG_MEMORY',name,m.used,m.peak,m.occupied,m.largest,m.capacity)
 end
+for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
 local app=assert(loadfile(package_path))()
 assert(app.onCreate());assert(timer);assert(decodes==0,'launch must not decode catalogs');checkpoint('launch')
 local search_tab='Search'

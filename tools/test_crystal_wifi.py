@@ -27,6 +27,7 @@ constexpr int ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED=3;
 constexpr int WIFI_EVENT=1, IP_EVENT=2, ESP_EVENT_ANY_ID=-1;
 constexpr int WIFI_EVENT_STA_START=1, WIFI_EVENT_STA_DISCONNECTED=2, WIFI_EVENT_SCAN_DONE=3;
 constexpr int WIFI_EVENT_STA_CONNECTED=4;
+constexpr int WIFI_REASON_ASSOC_LEAVE=8;
 constexpr int IP_EVENT_STA_GOT_IP=1, IP_EVENT_STA_LOST_IP=2;
 constexpr int WIFI_MODE_STA=1, WIFI_STORAGE_FLASH=1, WIFI_IF_STA=0;
 constexpr int WIFI_AUTH_OPEN=0, WIFI_AUTH_WPA_PSK=2, ESP_LOG_ERROR=1;
@@ -53,7 +54,8 @@ size_t heap_caps_get_free_size(unsigned) { return 65536; }
 size_t heap_caps_get_largest_free_block(unsigned) { return 32768; }
 struct wifi_init_config_t { int static_rx_buf_num=10, static_tx_buf_num=8; };
 #define WIFI_INIT_CONFIG_DEFAULT() {}
-struct wifi_event_sta_disconnected_t { uint8_t reason=201; int8_t rssi=-79; };
+struct wifi_event_sta_disconnected_t { uint8_t reason=201; int8_t rssi=-79; uint8_t ssid[32]{}, ssid_len=0; };
+struct wifi_event_sta_connected_t { uint8_t ssid[32]{}, ssid_len=0; };
 struct wifi_event_sta_scan_done_t { uint32_t status=0; };
 struct address { uint32_t addr=0; };
 struct esp_netif_ip_info_t { address ip, netmask, gw; };
@@ -181,6 +183,56 @@ static void add_ap(const char *ssid, int8_t rssi) {
     wifi_ap_record_t ap; strlcpy(reinterpret_cast<char *>(ap.ssid),ssid,sizeof(ap.ssid)); ap.rssi=rssi; aps.push_back(ap);
 }
 int main() {
+    { // Delayed old-AP events cannot start a second connect or clear a new lease.
+        DeviceWifi w; boot(w,"old-ap");
+        emit(IP_EVENT,IP_EVENT_STA_GOT_IP); associated=true; connecting=false;
+        w.connect("new-ap","password");
+        const int calls=connect_calls;
+        wifi_event_sta_disconnected_t old{}; old.reason=8; old.ssid_len=6;
+        memcpy(old.ssid,"old-ap",6);
+        emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&old);
+        assert(!timer.armed && connecting);
+        fire_timer(); assert(connect_calls==calls);
+        emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED); emit(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&old);
+        assert(w.has_ip() && w.connected() && !timer.armed);
+        wifi_event_sta_disconnected_t current{}; current.reason=15; current.ssid_len=6;
+        memcpy(current.ssid,"new-ap",6);
+        emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&current);
+        assert(!w.has_ip() && timer.armed && timer.delay==1000000);
+        fire_timer(); assert(connect_calls==calls+1);
+        emit(IP_EVENT,IP_EVENT_STA_GOT_IP); assert(w.has_ip() && !timer.armed);
+    }
+    { // Same-SSID replacement consumes only the requested leave, not a real failure.
+        DeviceWifi w; boot(w,"same-ap");
+        w.connect("same-ap","password"); const int calls=connect_calls;
+        wifi_event_sta_disconnected_t leave{}; leave.reason=8;
+        emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&leave);
+        assert(!timer.armed); fire_timer(); assert(connect_calls==calls);
+        drop(); assert(timer.armed && timer.delay==1000000);
+        fire_timer(); assert(connect_calls==calls+1);
+    }
+    { // A timer notification already queued before manual selection is obsolete.
+        DeviceWifi w; boot(w); drop();
+        timer.callback(timer.arg); assert(worker_pending);
+        w.connect("replacement","password"); const int calls=connect_calls;
+        pump_worker(); assert(connect_calls==calls);
+    }
+    { // Ignoring the old leave must not suppress a later leave of the new AP.
+        DeviceWifi w; boot(w,"old"); w.connect("new","password");
+        wifi_event_sta_disconnected_t event{}; event.reason=8; event.ssid_len=3;
+        memcpy(event.ssid,"old",3); emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);
+        assert(!timer.armed);
+        memcpy(event.ssid,"new",3); emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);
+        assert(timer.armed);
+    }
+    { // A failed handshake still retries when the requested leave never arrived.
+        DeviceWifi w; boot(w,"same"); w.connect("same","password");
+        wifi_event_sta_disconnected_t event{}; event.reason=15;
+        emit(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);
+        assert(timer.armed && timer.delay==1000000);
+        fire_timer(); assert(connecting);
+    }
     { // Association status stays local and is available before DHCP.
         DeviceWifi w; boot(w); assert(!w.connected());
         associated=true; connecting=false; emit(WIFI_EVENT,WIFI_EVENT_STA_CONNECTED);

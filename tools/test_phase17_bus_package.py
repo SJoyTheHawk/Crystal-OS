@@ -71,7 +71,7 @@ def main():
         assert has("catalog_add_next_keys(route)")
         assert has("Catalog.ready") and has("update_keypad_state")
         assert has("possible:find(value,1,true)")
-        assert has("catalog_stop_step")
+        assert has("stop_page_step")
         assert has("assets/catalog/runtime.txt")
         assert has("v.catalog_job") and has("v.stop_catalog_job")
         assert has("math.ceil(route_total/8)")

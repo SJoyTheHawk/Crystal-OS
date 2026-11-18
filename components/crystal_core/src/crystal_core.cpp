@@ -94,6 +94,32 @@ void *s_status_context = nullptr;
 PowerState s_power_state = PowerState::Full;
 std::atomic_bool s_button_wake_requested{false};
 std::atomic_bool s_time_valid{false};
+std::atomic<uint32_t> s_time_revision{0};
+struct TimeListener {
+    uint32_t id = 0, revision = 0;
+    crystal_time_ready_cb_t callback = nullptr;
+    void *context = nullptr;
+};
+TimeListener s_time_listeners[16]{};
+uint32_t s_time_next_id = 1;
+
+void dispatch_time_ready()
+{
+    if (!s_time_valid.load()) return;
+    const uint32_t revision = s_time_revision.load();
+    // Snapshot IDs: callbacks may unsubscribe themselves/other apps or create
+    // a subscriber. Newly added listeners wait until the next dispatch.
+    uint32_t ids[16]{};
+    for (size_t i = 0; i < 16; ++i) ids[i] = s_time_listeners[i].id;
+    for (size_t i = 0; i < 16; ++i) {
+        auto &listener = s_time_listeners[i];
+        if (!ids[i] || listener.id != ids[i] || listener.revision == revision) continue;
+        listener.revision = revision;
+        auto callback = listener.callback;
+        void *context = listener.context;
+        callback(context);
+    }
+}
 std::atomic_bool s_sntp_initialized{false};
 std::atomic_bool s_sntp_sync_started{false};
 esp_event_handler_instance_t s_network_handler = nullptr;
@@ -336,6 +362,7 @@ bool init_timer_indicator()
 
 void drain_event_queue(lv_timer_t *)
 {
+    dispatch_time_ready();
     if (s_queue == nullptr) return;
     EventMessage message;
     while (xQueueReceive(s_queue, &message, 0) == pdTRUE) {
@@ -574,6 +601,7 @@ void sntp_synced(struct timeval *tv)
         }
     }
     s_time_valid.store(true);
+    s_time_revision.fetch_add(1);
     s_sntp_sync_started = false;
     if (tv != nullptr) {
         const int32_t last_sync = static_cast<int32_t>(tv->tv_sec);
@@ -806,6 +834,28 @@ bool crystal_battery_cached(int *percent, bool *charging)
     return true;
 }
 
+bool crystal_time_is_ready() { return s_time_valid.load(); }
+
+uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t callback, void *context)
+{
+    if (!callback || !s_time_next_id) return 0;
+    for (auto &listener : s_time_listeners) {
+        if (!listener.id) {
+            listener = {s_time_next_id++, 0, callback, context};
+            return listener.id;
+        }
+    }
+    return 0;
+}
+
+bool crystal_time_unsubscribe_ready(uint32_t subscription)
+{
+    for (auto &listener : s_time_listeners) {
+        if (subscription && listener.id == subscription) { listener = {}; return true; }
+    }
+    return false;
+}
+
 void crystal_time_init()
 {
     char timezone[48] = "HKT-8";
@@ -831,6 +881,7 @@ void crystal_time_init()
     tv.tv_sec = epoch;
     if (settimeofday(&tv, nullptr) == 0) {
         s_time_valid.store(true);
+        s_time_revision.fetch_add(1);
         ESP_LOGI(TAG, "System time initialized from PCF85063");
     }
 }
@@ -849,6 +900,7 @@ bool crystal_time_set(const struct tm *local_time)
     tv.tv_sec = epoch;
     if (settimeofday(&tv, nullptr) != 0 || !hal().rtc->write(&adjusted)) return false;
     s_time_valid.store(true);
+    s_time_revision.fetch_add(1);
     ESP_LOGI(TAG, "System and PCF85063 time updated");
     return true;
 }

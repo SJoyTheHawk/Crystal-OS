@@ -3,7 +3,19 @@
 #include "crystal_core.hpp"
 #include "crystal_ethernet.hpp"
 #include "crystal_network_policy.hpp"
+#include "crystal_wifi_diagnostics.hpp"
 #include <arpa/inet.h>
+
+bool crystal_wifi_diagnostics_enabled() { return false; }
+bool crystal_wifi_diagnostics_set_enabled(bool) { return false; }
+bool crystal_wifi_diagnostics_request(CrystalWifiDiagnostic) { return false; }
+void crystal_wifi_diagnostics_clear() {}
+size_t crystal_wifi_diagnostics_copy_logs(char *out, size_t capacity, uint32_t *revision)
+{
+    if (out && capacity) out[0] = 0;
+    if (revision) *revision = 0;
+    return 0;
+}
 
 // Documentation-only addresses and locally administered MAC; no real network.
 CrystalEthernetInfo crystal_ethernet_info()

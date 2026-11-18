@@ -66,6 +66,7 @@ assert(ui.list_add(list,'String row'));assert(ui.list_insert(list,1,'Inserted ro
 assert(ui.list_count(list)==2);click('Inserted row');assert(selected_index==2)
 assert(ui.list_clear(list));assert(ui.delete(list))
 
+for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
 local app=assert(loadfile(package_path))()
 assert(app.onCreate() and timer);assert(has_text('No saved stops yet'))
 assert(has_text(favorites_tab) and has_text(search_tab) and has_icon(favorites_tab) and has_icon(search_tab),
@@ -156,13 +157,21 @@ assert(has_text('Network error 503 - tap Refresh to retry'))
 click(refresh);complete('{"data":[]}');assert(has_text('No arrivals available'))
 click(refresh);complete('{"data":[{"eta":"2026-11-16T14:30:29+08:00"}]}');assert(has_text('Arriving'))
 click(refresh);complete('{"data":[{"eta":"2026-11-16T14:30:30+08:00"}]}');assert(has_text('1 min'))
--- Independent known epoch for a valid leap day (UTC): 2000-02-29 12:30.
+-- Independent known epoch for a valid leap day (UTC): 2024-02-29 12:30.
 local live_clock=crystal.service.time.now
-crystal.service.time.now=function()return 951827400 end
-click(refresh);complete('{"data":[{"eta":"2000-02-29T12:33:00Z"}]}');assert(has_text('3 min'))
-crystal.service.time.now=function()return 0 end
-click(refresh);complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}');assert(has_text('Time unavailable'))
+crystal.service.time.now=function()return 1709209800 end
+click(refresh);complete('{"data":[{"eta":"2024-02-29T12:33:00Z"}]}');assert(has_text('3 min'))
+for _,invalid in ipairs({0,1,50,3600,1577836799,1794810600}) do
+  crystal.service.time.now=function()return invalid end
+  clock_signal(false);assert(app.onPause() and app.onResume())
+  complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}')
+  assert(has_text('--') and has_text('Waiting for device time'))
+  assert(not has_text('Time unavailable') and not has_text('29916791 min'))
+end
 crystal.service.time.now=live_clock
+clock_signal(true);assert(has_text('3 min') and not has_text('Waiting for device time'))
+-- Notification repaints cached ETA immediately; no network request is needed.
+if pending then complete('{"data":[]}') end
 -- Bad calendar dates and missing timezones never produce an arrival.
 click(refresh);complete('{"data":[{"eta":"2026-02-29T14:30:00+08:00"},{"eta":"2026-11-16T14:30:00"}]}')
 assert(has_text('No arrivals available'))

@@ -62,6 +62,7 @@ instructions in those documents.
 - [Bus transformation status](README_BUS_TRANSFORMATION.md), [Phase 3 results](BUS_APP_PHASE_3_RESULTS.md), and [installation guide](BUS_APP_QUICK_START.md)
 - [Standard-service catalog policy and reproduction](BUS_STANDARD_SERVICE_CATALOG.md)
 - [Wi-Fi recovery diagnosis and pending board checks](WIFI_RECOVERY_DIAGNOSIS.md)
+- [P4 Wi-Fi diagnostics and signal-loss checks](WIFI_CHECKS.md)
 - [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
 - [ESP-IDF commands](ESP_IDF_COMMAND_GUIDE.md): existing S3 instructions.
 - [Host tools](../tools/README.md) and [simulator status](SIMULATOR.md)

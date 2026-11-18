@@ -6,7 +6,7 @@ idf_component_register(
          "src/crystal_page_transition.cpp"
          "src/crystal_ui_metrics.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES crystal_registry crystal_hal crystal_app crystal_core crystal_control weather_app esp-brookesia lvgl freertos
+    REQUIRES crystal_registry crystal_hal crystal_app crystal_core crystal_control crystal_wifi_diagnostics weather_app esp-brookesia lvgl freertos
 )
 
 # Pre-sized artwork avoids runtime PNG decoding/scaling and S3 flash growth.

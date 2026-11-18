@@ -116,6 +116,11 @@ private:
     static int fs_exists(lua_State *state);
     static int fs_list(lua_State *state);
     static int service_time_now(lua_State *state);
+    static int service_time_is_ready(lua_State *state);
+    static int service_time_on_ready(lua_State *state);
+    static int service_time_off_ready(lua_State *state);
+    static void time_ready(void *context);
+    void clear_time_subscription();
     static int service_time_format(lua_State *state);
     static int service_time_zone(lua_State *state);
     static int service_timer_arm(lua_State *state);
@@ -182,6 +187,9 @@ private:
     lv_timer_t *runtime_close_timer_ = nullptr;
     CrystalResources::Handle runtime_close_resource_ = 0;
     bool runtime_close_scheduled_ = false;
+    uint32_t time_subscription_ = 0;
+    CallbackRef *time_callback_ = nullptr;
+    bool time_paused_ = false, time_pending_ = false;
     std::shared_ptr<AsyncState> async_;
     std::map<uint32_t, int> request_callbacks_;
     std::set<uint32_t> active_requests_;

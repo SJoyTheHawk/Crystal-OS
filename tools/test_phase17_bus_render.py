@@ -7,11 +7,13 @@ import subprocess
 from test_manage_apps_page import CONF, png_from_ppm
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'components/crystal_script/src/crystal_script.cpp').read_text()
+CORE = (ROOT / 'components/crystal_core/src/crystal_core.cpp').read_text()
 def function(signature):
     start = SOURCE.index(signature)
     return SOURCE[start:SOURCE.index('\n}', start) + 2]
 PREFIX = r'''
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -46,12 +48,21 @@ static size_t native_json_allocations=0;
 static void *json_allocate(size_t size) {void *ptr=malloc(size);if(ptr)++native_json_allocations;return ptr;}
 static void json_release(void *ptr) {if(ptr)--native_json_allocations;free(ptr);}
 static size_t heap_caps_get_free_size(int) {return 1024*1024;}
+using crystal_time_ready_cb_t = void (*)(void *);
+bool crystal_time_is_ready();
+uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t,void*);
+bool crystal_time_unsubscribe_ready(uint32_t);
 class ScriptApp {
 public:
     struct ImageAsset { std::vector<lv_color_t> pixels; lv_img_dsc_t descriptor{}; };
     CrystalResources resources_;
     CrystalUI ui_{resources_};
     lua_State *lua_=nullptr;
+    uint32_t time_subscription_=0;
+    bool time_paused_=false,time_pending_=false;
+    static int service_time_is_ready(lua_State*),service_time_on_ready(lua_State*),service_time_off_ready(lua_State*);
+    static void time_ready(void*);
+    void clear_time_subscription();
     lv_obj_t *root_=nullptr;
     struct Block {size_t size; Block *previous; Block *next; bool free;};
     void *arena_=nullptr; size_t arena_size_=256*1024, arena_used_=0, arena_peak_=0;
@@ -68,6 +79,7 @@ public:
     bool execute(const char*,bool=false);
     void runtime_error(const char *msg) {runtime_failed_=true; fprintf(stderr,"contained: %s\n",msg);}
     struct CallbackRef { ScriptApp *app=nullptr; int ref=LUA_NOREF; };
+    CallbackRef *time_callback_=nullptr;
     std::list<std::unique_ptr<CallbackRef>> callbacks_;
     std::map<std::string,std::unique_ptr<ImageAsset>> image_assets_;
     std::map<std::pair<uint32_t,std::string>,CallbackRef*> event_callbacks_;
@@ -94,6 +106,42 @@ MAIN = r'''
 static lua_State *L;
 static unsigned allocation_failures;
 static ScriptApp *test_app;
+static int clock_signal(lua_State *state) {
+    s_time_valid.store(lua_toboolean(state,1));
+    s_time_revision.fetch_add(1);
+    dispatch_time_ready();return 0;
+}
+static int clock_dispatch(lua_State *) {dispatch_time_ready();return 0;}
+static int clock_callback_count(lua_State *state) {lua_pushinteger(state,test_app->callbacks_.size());return 1;}
+static int clock_reset(lua_State *) {test_app->clear_time_subscription();return 0;}
+static void check_clock_listener_lifetimes() {
+    s_time_valid.store(false);s_time_revision.store(0);
+    unsigned calls=0;
+    auto count=[](void *p){++*static_cast<unsigned*>(p);};
+    uint32_t ids[16]{};
+    for(auto &id:ids){id=crystal_time_subscribe_ready(count,&calls);assert(id);}
+    assert(!crystal_time_subscribe_ready(count,&calls));
+    dispatch_time_ready();assert(calls==0);
+    s_time_valid.store(true);s_time_revision.fetch_add(1);dispatch_time_ready();assert(calls==16);
+    dispatch_time_ready();assert(calls==16);
+    for(auto id:ids)assert(crystal_time_unsubscribe_ready(id));
+    struct Reentrant {uint32_t old=0,next=0;unsigned calls=0;} state;
+    auto replace=[](void *p){
+        auto &s=*static_cast<Reentrant*>(p);
+        assert(crystal_time_unsubscribe_ready(s.old));
+        s.next=crystal_time_subscribe_ready([](void *q){++static_cast<Reentrant*>(q)->calls;},&s);
+    };
+    state.old=crystal_time_subscribe_ready(replace,&state);dispatch_time_ready();assert(state.next && !state.calls);
+    dispatch_time_ready();assert(state.calls==1);
+    assert(!crystal_time_unsubscribe_ready(state.old));
+    assert(crystal_time_unsubscribe_ready(state.next));
+    puts("PASS: core clock subscription capacity, coalescing and reentrant teardown");
+}
+static int clock_pause(lua_State *state) {
+    test_app->time_paused_=lua_toboolean(state,1);
+    if(!test_app->time_paused_ && test_app->time_pending_) ScriptApp::time_ready(test_app);
+    return 0;
+}
 static int run_callback(lua_State *state) {
     luaL_checktype(state,1,LUA_TFUNCTION);lua_pushvalue(state,1);
     const int ref=luaL_ref(state,LUA_REGISTRYINDEX);
@@ -291,6 +339,7 @@ int main(int argc,char **argv) {
     lv_init(); static lv_color_t pixels[720*20];static lv_disp_draw_buf_t buf;
     lv_disp_draw_buf_init(&buf,pixels,nullptr,720*20);lv_disp_drv_t drv;lv_disp_drv_init(&drv);
     drv.hor_res=width;drv.ver_res=width-40;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);
+    check_clock_listener_lifetimes();
     check_repeated_text_refresh();
     ScriptApp app;
     test_app=&app;app.arena_size_=atoi(argv[4])*1024;
@@ -321,6 +370,19 @@ int main(int argc,char **argv) {
         lua_pushlightuserdata(L,&app);lua_pushstring(L,type);lua_pushcclosure(L,ScriptApp::ui_create,2);lua_setfield(L,-2,type);
     }
     lua_setglobal(L,"ui");
+    lua_newtable(L);
+    for(const auto &entry : std::initializer_list<std::pair<const char*,lua_CFunction>>{
+        {"is_ready",ScriptApp::service_time_is_ready},{"on_ready",ScriptApp::service_time_on_ready},
+        {"off_ready",ScriptApp::service_time_off_ready}}) {
+        lua_pushlightuserdata(L,&app);lua_pushcclosure(L,entry.second,1);lua_setfield(L,-2,entry.first);
+    }
+    lua_setglobal(L,"clock_api");
+    lua_pushcfunction(L,clock_signal);lua_setglobal(L,"clock_signal");
+    lua_pushcfunction(L,clock_dispatch);lua_setglobal(L,"clock_dispatch");
+    lua_pushcfunction(L,clock_callback_count);lua_setglobal(L,"clock_callback_count");
+    lua_pushcfunction(L,clock_reset);lua_setglobal(L,"clock_reset");
+    lua_pushcfunction(L,clock_pause);lua_setglobal(L,"clock_pause");
+    s_time_valid.store(true);s_time_revision.store(1);
     lua_pushcfunction(L,read_asset);lua_setglobal(L,"read_asset");
     lua_pushcfunction(L,encode_json);lua_setglobal(L,"encode_json");
     lua_pushlightuserdata(L,&app);lua_pushcclosure(L,ScriptApp::json_decode,1);lua_setglobal(L,"decode_json");
@@ -347,6 +409,8 @@ int main(int argc,char **argv) {
     assert(native_json_allocations==0);
     printf("PASS: production Lua/UI and LVGL at %dpx; %zu callbacks (limit 64)\n",width,app.callbacks_.size());
     assert(!app.runtime_failed_ && lua_gettop(L)==0);
+    app.clear_time_subscription();
+    for(const auto &listener:s_time_listeners) assert(!listener.id);
     app.ui_.reset(); lv_obj_del(app.root_);app.ui_.reset();lua_close(L);
     assert(app.arena_used_==0);free(app.arena_);
     // Host pointers and block headers are twice the P4 size. Rendering uses
@@ -438,11 +502,13 @@ def main():
     names=['void *ScriptApp::lua_allocate(', 'void *ScriptApp::arena_allocate(', 'void ScriptApp::arena_release(', 'int ScriptApp::protected_invoke(', 'bool ScriptApp::invoke(', 'bool ScriptApp::execute(', 'bool ScriptApp::call_ref(', 'const cJSON *json_field(', 'bool finite_integer(', 'bool json_int(', 'bool lua_uint(',
            'void ScriptApp::json_to_lua(', 'int ScriptApp::protected_json_value(', 'int ScriptApp::push_json_value(', 'int ScriptApp::json_decode(', 'cJSON *ScriptApp::lua_to_json(', 'ScriptApp::CallbackRef *ScriptApp::make_callback(',
            'void ScriptApp::ui_event(', 'lv_obj_t *ScriptApp::build_widget(', 'bool ScriptApp::apply_style(']
-    names += ['void ScriptApp::instruction_hook(']
+    names += ['void ScriptApp::instruction_hook(', 'int ScriptApp::service_time_is_ready(', 'int ScriptApp::service_time_on_ready(', 'int ScriptApp::service_time_off_ready(', 'void ScriptApp::time_ready(', 'void ScriptApp::clear_time_subscription(']
     names += ['int ScriptApp::ui_'+name+'(' for name in ('create','screen','get_size','set_text','get_text',
               'set_hidden','set_enabled','set_style','scroll_to','delete','list_add','list_insert',
               'list_set_text','list_remove','list_clear','list_count')]
-    (work/'check.cpp').write_text(PREFIX+'\n'.join(function(name) for name in names)+MAIN)
+    clock_state=CORE[CORE.index('std::atomic_bool s_time_valid'):CORE.index('std::atomic_bool s_sntp_initialized')]
+    clock_functions=CORE[CORE.index('bool crystal_time_is_ready()'):CORE.index('void crystal_time_init()')]
+    (work/'check.cpp').write_text(PREFIX+clock_state+clock_functions+'\n'.join(function(name) for name in names)+MAIN)
     lua=ROOT/'managed_components/georgik__lua'
     lua_sources=[p for p in (lua/'lua').glob('*.c') if p.name not in ('lua.c','luac.c','onelua.c','ltests.c')]
     sources=[ROOT/'components/crystal_app/src/crystal_ui.cpp',ROOT/'components/crystal_package/src/crystal_resources.cpp',
@@ -474,7 +540,7 @@ target_link_libraries(check PRIVATE lvgl)
     for width in (480,720):
         folder=output/str(width);folder.mkdir(parents=True,exist_ok=True)
         drivers=['test_phase17_bus_catalog_ui.lua'] if args.catalog_only else [
-            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua','test_phase17_bus_endpoints.lua']
+            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua','test_phase17_bus_endpoints.lua','test_phase17_clock_ready.lua']
         for driver in drivers:
             subprocess.run([str(work/'build/check'),str(ROOT/'examples/bus3p/main.lua'),
                             str(ROOT/'tools'/driver),str(width),str(quota),json.dumps(counts)],cwd=folder,check=True)

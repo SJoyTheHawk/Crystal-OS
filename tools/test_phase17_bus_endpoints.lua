@@ -34,6 +34,8 @@ local function complete(body,code)
   local old=assert(pending);pending=nil
   run_callback(function()old.callback(old.id,code or 200,body or '{"data":[]}')end)
 end
+for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
+clock_signal(false)
 local app=assert(loadfile(package_path))();assert(app.onCreate())
 assert(has_text('Some saved stops were skipped'))
 tick();url(kmb..'/eta/K1/101/1');complete()
@@ -56,6 +58,25 @@ clock=clock+30;tick();url(kmb..'/eta/K1/101/1');complete()
 url(ctb..'/eta/CTB/000001/101');complete()
 url(ready.endpoints[1].url);complete();url(ready.endpoints[2].url);complete()
 assert(not pending and writes==2)
+-- A small positive boot epoch must never be subtracted from a real ETA.
+clock=120
+assert(app.onPause() and app.onResume());tick()
+url(kmb..'/eta/K1/101/1');complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}')
+url(ctb..'/eta/CTB/000001/101');complete()
+url(ready.endpoints[1].url);complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00"}]}')
+url(ready.endpoints[2].url);complete()
+for _=1,10 do tick() end
+assert(has_text('--\n--\n--') and has_text('Waiting for device time'))
+assert(not has_text('29913571 min'))
+-- Clock sync repaints the cached favorites before the next network response.
+clock=1794810600
+clock_signal(true)
+assert(has_text('3 min\n--\n--') and has_text('5 min\n--\n--'))
+assert(not has_text('Waiting for device time'))
+-- Resume still requests fresh arrivals after the clock notification.
+assert(app.onPause() and app.onResume());tick()
+url(kmb..'/eta/K1/101/1');complete();url(ctb..'/eta/CTB/000001/101');complete()
+url(ready.endpoints[1].url);complete();url(ready.endpoints[2].url);complete()
 -- Pause cancels the first provider; an abandoned callback cannot start the next.
 clock=clock+30;tick();local late=assert(pending);assert(app.onPause() and not pending)
 run_callback(function()late.callback(late.id,200,'{"data":[]}')end);assert(not pending)

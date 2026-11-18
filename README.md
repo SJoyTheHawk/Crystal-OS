@@ -10,8 +10,10 @@ esp-brookesia, with swipeable app cards, Quick Settings and installable apps.
 visual/interaction acceptance (P4.2), and network expansion (P4.3) are complete
 for their documented scopes as of **November 15, 2026**. Performance, soak,
 and remaining feature qualification continue in P4.4. Phase 17 Lua runtime
-support is implemented; Bus Lite **0.2.24** contains the Phase 4 refresh and
-countdown implementation, with P4 board acceptance next (November 18, 2026).
+support is implemented; Bus Lite **0.2.26** contains the Phase 4 refresh and
+countdown implementation and OS clock-ready subscriptions. The user reports
+the clock correction working on P4 (November 19, 2026); remaining soak and
+network-recovery checks are tracked in the Phase 4 results.
 The validated S3 baseline is preserved on branch `ESP32-S3-Touch-LCD-4B`.
 See the [validation records](#project-status) and [documentation index](docs/README.md).
 
@@ -81,7 +83,7 @@ The previous **ESP32-S3-Touch-LCD-4B** baseline (480 × 480, 16 MB flash,
 - **Manage Apps:** enable bundled apps live, disable them for the next reboot,
   reorder cards, and clear saved app data.
 - **Lua packages:** install signed `.capp` apps through the Developer Tools
-  control panel. Bus Lite 0.2.24 provides bundled route search, KMB/Citybus
+  control panel. Bus Lite 0.2.26 provides bundled route search, KMB/Citybus
   stops and live ETA, refreshed favorite ETAs, joint routes, eight favorites
   and five recent routes.
 - **Shared services:** persistent app state, RTC and network time, Wi-Fi, power
@@ -170,7 +172,7 @@ P4 acceptance, as recorded on November 15, 2026:
 | P4.3 — network expansion | Accepted Ethernet, Wi-Fi fallback/reconnection, Ethernet-only Weather/SNTP/HTTPS, browser pairing/app-list access, and network indicator. [Validation](docs/ESP32_P4_PHASE3_VALIDATION.md) |
 | P4.4 — qualification | Sustained performance/FPS, memory and network soaks, package/OTA flows, and remaining feature parity are still open. |
 | Phase 17 — Lua runtime | Implemented; runtime/device checks remain tracked in the [test guide](docs/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md). |
-| Bus Lite 0.2.24 | Phases 1–4 implemented in the package; Phase 3 persistence is accepted on P4 and Phase 4 board refresh/countdown acceptance is next. [Phase 4 results](docs/BUS_APP_PHASE_4_RESULTS.md). |
+| Bus Lite 0.2.26 | Phases 1–4 implemented; Phase 3 persistence is accepted on P4. Clock-ready correction reported working; remaining Phase 4 reliability checks are recorded separately. [Phase 4 results](docs/BUS_APP_PHASE_4_RESULTS.md). |
 
 These scoped acceptance records do not establish release readiness or a 60 fps
 guarantee. Retained memory, HTTPS, and lifecycle findings are listed in the
@@ -216,6 +218,22 @@ references, implementation records and important unresolved findings.
 | Host development | [Simulator status](docs/SIMULATOR.md) |
 
 Historical reports and proposals live in [the archive](docs/archive/README.md).
+
+## Known Issues
+
+### P4 Wi-Fi recovery after signal loss
+
+Some board runs show TLS timeouts followed by persistent DNS or reconnection
+failures after signal loss. The root cause remains under investigation; the
+logs alone do not establish an upstream socket leak. The HAL now rejects stale
+SSID events and obsolete retry notifications, and Developer Tools includes
+opt-in Wi-Fi diagnostics. Recovery under shielding still needs board validation.
+
+Follow the [Wi-Fi checks](docs/WIFI_CHECKS.md) to capture interface, DNS and
+transport evidence. A separate [19.4-minute Bus run](docs/test-evidence/wifi-checks/RESULTS.md)
+completed 204 successful HTTPS requests after IP acquisition; it was not a
+traffic-free idle test. Earlier power-management and socket-leak explanations
+are retained as investigation notes, not confirmed fixes.
 
 ## Use of AI
 

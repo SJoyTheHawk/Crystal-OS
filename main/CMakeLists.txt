@@ -1,4 +1,5 @@
 set(CRYSTAL_BOARD_COMPONENT esp32_s3_touch_lcd_4b)
+option(CRYSTAL_WIFI_DIAGNOSTICS "Enable optional UART WiFi diagnostic commands" OFF)
 set(CRYSTAL_LVGL_PORT_COMPONENT esp_lvgl_port)
 if(IDF_TARGET STREQUAL "esp32p4")
     set(CRYSTAL_BOARD_COMPONENT crystal_board_p4)
@@ -9,10 +10,17 @@ endif()
 idf_component_register(
     SRCS "main.cpp" "crystal_memory.c" "crystal_version.c" "crystal_crash.c" "crystal_update.c" "crystal_update_manifest.c"
     INCLUDE_DIRS "."
-    REQUIRES ${CRYSTAL_ETHERNET_APP_COMPONENT} dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_script crystal_shell esp-brookesia ${CRYSTAL_LVGL_PORT_COMPONENT} ${CRYSTAL_BOARD_COMPONENT} nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
+    REQUIRES ${CRYSTAL_ETHERNET_APP_COMPONENT} dev_tester clock_app weather_app calculator_app crystal_hal crystal_core crystal_app crystal_registry crystal_package crystal_signature crystal_control crystal_declarative crystal_script crystal_shell esp-brookesia ${CRYSTAL_LVGL_PORT_COMPONENT} ${CRYSTAL_BOARD_COMPONENT} crystal_wifi_diagnostics nvs_flash esp_timer espcoredump esp_https_ota app_update mbedtls
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)
+
+if(CRYSTAL_WIFI_DIAGNOSTICS)
+    if(NOT IDF_TARGET STREQUAL "esp32p4")
+        message(FATAL_ERROR "UART WiFi checks currently target the P4 UART0 console")
+    endif()
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE CRYSTAL_WIFI_DIAGNOSTICS=1)
+endif()
 
 # Brookesia's allocator does not cover LVGL's own widgets/styles. Wire LVGL's
 # allocator itself so package UI construction cannot consume internal RAM.

@@ -21,6 +21,7 @@
 #include "weather_app.hpp"
 #include "calculator_app.hpp"
 #include "crystal_hal.hpp"
+#include "crystal_wifi_diagnostics.hpp"
 #include "crystal_network_policy.hpp"
 #if CONFIG_IDF_TARGET_ESP32P4
 #include "ethernet_app.hpp"
@@ -369,4 +370,7 @@ extern "C" void app_main(void)
     // overlay, which now fades away when the shell is ready.
     (void)bsp_display_brightness_set(hal().brightness->get());
     crystal_core_start_services();
+#ifdef CRYSTAL_WIFI_DIAGNOSTICS
+    crystal_wifi_diagnostics_start_uart();
+#endif
 }

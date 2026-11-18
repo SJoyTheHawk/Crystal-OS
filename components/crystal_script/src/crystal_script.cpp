@@ -432,7 +432,8 @@ void ScriptApp::install_api()
         {"read", fs_read}, {"write", fs_write}, {"exists", fs_exists}, {"list", fs_list}, {nullptr, nullptr}
     };
     static const luaL_Reg time_functions[] = {
-        {"now", service_time_now}, {"format", service_time_format}, {"timezone_name", service_time_zone}, {nullptr, nullptr}
+        {"now", service_time_now}, {"is_ready", service_time_is_ready},
+        {"on_ready", service_time_on_ready}, {"off_ready", service_time_off_ready}, {"format", service_time_format}, {"timezone_name", service_time_zone}, {nullptr, nullptr}
     };
     static const luaL_Reg timer_functions[] = {
         {"arm", service_timer_arm}, {"start", service_timer_start}, {"pause", service_timer_pause},
@@ -482,6 +483,7 @@ bool ScriptApp::onCreate()
     async_ = std::make_shared<AsyncState>();
     deadline_exceeded_ = false;
     runtime_failed_ = false;
+    time_paused_ = time_pending_ = false;
     native_internal_baseline_ = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     native_psram_baseline_ = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     native_internal_low_water_ = native_internal_baseline_;
@@ -649,6 +651,7 @@ void ScriptApp::runtime_close_dispatch(lv_timer_t *timer)
 
 bool ScriptApp::onPause()
 {
+    time_paused_ = true;
     (void)execute("onPause");
     cancel_requests();
     ui_.pause();
@@ -657,8 +660,11 @@ bool ScriptApp::onPause()
 
 bool ScriptApp::onResume()
 {
+    time_paused_ = false;
     ui_.resume();
-    return execute("onResume");
+    const bool ok = execute("onResume");
+    if (ok && time_pending_) time_ready(this);
+    return ok && !runtime_failed_;
 }
 
 bool ScriptApp::onBack()
@@ -686,6 +692,7 @@ bool ScriptApp::onDestroy()
     const size_t used_before_release = arena_used_;
     const size_t peak_before_release = arena_peak_;
     in_destroy_ = true;
+    clear_time_subscription();
     (void)execute("onDestroy");
     cancel_requests();
     if (async_) {
@@ -1502,6 +1509,66 @@ int ScriptApp::fs_list(lua_State *state)
         lua_pushstring(state, entry->d_name); lua_rawseti(state, -2, index++);
     }
     closedir(dir); return 1;
+}
+
+void ScriptApp::clear_time_subscription()
+{
+    if (time_subscription_) crystal_time_unsubscribe_ready(time_subscription_);
+    time_subscription_ = 0;
+    time_pending_ = false;
+    if (time_callback_) {
+        if (lua_) luaL_unref(lua_, LUA_REGISTRYINDEX, time_callback_->ref);
+        for (auto it = callbacks_.begin(); it != callbacks_.end(); ++it) {
+            if (it->get() == time_callback_) { callbacks_.erase(it); break; }
+        }
+        time_callback_ = nullptr;
+    }
+}
+
+void ScriptApp::time_ready(void *context)
+{
+    auto *app = static_cast<ScriptApp *>(context);
+    if (!app || !app->time_callback_ || !app->lua_ || app->in_destroy_ || app->runtime_failed_) return;
+    if (app->time_paused_) { app->time_pending_ = true; return; }
+    app->time_pending_ = false;
+    // Core delivers on the LVGL task, through the normal protected Lua budget.
+    // Copy the ref: the callback is allowed to replace/unsubscribe itself.
+    const int ref = app->time_callback_->ref;
+    (void)app->call_ref(ref, 0, "ready");
+}
+
+int ScriptApp::service_time_is_ready(lua_State *state)
+{
+    lua_pushboolean(state, crystal_time_is_ready()); return 1;
+}
+
+int ScriptApp::service_time_on_ready(lua_State *state)
+{
+    auto *app = self(state);
+    if (!app || app->in_destroy_ || app->runtime_failed_ || !lua_isfunction(state, 1)) {
+        lua_pushboolean(state, false); return 1;
+    }
+    if (app->time_callback_) {
+        lua_pushvalue(state, 1);
+        const int ref = luaL_ref(state, LUA_REGISTRYINDEX);
+        luaL_unref(state, LUA_REGISTRYINDEX, app->time_callback_->ref);
+        app->time_callback_->ref = ref;
+    } else {
+        app->time_callback_ = app->make_callback(1);
+        if (!app->time_callback_) { lua_pushboolean(state, false); return 1; }
+    }
+    if (app->time_subscription_) crystal_time_unsubscribe_ready(app->time_subscription_);
+    app->time_subscription_ = crystal_time_subscribe_ready(time_ready, app);
+    if (!app->time_subscription_) app->clear_time_subscription();
+    lua_pushboolean(state, app->time_subscription_ != 0); return 1;
+}
+
+int ScriptApp::service_time_off_ready(lua_State *state)
+{
+    auto *app = self(state);
+    const bool subscribed = app && app->time_subscription_;
+    if (app) app->clear_time_subscription();
+    lua_pushboolean(state, subscribed); return 1;
 }
 
 int ScriptApp::service_time_now(lua_State *state)

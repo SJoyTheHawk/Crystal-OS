@@ -92,6 +92,14 @@ void crystal_core_wake_display();
 
 // Loads timezone and initializes system time from the hardware RTC before UI startup.
 void crystal_time_init();
+// Ready state is OS-owned (RTC, SNTP or manual clock setup). Subscribe/off must
+// run on the LVGL task. Notifications, including replay for an already-ready
+// clock, run on a later UI dispatch; never on an SNTP/network worker.
+using crystal_time_ready_cb_t = void (*)(void *context);
+bool crystal_time_is_ready();
+uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t callback, void *context);
+bool crystal_time_unsubscribe_ready(uint32_t subscription);
+
 // LVGL-task-only toast bridge for package runtimes and OS-owned services.
 void crystal_core_show_toast(const char *message);
 

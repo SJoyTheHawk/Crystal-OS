@@ -63,3 +63,9 @@ video_frames/
 # Keep the vendored source itself tracked as Crystal's durable Brookesia override.
 /components/esp-brookesia/.component_hash
 /components/esp-brookesia/CHECKSUMS.json
+
+# Local Wi-Fi capture metadata can contain device/network identifiers.
+# Keep reviewed RESULTS.md summaries; raw logs are already ignored above.
+/docs/test-evidence/wifi-checks/*.json
+# Superseded local PM command reference; current steps are docs/WIFI_CHECKS.md.
+/WIFI_FIX_COMMANDS.sh

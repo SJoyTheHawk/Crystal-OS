@@ -17,6 +17,7 @@
 #include "crystal_app.hpp"
 #include "crystal_ui.hpp"
 #include "crystal_control.hpp"
+#include "crystal_wifi_diagnostics.hpp"
 #include "crystal_core.hpp"
 #include "crystal_hal.hpp"
 #include "crystal_ethernet.hpp"
@@ -3634,6 +3635,106 @@ void control_panel_toggle_changed(lv_event_t *event)
     }
 }
 
+struct WifiDiagnosticsView {
+    lv_obj_t *page, *row, *toggle, *panel, *label;
+    lv_obj_t *snapshot, *checks, *clear;
+    lv_timer_t *timer;
+    uint32_t revision;
+    char text[4096];
+};
+static WifiDiagnosticsView s_wifi_diagnostics_view{};
+
+void wifi_diagnostics_view_refresh(lv_timer_t *)
+{
+    auto &view = s_wifi_diagnostics_view;
+    if (!view.page) return;
+    uint32_t revision = 0;
+    crystal_wifi_diagnostics_copy_logs(nullptr, 0, &revision);
+    if (revision == view.revision) return;
+    const size_t size = crystal_wifi_diagnostics_copy_logs(view.text, sizeof(view.text), &view.revision);
+    lv_label_set_text_static(view.label, size ? view.text : "Waiting for Wi-Fi diagnostic logs...");
+    lv_obj_update_layout(view.panel);
+    lv_obj_scroll_to_y(view.panel, LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+void wifi_diagnostics_view_state()
+{
+    auto &view = s_wifi_diagnostics_view;
+    const bool enabled = crystal_wifi_diagnostics_enabled();
+    if (enabled) {
+        lv_obj_add_state(view.toggle, LV_STATE_CHECKED);
+        lv_obj_clear_flag(view.panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(view.snapshot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(view.checks, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(view.clear, LV_OBJ_FLAG_HIDDEN);
+        if (view.timer) lv_timer_resume(view.timer);
+        wifi_diagnostics_view_refresh(nullptr);
+    } else {
+        lv_obj_clear_state(view.toggle, LV_STATE_CHECKED);
+        lv_obj_add_flag(view.panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(view.snapshot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(view.checks, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(view.clear, LV_OBJ_FLAG_HIDDEN);
+        if (view.timer) lv_timer_pause(view.timer);
+    }
+    settings_row_set_summary(view.row, enabled ? "On - live logs for this boot" : "Off - capture Wi-Fi and network logs");
+}
+
+void wifi_diagnostics_view_deleted(lv_event_t *event)
+{
+    auto &view = s_wifi_diagnostics_view;
+    if (lv_event_get_target(event) != view.page) return;
+    if (view.timer) lv_timer_del(view.timer);
+    view = {};
+}
+
+void settings_add_wifi_diagnostics(lv_obj_t *content)
+{
+    auto &view = s_wifi_diagnostics_view;
+    view.page = lv_obj_get_parent(content); view.revision = 0;
+    lv_obj_add_event_cb(view.page, wifi_diagnostics_view_deleted, LV_EVENT_DELETE, nullptr);
+    view.row = settings_row(content, "Wi-Fi Diagnostics", "Off - capture Wi-Fi and network logs");
+    view.toggle = settings_switch(view.row, crystal_wifi_diagnostics_enabled());
+    lv_obj_add_event_cb(view.toggle, [](lv_event_t *event) {
+        const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(event)), LV_STATE_CHECKED);
+        if (!crystal_wifi_diagnostics_set_enabled(enabled))
+            crystal_core_show_toast("Could not start Wi-Fi diagnostics");
+        wifi_diagnostics_view_state();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    view.snapshot = settings_row(content, "Wi-Fi Snapshot", "Read IP, DNS, signal, power mode and C6 version");
+    lv_obj_add_event_cb(view.snapshot, [](lv_event_t *) {
+        if (!crystal_wifi_diagnostics_request(CrystalWifiDiagnostic::Snapshot))
+            crystal_core_show_toast("Diagnostics busy - try again shortly");
+    }, LV_EVENT_CLICKED, nullptr);
+    view.checks = settings_row(content, "Run Network Checks", "Send numeric-IP, DNS and HTTPS probes once");
+    lv_obj_add_event_cb(view.checks, [](lv_event_t *) {
+        if (!crystal_wifi_diagnostics_request(CrystalWifiDiagnostic::NetworkChecks))
+            crystal_core_show_toast("Diagnostics busy - try again shortly");
+    }, LV_EVENT_CLICKED, nullptr);
+    view.clear = settings_row(content, "Clear Diagnostic Logs", "Clear the recent log buffer");
+    lv_obj_add_event_cb(view.clear, [](lv_event_t *) {
+        crystal_wifi_diagnostics_clear(); wifi_diagnostics_view_refresh(nullptr);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    view.panel = lv_obj_create(content);
+    lv_obj_set_width(view.panel, LV_PCT(100)); lv_obj_set_height(view.panel, 260);
+    lv_obj_set_style_bg_color(view.panel, lv_color_hex(0x11151b), 0);
+    lv_obj_set_style_border_color(view.panel, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(view.panel, 1, 0);
+    lv_obj_set_style_pad_all(view.panel, 10, 0);
+    lv_obj_set_flex_flow(view.panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(view.panel, LV_DIR_VER);
+    lv_obj_clear_flag(view.panel, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    view.label = lv_label_create(view.panel);
+    lv_obj_set_width(view.label, LV_PCT(100));
+    lv_label_set_long_mode(view.label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(view.label, kSettingsStatusFont, 0);
+    lv_obj_set_style_text_color(view.label, lv_color_hex(0xcbd5e1), 0);
+    view.timer = lv_timer_create(wifi_diagnostics_view_refresh, 1000, nullptr);
+    wifi_diagnostics_view_state();
+}
+
 void settings_push_developer_tools()
 {
     lv_obj_t *content = system_page_push("Developer Tools");
@@ -3685,6 +3786,8 @@ void settings_push_developer_tools()
         }
         settings_row_set_summary(row, extended ? "30 seconds per callback" : "5 seconds per callback (default)");
     }, LV_EVENT_VALUE_CHANGED, timeout_row);
+
+    settings_add_wifi_diagnostics(content);
 
     (void)settings_row(content, "Catalog", "Signed online catalog and HTTPS .capp downloads");
     lv_obj_t *note = settings_status_label(content);

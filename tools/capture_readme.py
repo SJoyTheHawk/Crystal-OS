@@ -69,7 +69,7 @@ def main():
                     ROOT / 'components/manage_apps_page/include', ROOT / 'components/crystal_registry/include',
                     ROOT / 'components/crystal_update_view/include']
     include_dirs.extend(ROOT / f'components/{name}/include' for name in
-                        ('crystal_package', 'crystal_app', 'crystal_core', 'crystal_hal', 'crystal_ui', 'crystal_control', 'clock_app', 'weather_app', 'calculator_app', 'ethernet_app'))
+                        ('crystal_package', 'crystal_app', 'crystal_core', 'crystal_hal', 'crystal_ui', 'crystal_control', 'crystal_wifi_diagnostics', 'clock_app', 'weather_app', 'calculator_app', 'ethernet_app'))
     quoted_sources = '\n'.join(f'"{path}"' for path in sources)
     quoted_includes = '\n'.join(f'"{path}"' for path in include_dirs)
     (work / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)

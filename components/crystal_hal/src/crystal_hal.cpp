@@ -323,10 +323,8 @@ public:
         ESP_LOGI(TAG, "WiFi initialized: internal=%u largest_internal=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-        // The IDF driver emits a warning whenever a connect request arrives
-        // while its scan has not found a matching AP. That is expected during
-        // our paced reconnects and is not actionable; keep the HAL's own
-        // disconnect diagnostics while silencing the driver's warning stream.
+        // Keep the default driver stream quiet. Developer Tools can temporarily
+        // enable it; HAL connection failures are always logged separately.
         esp_log_level_set("wifi", ESP_LOG_ERROR);
         (void)esp_wifi_set_storage(WIFI_STORAGE_FLASH);
         (void)esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &DeviceWifi::event_handler, this);
@@ -388,8 +386,10 @@ public:
         const bool associated = connected();
         resume_after_scan_ = !associated && last_ssid_[0] != '\0';
         pending_connect_ = false;
+        retry_scheduled_ = false;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         if (!associated) {
+            connect_in_progress_ = false;
             const esp_err_t err = esp_wifi_disconnect();
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "Stopping WiFi connection for scan failed: %s", esp_err_to_name(err));
@@ -429,24 +429,35 @@ public:
         config.sta.threshold.authmode = pass[0] == '\0' ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_PSK;
         config.sta.pmf_cfg.capable = true;
         config.sta.pmf_cfg.required = false;
+        const bool replacing_connection = associated_.load() || connect_in_progress_;
         has_connected_ = false;
         has_ip_ = false;
         pending_connect_ = false;
+        retry_scheduled_ = false;
+        connect_in_progress_ = false;
+        intentional_disconnect_pending_ = replacing_connection;
         associated_.store(false);
         retries_ = 0;
         backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         // Cancel any in-flight scan; esp_wifi_connect() fails while one is running.
         cancel_scan();
-        (void)esp_wifi_disconnect();
-        if (esp_wifi_set_config(WIFI_IF_STA, &config) == ESP_OK) {
+        const esp_err_t disconnect_err = esp_wifi_disconnect();
+        if (disconnect_err != ESP_OK) intentional_disconnect_pending_ = false;
+        const esp_err_t config_err = esp_wifi_set_config(WIFI_IF_STA, &config);
+        if (config_err == ESP_OK) {
             strlcpy(last_ssid_, ssid, sizeof(last_ssid_));
             notify(Connecting);
+            connect_in_progress_ = true;
             const esp_err_t err = esp_wifi_connect();
             if (err != ESP_OK) {
+                connect_in_progress_ = false;
                 ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
                 connection_failed();
             }
+        } else {
+            ESP_LOGE(TAG, "WiFi configuration failed: %s", esp_err_to_name(config_err));
+            notify(ConnectFailed);
         }
     }
 
@@ -455,6 +466,9 @@ public:
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (!started_) return;
         pending_connect_ = false;
+        retry_scheduled_ = false;
+        connect_in_progress_ = false;
+        intentional_disconnect_pending_ = false;
         retries_ = 0;
         backoff_index_ = 0;
         if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
@@ -490,6 +504,9 @@ public:
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
         if (enabled == enabled_) return;
         enabled_ = enabled;
+        retry_scheduled_ = false;
+        connect_in_progress_ = false;
+        intentional_disconnect_pending_ = false;
         if (!enabled) {
             associated_.store(false);
             has_ip_ = false;
@@ -697,14 +714,35 @@ private:
             }
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
             if (!self->enabled_ || self->last_ssid_[0] == '\0') return;
+            const auto *connected = static_cast<const wifi_event_sta_connected_t *>(data);
+            if (connected && self->different_ssid(connected->ssid, connected->ssid_len)) return;
+            self->connect_in_progress_ = false;
+            self->intentional_disconnect_pending_ = false;
+            self->retry_scheduled_ = false;
+            if (self->retry_timer_ != nullptr) (void)esp_timer_stop(self->retry_timer_);
             self->associated_.store(true);
+            ESP_LOGI(TAG, "WiFi association established; waiting for IP");
         } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
+            const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
+            // disconnect()/set_config()/connect() return before the previous
+            // AP's event reaches this task. It must not fail the new attempt.
+            if (disconnected && self->different_ssid(disconnected->ssid, disconnected->ssid_len)) {
+                self->intentional_disconnect_pending_ = false;
+                ESP_LOGI(TAG, "WiFi ignored disconnect from previous SSID: reason=%u", reason);
+                return;
+            }
+            if (self->intentional_disconnect_pending_ && reason == WIFI_REASON_ASSOC_LEAVE) {
+                self->intentional_disconnect_pending_ = false;
+                ESP_LOGI(TAG, "WiFi consumed requested disconnect; preserving new attempt");
+                return;
+            }
+            self->intentional_disconnect_pending_ = false;
+            self->connect_in_progress_ = false;
             self->associated_.store(false);
             // The lease dies with the association, and LOST_IP is not always
             // delivered on a drop, so clear it here as well.
             self->has_ip_ = false;
-            const auto *disconnected = static_cast<const wifi_event_sta_disconnected_t *>(data);
-            const uint8_t reason = disconnected != nullptr ? disconnected->reason : 0;
             if (disconnected != nullptr) {
                 ESP_LOGW(TAG, "WiFi disconnected, reason=%u rssi=%d enabled=%d",
                          reason, disconnected->rssi, self->enabled_.load());
@@ -795,6 +833,13 @@ private:
         (void)data;
     }
 
+    bool different_ssid(const uint8_t *ssid, size_t length) const
+    {
+        // Missing SSID metadata cannot establish that an event is stale.
+        return length != 0 && (length != strlen(last_ssid_) ||
+               length > 32 || memcmp(ssid, last_ssid_, length) != 0);
+    }
+
     void finish_scan()
     {
         scan_active_ = false;
@@ -870,6 +915,7 @@ private:
     void schedule_retry()
     {
         if (!ensure_retry_timer()) return;
+        retry_scheduled_ = true;
         (void)esp_timer_stop(retry_timer_);
         // Keep the first ten attempts responsive; the long backoff starts only
         // after all ten have failed.
@@ -880,6 +926,7 @@ private:
     void schedule_backoff()
     {
         if (!ensure_retry_timer()) return;
+        retry_scheduled_ = true;
         static constexpr uint32_t kBackoffMinutes[] = {1, 3, 5, 10, 30};
         const uint32_t minutes = kBackoffMinutes[backoff_index_];
         backoff_index_ = (backoff_index_ + 1) % (sizeof(kBackoffMinutes) / sizeof(kBackoffMinutes[0]));
@@ -901,14 +948,20 @@ private:
         for (;;) {
             (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             std::lock_guard<std::recursive_mutex> lock(self->state_mutex_);
+            if (!self->retry_scheduled_) continue;
+            self->retry_scheduled_ = false;
             if (!self->enabled_ || !self->started_ || self->scan_active_ ||
-                    self->last_ssid_[0] == '\0' || self->connected()) continue;
-            ESP_LOGI(TAG, "WiFi reconnect attempt: retry=%u internal=%u largest_internal=%u",
+                    self->last_ssid_[0] == '\0' || self->connected() || self->connect_in_progress_) continue;
+            ESP_LOGI(TAG, "WiFi reconnect attempt: retry=%u internal=%u largest_internal=%u dma=%u largest_dma=%u",
                      self->retries_,
                      static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)));
+            self->connect_in_progress_ = true;
             const esp_err_t err = esp_wifi_connect();
             if (err != ESP_OK) {
+                self->connect_in_progress_ = false;
                 ESP_LOGE(TAG, "Retry esp_wifi_connect failed: %s", esp_err_to_name(err));
                 self->connection_failed();
             }
@@ -918,6 +971,9 @@ private:
     void notify(Event event)
     {
         if (event == GotIp) {
+            connect_in_progress_ = false;
+            intentional_disconnect_pending_ = false;
+            retry_scheduled_ = false;
             has_connected_ = true; retries_ = 0; backoff_index_ = 0;
             if (retry_timer_ != nullptr) (void)esp_timer_stop(retry_timer_);
         }
@@ -928,6 +984,9 @@ private:
     // Recursive because startup applies stored IP settings through this class.
     mutable std::recursive_mutex state_mutex_;
     bool scan_active_ = false;
+    bool connect_in_progress_ = false;
+    bool retry_scheduled_ = false;
+    bool intentional_disconnect_pending_ = false;
     bool resume_after_scan_ = false;
     size_t cancelled_scan_events_ = 0;
     esp_netif_t *netif_ = nullptr;

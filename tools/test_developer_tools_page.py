@@ -76,6 +76,24 @@ static Hal services{&wifi, &storage};
 Hal &hal() { return services; }
 static std::string toast;
 void crystal_core_show_toast(const char *message) { toast=message; }
+enum class CrystalWifiDiagnostic { Snapshot, NetworkChecks };
+static bool diagnostic_enabled, diagnostic_fail;
+static unsigned diagnostic_requests;
+static uint32_t diagnostic_revision=1;
+static std::string diagnostic_logs;
+bool crystal_wifi_diagnostics_enabled() { return diagnostic_enabled; }
+bool crystal_wifi_diagnostics_set_enabled(bool enabled) {
+    if(diagnostic_fail)return false; diagnostic_enabled=enabled;return true;
+}
+bool crystal_wifi_diagnostics_request(CrystalWifiDiagnostic) {
+    ++diagnostic_requests;return diagnostic_enabled && !diagnostic_fail;
+}
+void crystal_wifi_diagnostics_clear() {diagnostic_logs.clear();++diagnostic_revision;}
+size_t crystal_wifi_diagnostics_copy_logs(char *out,size_t size,uint32_t *revision) {
+    *revision=diagnostic_revision;
+    if(!out||!size)return 0;
+    std::snprintf(out,size,"%s",diagnostic_logs.c_str());return std::strlen(out);
+}
 struct EthernetInfo { bool has_ip=false; unsigned ip=2; };
 static EthernetInfo ethernet;
 enum class CrystalNetworkType { None, WiFi, Ethernet };
@@ -122,10 +140,43 @@ void settings_button_feedback(lv_obj_t *button);
 void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width);
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
+#define ESP_LOGD(...) ((void)0)
 '''
 
 CHECK = r'''
 static void flush(lv_disp_drv_t *driver, const lv_area_t *, lv_color_t *) { lv_disp_flush_ready(driver); }
+static void snapshot(const char *name);
+static void check_wifi_diagnostics() {
+    auto &view=s_wifi_diagnostics_view;
+    assert(!diagnostic_enabled && lv_obj_has_flag(view.panel,LV_OBJ_FLAG_HIDDEN));
+    assert(view.timer->paused);
+    diagnostic_fail=true;lv_obj_add_state(view.toggle,LV_STATE_CHECKED);
+    lv_event_send(view.toggle,LV_EVENT_VALUE_CHANGED,nullptr);
+    assert(!lv_obj_has_state(view.toggle,LV_STATE_CHECKED));
+    assert(toast=="Could not start Wi-Fi diagnostics");
+    diagnostic_fail=false;lv_obj_add_state(view.toggle,LV_STATE_CHECKED);
+    lv_event_send(view.toggle,LV_EVENT_VALUE_CHANGED,nullptr);
+    assert(diagnostic_enabled && !view.timer->paused);
+    assert(!lv_obj_has_flag(view.panel,LV_OBJ_FLAG_HIDDEN));
+    diagnostic_logs="I wifi_check: IP acquired\nW crystal_http: DNS failed\n";++diagnostic_revision;
+    wifi_diagnostics_view_refresh(nullptr);
+    assert(std::strstr(lv_label_get_text(view.label),"DNS failed"));
+    lv_obj_update_layout(lv_scr_act());
+    lv_obj_scroll_to_view(view.panel,LV_ANIM_OFF);
+    snapshot("developer-wifi-logs.ppm");
+    lv_event_send(view.snapshot,LV_EVENT_CLICKED,nullptr);
+    lv_event_send(view.checks,LV_EVENT_CLICKED,nullptr);assert(diagnostic_requests==2);
+    diagnostic_fail=true;lv_event_send(view.checks,LV_EVENT_CLICKED,nullptr);
+    assert(toast=="Diagnostics busy - try again shortly");diagnostic_fail=false;
+    lv_event_send(view.clear,LV_EVENT_CLICKED,nullptr);
+    assert(diagnostic_logs.empty() && std::strstr(lv_label_get_text(view.label),"Waiting"));
+    diagnostic_logs="I wifi_check: snapshot available\n";++diagnostic_revision;
+    wifi_diagnostics_view_refresh(nullptr);
+    lv_obj_clear_state(view.toggle,LV_STATE_CHECKED);
+    lv_event_send(view.toggle,LV_EVENT_VALUE_CHANGED,nullptr);
+    assert(!diagnostic_enabled && view.timer->paused);
+    assert(lv_obj_has_flag(view.panel,LV_OBJ_FLAG_HIDDEN));
+}
 static lv_obj_t *resources_switch() {
     for (uint32_t i = 0; i < lv_obj_get_child_cnt(content); ++i) {
         auto *row = lv_obj_get_child(content, i);
@@ -255,6 +306,16 @@ int main() {
     assert(!lv_obj_is_visible(monitor) && lv_obj_is_visible(dialog));
     lv_obj_del(dialog);
 
+    reset();check_wifi_diagnostics();
+    page_close();assert(!s_wifi_diagnostics_view.page && !s_wifi_diagnostics_view.timer);
+    settings_push_developer_tools();
+    lv_obj_add_state(s_wifi_diagnostics_view.toggle,LV_STATE_CHECKED);
+    lv_event_send(s_wifi_diagnostics_view.toggle,LV_EVENT_VALUE_CHANGED,nullptr);
+    page_close();assert(diagnostic_enabled && !s_wifi_diagnostics_view.page);
+    for(int i=0;i<10;++i){lv_tick_inc(100);lv_timer_handler();}
+    settings_push_developer_tools();
+    assert(lv_obj_has_state(s_wifi_diagnostics_view.toggle,LV_STATE_CHECKED));
+    crystal_wifi_diagnostics_set_enabled(false);wifi_diagnostics_view_state();
     reset(); state(false, false); summary("Off - enable to pair a browser");
     assert(lv_obj_get_child_cnt(s_control_api_row) == 3); // title, summary, switch
     lv_area_t title_box, summary_box, toggle_box, row_box;
@@ -310,7 +371,7 @@ int main() {
     assert(dialogs==1 && shown_url=="http://192.168.1.158/");
     toggle(false);assert(!server_enabled);
     page_close(); fail_page = true; settings_push_developer_tools(); assert(!s_developer_tools_page);
-    puts("PASS: real LVGL resource monitor visibility and saved preference, panel toggle layout, startup lock, pairing, disable, no-Wi-Fi rollback, task/server failures, retry, and page exit/reopen");
+    puts("PASS: Wi-Fi diagnostic toggle, logs, checks, clear, failure rollback, timer cleanup and page reopen; existing Developer Tools checks");
 }
 '''
 
@@ -318,12 +379,16 @@ int main() {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--p4', action='store_true', help='Exercise the P4 720px layout')
     args = parser.parse_args()
     source = SOURCE.read_text()
-    # Phase 1.5 moved layout literals into target constants. Exercise the S3
-    # values used by this 480px fixture directly from production definitions.
-    target_block = source.split("constexpr lv_coord_t kHomePillWidth = 216;", 1)[1]
-    target_block = target_block.split("#else", 1)[1].split("#endif", 1)[0]
+    target_blocks = source.split("constexpr lv_coord_t kHomePillWidth = 216;", 1)[1].split("#else", 1)
+    target_block = target_blocks[0] if args.p4 else target_blocks[1].split("#endif", 1)[0]
+    fixture, checks = FIXTURE, CHECK
+    if args.p4:
+        fixture = fixture.replace('page, 480, 440', 'page, 720, 660').replace('page, 0, 40', 'page, 0, 60')
+        fixture = fixture.replace('LV_PCT(100), 388', 'LV_PCT(100), 588').replace('content, 0, 52', 'content, 0, 72')
+        checks = checks.replace('480', '720').replace('== 52', '== 64').replace('== 30);', '== 38);')
     functions = '\n'.join(function(source, signature) for signature in (
         'void settings_button_feedback(lv_obj_t *button)',
         'lv_obj_t *settings_row(lv_obj_t *parent, const char *label, const char *summary = nullptr)',
@@ -331,6 +396,10 @@ def main():
         'lv_obj_t *settings_status_label(lv_obj_t *parent)',
         'void settings_row_reserve_right(lv_obj_t *row, lv_coord_t control_width)',
         'lv_obj_t *settings_switch(lv_obj_t *row, bool checked)',
+        'void wifi_diagnostics_view_refresh(lv_timer_t *)',
+        'void wifi_diagnostics_view_state()',
+        'void wifi_diagnostics_view_deleted(lv_event_t *event)',
+        'void settings_add_wifi_diagnostics(lv_obj_t *content)',
         'void control_panel_toggle_changed(lv_event_t *event)',
         'void settings_push_developer_tools()',
         'void crystal_shell_control_start_event(const char pairing_pin[7])',
@@ -351,11 +420,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix='crystal-developer-tools-') as directory:
         temp = Path(directory)
         (temp / 'lv_conf.h').write_text(CONF + '\n#define LV_USE_PERF_MONITOR 1\n')
-        (temp / 'sdkconfig.h').write_text('#pragma once\n#define CONFIG_IDF_TARGET_ESP32P4 0\n')
+        (temp / 'sdkconfig.h').write_text(f'#pragma once\n#define CONFIG_IDF_TARGET_ESP32P4 {int(args.p4)}\n')
         (temp / 'esp_log.h').write_text('#pragma once\n')
         (temp / 'crystal_hal.hpp').write_text('#pragma once\n')
         metrics = ROOT / 'components/crystal_shell/src/crystal_ui_metrics.cpp'
-        (temp / 'check.cpp').write_text(FIXTURE + f'\n#include "{metrics}"\n' + constants + timeout_code + functions + CHECK)
+        view = source[source.index('struct WifiDiagnosticsView {'):source.index('void wifi_diagnostics_view_refresh(lv_timer_t *)')]
+        (temp / 'check.cpp').write_text(fixture + f'\n#include "{metrics}"\n' + constants + timeout_code + view + functions + checks)
         (temp / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.16)
 project(developer_tools_test LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -373,6 +443,7 @@ target_link_libraries(check PRIVATE lvgl)
         subprocess.run([str(temp / 'build/check')], check=True, cwd=output)
         for state in ('off', 'starting', 'on', 'failed'):
             png_from_ppm(output / f'developer-tools-{state}.ppm')
+        png_from_ppm(output / 'developer-wifi-logs.ppm')
         if args.output_dir:
             print(f'Rendered previews: {output.resolve()}')
 

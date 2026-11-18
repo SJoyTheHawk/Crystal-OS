@@ -1,4 +1,15 @@
-# Bus Lite live-provider package (0.2.25)
+# Bus Lite live-provider package (0.2.26)
+
+Version 0.2.26 subscribes to Crystal OS clock readiness. Before RTC, SNTP or
+manual time initialization completes, arrival fields display **--** with
+**Waiting for device time**, rather than subtracting boot time from a real ETA.
+The ready notification immediately redraws cached arrivals; Favorites also
+recalculate displayed minutes between network refreshes. Notifications defer
+while paused and subscriptions are released on destruction. This version needs
+firmware containing the new time subscription bindings: flash it with
+**app-flash** before installing the package. Older firmware reports an explicit
+clock-subscription-unavailable error. The current uninstall-before-replacement
+flow deletes saved favorites; installed data is retained by firmware app-flash.
 
 Version 0.2.25 saves the resolved ETA URLs and operator-specific stop IDs with
 favorites. Joint favorites refresh KMB and CTB directly, sequentially, and merge
