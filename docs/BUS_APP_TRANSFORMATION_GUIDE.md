@@ -1,6 +1,6 @@
 # Bus App Transformation Guide — S3 Native to P4 Lua
 
-> Current implementation (0.2.23, 2026-11-18): local work finishes without
+> Current implementation (0.2.24, 2026-11-18): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
@@ -55,7 +55,8 @@ ordering/deduplication and five-route limit, joint-route favorite reopening,
 and the eight-favorite limit. Simulated failed-write handling is covered by host
 tests; an injected storage failure was not part of the board checklist. The
 accepted UI remains unchanged. The current package carrying this work is
-**0.2.23**. Phase 3 is closed; the detailed closure record is in
+**0.2.24**. Phase 3 is closed and Phase 4 scheduled refresh/countdown is
+implemented; the detailed Phase 3 closure record is in
 `BUS_APP_PHASE_3_RESULTS.md`.
 
 The original status/estimates below describe the planning baseline. S3 was
@@ -501,16 +502,21 @@ route behavior, joint-route persistence and the eight-favorite limit passed the
 user's board checklist. Host tests cover simulated failed writes; actual storage
 failure injection remains untested on hardware.
 
-### Phase 4: Refresh and Polish (1-2 days)
+### Phase 4: Refresh and Polish (implemented in 0.2.24; P4 acceptance pending)
 
-**Tasks**:
-1. Add 20s refresh timer to ETA page
-2. Implement live minute countdown
-3. Add "Refresh" button for manual update
-4. Test pause/resume cancellation
-5. Add recents to Search tab
+**Implemented**:
+1. A shared 100 ms timer recalculates visible ETA minutes about once per second.
+2. The selected stop refreshes after 20 seconds when no request is active.
+3. Favorites refresh sequentially every 30 seconds while visible and show up to
+   three transient ETA values per saved stop.
+4. Manual refresh, generation invalidation and pause/resume lifecycle behavior
+   remain active.
+5. Recent routes remain available in Search; they are refreshed by the existing
+   persistence flow rather than duplicated in the scheduler.
 
-**Deliverable**: Complete feature parity with S3 app
+**Deliverable**: Host-validated Phase 4 package 0.2.24. P4 board refresh,
+network-recovery and stability acceptance is recorded in
+`BUS_APP_PHASE_4_RESULTS.md`.
 
 **Total estimate**: 8-12 days
 

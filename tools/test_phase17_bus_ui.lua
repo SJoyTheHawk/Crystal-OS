@@ -117,6 +117,12 @@ complete('{"data":[{"eta":"2026-11-16T14:41:00+08:00","rmk_en":"Later"},'..
 assert(has_text('2 min') and has_text('3 min') and not has_text('11 min'))
 assert(has_text('KMB | Earliest') and has_text('KMB | First tie') and has_text('KMB | Second tie'))
 assert(text_font_size('Updated just now')==20,'arrival status must use the shared larger font')
+local clock_now=crystal.service.time.now
+crystal.service.time.now=function()return clock_now()+10 end
+ticks(10)
+crystal.service.time.now=function()return clock_now()+20 end
+ticks(1);url(kmb..'/eta/000001/1A/1');complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00"}]}')
+crystal.service.time.now=clock_now
 snapshot('arrivals.ppm');failed_writes.favorites=true;click('Save stop')
 assert(saved.favorites==nil and has_text('Could not save favorite'))
 failed_writes.favorites=nil;click('Save stop')
@@ -135,7 +141,15 @@ assert(route_x==operator_x and route_x<details_x and details_x<eta_x,
 assert(text_font_size('1A')==28 and text_font_size('To Star Ferry')==28 and
   text_font_size('City Hall')==28 and text_font_size('KMB')==16,
   'favorite operator label is smaller than the route number')
+ticks(1);url(kmb..'/eta/000001/1A/1');complete('{"data":[{"eta":"2026-11-16T14:34:00+08:00"}]}')
+assert(has_text('4 min\n--\n--'),'favorite cards should show live ETA values')
+local favorite_clock=crystal.service.time.now
+crystal.service.time.now=function()return favorite_clock()+30 end
+ticks(1);url(kmb..'/eta/000001/1A/1');complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}')
+crystal.service.time.now=favorite_clock
 snapshot('favorites.ppm')
+click('1A');url(kmb..'/eta/000001/1A/1');complete('{"data":[]}');click(back)
+click('City Hall');url(kmb..'/eta/000001/1A/1');complete('{"data":[]}');click(back)
 click('1A',1,1);url(kmb..'/eta/000001/1A/1');complete('{}',503)
 assert(has_text('Network error 503 - tap Refresh to retry'))
 click(refresh);complete('{"data":[]}');assert(has_text('No arrivals available'))

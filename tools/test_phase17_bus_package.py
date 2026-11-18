@@ -2,6 +2,7 @@
 """Host acceptance checks for the bounded Bus Lite Script package."""
 import json
 import hashlib
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -62,38 +63,41 @@ def main():
         assert manifest["memory_kb"] == 4096 and manifest["worker_threads"] == 1
         assert inspected["manifest"]["permissions"]["network_hosts"] == ["192.168.1.195"]
         source = (phase17_bus_fixture.OUTPUT / "main.lua").read_text()
-        assert "catalog_search_step" in source
-        assert "catalog_load_step" in source
-        assert "catalog_add_next_keys(route)" in source
-        assert "Catalog.ready" in source and "update_keypad_state" in source
-        assert "possible:find(value,1,true)" in source
-        assert "catalog_stop_step" in source
-        assert "assets/catalog/runtime.txt" in source
-        assert "v.catalog_job" in source and "v.stop_catalog_job" in source
-        assert "math.ceil(route_total/8)" in source
-        assert "v.stop_list_job={index=1,generation=v.catalog_generation}" in source
-        assert "local function stop_list_step(job)" in source
-        assert "render_stop_row = function(index)" in source
-        assert "ui.list_add(v.stop_list," in source
-        assert "ui.list_set_item_height(v.stop_list," not in source
-        assert "gap=math.floor(8*scale)" in source
-        assert "local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))" in source
-        assert "local detail_pad=pad" in source
-        assert 'v.recent_heading=text(page,"Recent:"' in source
-        assert "on_select=function(index)" in source
-        assert "move_stop_page" not in source
-        assert "#query<6" in source
-        assert "v.search_due=2" in source
-        assert "http.cancel(old)" in source
-        assert "local Store = {}" in source
-        assert 'store_write("favorites",candidate)' in source
-        assert 'store_write("recent_routes",candidate)' in source
-        assert "function Store.load_favorites()" in source
-        assert "function Store.remove_favorite(index)" in source
-        assert "function Store.add_recent(route)" in source
-        assert "Could not save favorite" in source
-        assert "Could not remove favorite" in source
-        assert "state.flush" not in source
+        compact = re.sub(r"\s+", "", source)
+        def has(fragment):
+            return fragment in source or re.sub(r"\s+", "", fragment) in compact
+        assert has("catalog_search_step")
+        assert has("catalog_load_step")
+        assert has("catalog_add_next_keys(route)")
+        assert has("Catalog.ready") and has("update_keypad_state")
+        assert has("possible:find(value,1,true)")
+        assert has("catalog_stop_step")
+        assert has("assets/catalog/runtime.txt")
+        assert has("v.catalog_job") and has("v.stop_catalog_job")
+        assert has("math.ceil(route_total/8)")
+        assert has("v.stop_list_job={index=1,generation=v.catalog_generation}")
+        assert has("local function stop_list_step(job)")
+        assert has("render_stop_row = function(index)")
+        assert has("ui.list_add(v.stop_list,")
+        assert not has("ui.list_set_item_height(v.stop_list,")
+        assert has("gap=math.floor(8*scale)")
+        assert has("local stop_list_h=math.max(math.floor(80*scale),H-math.floor(132*scale))")
+        assert has("local detail_pad=pad")
+        assert has('v.recent_heading=text(page,"Recent:"')
+        assert has("on_select=function(index)")
+        assert not has("move_stop_page")
+        assert has("#query<6")
+        assert has("v.search_due=2")
+        assert has("http.cancel(old)")
+        assert has("local Store = {}")
+        assert has('store_write("favorites",candidate)')
+        assert has('store_write("recent_routes",candidate)')
+        assert has("function Store.load_favorites()")
+        assert has("function Store.remove_favorite(index)")
+        assert has("function Store.add_recent(route)")
+        assert has("Could not save favorite")
+        assert has("Could not remove favorite")
+        assert not has("state.flush")
         source_bytes = len(source.encode("utf-8"))
         assert 0 < source_bytes <= 64 * 1024
         assert len(inspected["files"]) <= 128

@@ -2,12 +2,13 @@
 
 Reference implementations for transforming S3 C++ and Flutter Dart patterns into P4 Lua.
 
-## Verified Phase 1–3 contract (0.2.23, 2026-11-18)
+## Verified Phase 1–4 contract (0.2.24, 2026-11-18)
 
 Phases 1–3 are implemented in `examples/bus3p/main.lua`; use that tested
 source for working API calls. Phase 3 validates persisted records and commits
-candidate favorite/recent lists only after successful writes. Phase 4 remains
-open. Version 0.2.19 compacts available alphabetic keypad keys into a
+candidate favorite/recent lists only after successful writes. Phase 4 adds
+scheduled ETA refresh, live countdown rendering and sequential favorite ETA
+refresh. Version 0.2.19 compacts available alphabetic keypad keys into a
 stable two-column grid. Version 0.2.20 enlarged route labels and labeled the
 empty-query recent list. Version 0.2.21 tightens the detail header and uses
 content-sized stop rows with visible gaps, allowing long names to wrap without
@@ -71,7 +72,9 @@ Reuse the existing controls and one 100 ms timer through the real API instead.
 See `BUS_APP_QUICK_START.md` for installation and board acceptance. Phase 2
 joint matching and sequential ETA merging, plus Phase 3 persistence hardening,
 are implemented in the production entry file. The user-reported Phase 3 P4
-acceptance passed on 2026-11-18; Phase 4 periodic refresh remains open.
+acceptance passed on 2026-11-18. Host Phase 4 checks pass; board
+refresh/countdown acceptance is recorded separately in
+`BUS_APP_PHASE_4_RESULTS.md`.
 
 
 ## 1. Provider Module Implementation
@@ -910,14 +913,16 @@ end
 - [x] Validate malformed/duplicate/over-limit persisted favorites and recents
 - [x] Host-test failed favorite/recent writes without mutating live lists
 - [x] P4 save/relaunch/reboot/remove, recent-route and joint-favorite acceptance (user reported 2026-11-18)
-- [ ] Implement ETA refresh timer (20s interval)
-- [ ] Implement live minute countdown
+- [x] Implement ETA refresh timer (20s interval)
+- [x] Implement live minute countdown
+- [x] Refresh visible Favorites sequentially (30s interval) with up to three transient ETAs
+- [x] Keep manual refresh and invalidate work on navigation, pause and destruction
 - [x] Host checks for pause/resume, navigation and late callbacks
 - [x] Resource checkpoints at launch/search/stops/ETA/teardown
 - [ ] Run 10-cycle stability test on P4
 - [ ] Capture Phase 1 P4 peak/fragmentation and validate 25% arena headroom
 - [x] Remove fixture dependency from the live package; retain explicit test fixtures
-- [ ] Update app.yaml version to 0.3.0
+- [x] Update app.yaml version to 0.2.24 for the Phase 4 implementation package
 
 ---
 
@@ -925,6 +930,7 @@ end
 
 These patterns replicate the S3 C++ implementation and Flutter Dart logic in P4 Lua. Follow them faithfully — they're proven to work in production mobile apps and native MCU apps. The adaptation is straightforward: Lua has the necessary primitives (HTTP, JSON, state, timers), and the memory constraints are manageable with bounded processing.
 
-**Next step**: Implement Phase 4 ETA refresh and live countdown. The Phase 3
-persistence acceptance is closed; platform-level ten-cycle stability and
-resource measurements remain separate acceptance work.
+**Next step**: Install 0.2.24 on P4 and complete the board refresh/countdown,
+network recovery and ten-cycle stability checks. The Phase 3 persistence
+acceptance is closed; platform-level resource measurements remain separate
+acceptance work.

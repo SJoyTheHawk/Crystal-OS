@@ -10,8 +10,8 @@ esp-brookesia, with swipeable app cards, Quick Settings and installable apps.
 visual/interaction acceptance (P4.2), and network expansion (P4.3) are complete
 for their documented scopes as of **November 15, 2026**. Performance, soak,
 and remaining feature qualification continue in P4.4. Phase 17 Lua runtime
-support is implemented; Bus Lite **0.2.23** has completed Phase 3 persistence
-acceptance, with Phase 4 refresh and polish next (November 18, 2026).
+support is implemented; Bus Lite **0.2.24** contains the Phase 4 refresh and
+countdown implementation, with P4 board acceptance next (November 18, 2026).
 The validated S3 baseline is preserved on branch `ESP32-S3-Touch-LCD-4B`.
 See the [validation records](#project-status) and [documentation index](docs/README.md).
 
@@ -81,8 +81,9 @@ The previous **ESP32-S3-Touch-LCD-4B** baseline (480 × 480, 16 MB flash,
 - **Manage Apps:** enable bundled apps live, disable them for the next reboot,
   reorder cards, and clear saved app data.
 - **Lua packages:** install signed `.capp` apps through the Developer Tools
-  control panel. Bus Lite 0.2.23 provides bundled route search, KMB/Citybus
-  stops and live ETA, joint routes, eight favorites and five recent routes.
+  control panel. Bus Lite 0.2.24 provides bundled route search, KMB/Citybus
+  stops and live ETA, refreshed favorite ETAs, joint routes, eight favorites
+  and five recent routes.
 - **Shared services:** persistent app state, RTC and network time, Wi-Fi, power
   management, an on-screen keyboard, and a time/network/battery status bar.
 - **P4 networking:** prefer Ethernet after DHCP, fall back to connected Wi-Fi,
@@ -169,7 +170,7 @@ P4 acceptance, as recorded on November 15, 2026:
 | P4.3 — network expansion | Accepted Ethernet, Wi-Fi fallback/reconnection, Ethernet-only Weather/SNTP/HTTPS, browser pairing/app-list access, and network indicator. [Validation](docs/ESP32_P4_PHASE3_VALIDATION.md) |
 | P4.4 — qualification | Sustained performance/FPS, memory and network soaks, package/OTA flows, and remaining feature parity are still open. |
 | Phase 17 — Lua runtime | Implemented; runtime/device checks remain tracked in the [test guide](docs/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md). |
-| Bus Lite 0.2.23 | Phases 1–3 implemented; Phase 3 persistence accepted on P4. [Results](docs/BUS_APP_PHASE_3_RESULTS.md). Phase 4 scheduled refresh/countdown and polish remain open. |
+| Bus Lite 0.2.24 | Phases 1–4 implemented in the package; Phase 3 persistence is accepted on P4 and Phase 4 board refresh/countdown acceptance is next. [Phase 4 results](docs/BUS_APP_PHASE_4_RESULTS.md). |
 
 These scoped acceptance records do not establish release readiness or a 60 fps
 guarantee. Retained memory, HTTPS, and lifecycle findings are listed in the

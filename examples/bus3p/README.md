@@ -1,10 +1,15 @@
-# Bus Lite live-provider package (0.2.23)
+# Bus Lite live-provider package (0.2.24)
 
-Version 0.2.23 adds the three-column Favorites layout, standard-service route
+Version 0.2.24 adds the Phase 4 ETA scheduler. The shared 100 ms timer updates
+visible countdowns, refreshes the selected stop every 20 seconds, and refreshes
+saved Favorites sequentially every 30 seconds. Each favorite card shows up to
+three live times and never persists a countdown. Navigation and pause invalidate
+requests through the existing generation guard. Version 0.2.23 adds the
+three-column Favorites layout, standard-service route
 catalogs and icon tabs with full-width touch targets. The icon, label and
 surrounding tab space all select the tab. This uses the existing app ABI;
 install the rebuilt package through the control panel without a firmware flash.
-Phase 3 persistence is accepted; Phase 4 refresh/countdown and polish remain open.
+Phase 3 persistence is accepted; P4 board acceptance remains.
 
 Version 0.2.20 enlarged route labels to 28 px and added a **Recent:** heading
 above recent searches. Version 0.2.21 tightens the detail page's top spacing and

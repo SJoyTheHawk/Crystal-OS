@@ -233,14 +233,31 @@ void CrystalUI::invalidate(lv_obj_t *object) {
 void CrystalUI::event_cb(lv_event_t *event) {
     auto *row = static_cast<Node *>(lv_event_get_user_data(event));
     if (!row || lv_event_get_target(event) != row->object) return;
-    auto *owner = row->owner; auto id = row->id; const auto code = lv_event_get_code(event);
+    auto *owner = row->owner; const auto code = lv_event_get_code(event);
     Listener listener{};
     for (size_t i = 0; i < 7; ++i) if (code == events[i]) listener = row->events[i];
+    // Layout children are adopted independently so their labels can be
+    // updated, but a card usually owns the only click callback. Forward a
+    // click from a child with no handler to its nearest callback-bearing
+    // ancestor. This keeps a whole card touchable without registering one
+    // callback per label or consuming additional app callback slots.
+    Node *callback_row = row;
+    if (code == LV_EVENT_CLICKED && !listener.callback) {
+        for (auto *parent = lv_obj_get_parent(row->object); parent && !listener.callback;
+             parent = lv_obj_get_parent(parent)) {
+            const auto parent_id = owner->handle(parent);
+            auto *parent_row = owner->node(parent_id);
+            if (parent_row && parent_row->events[0].callback) {
+                callback_row = parent_row;
+                listener = parent_row->events[0];
+            }
+        }
+    }
     if (code == LV_EVENT_DELETE) { owner->invalidate(row->object); row->object = row->text = nullptr; }
     if (code == LV_EVENT_FOCUSED && !owner->paused_ && focus_hook && row->object &&
         lv_obj_check_type(row->object, &lv_textarea_class)) (void)focus_hook(row->object, owner->root_);
     if (listener.callback && (!owner->paused_ || code == LV_EVENT_DELETE || code == LV_EVENT_DEFOCUSED))
-        listener.callback(id, listener.user);
+        listener.callback(callback_row->id, listener.user);
 }
 void CrystalUI::list_item_event_cb(lv_event_t *event) {
     auto *list = static_cast<Node *>(lv_event_get_user_data(event));

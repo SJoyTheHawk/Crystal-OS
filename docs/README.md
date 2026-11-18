@@ -43,6 +43,9 @@ instructions in those documents.
   architecture and Phase 14–17 roadmap.
 - [v2 design guide](APP_PLATFORM_V2_DESIGN_GUIDE.md)
 - [v2 code guide](APP_PLATFORM_V2_CODE_GUIDE.md)
+- [ABI Enhancement Plan](ABI_ENHANCEMENT_PLAN.md): Lua API gaps and proposed additions based on Bus app analysis
+- [App update implementation guide](APP_UPDATE_IMPLEMENTATION_GUIDE.md): Phase 18+
+  design for version upgrades without data loss.
 - [Original v1 plans](v1_implementation_plan/): preserved OS implementation plan,
   system design, code guide and validation checklist.
 - [Catalog format](APP_CATALOG_FORMAT.md)

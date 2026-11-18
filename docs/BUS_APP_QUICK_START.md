@@ -1,13 +1,14 @@
-# Bus Phases 1–3 — install and board test
+# Bus Phases 1–4 — install and board test
 
-Updated 2026-11-18. Package **0.2.23** implements direct KMB/LWB and Citybus
+Updated 2026-11-18. Package **0.2.24** implements direct KMB/LWB and Citybus
 stop sequences, metadata fallback, joint-provider ETA merging, and Phase 3
 persistence validation. Possible alphabetic route keys now reflow into a
 consistent two-column grid. The detail header is more compact, and stop entries
 use content-sized heights with visible spacing. Detail pages now use the same
 16 px scaled side padding as Favorites and Search, and the stop list fills the
 remaining screen height to its bottom status line. The user reports the Phase 3 P4
-board checklist passed.
+board checklist passed. Phase 4 adds live ETA countdowns, selected-stop
+refresh and sequential live ETA refresh on the Favorites tab.
 
 Favorite and recent-route records are validated on load. Failed writes preserve
 the current lists and show an error. The P4 checklist covers app restart,
@@ -94,7 +95,7 @@ Previous/Next controls.
 The implementation is `examples/bus3p/main.lua`. Keep the accepted Favorites /
 Search / stop-picker / ETA layout. Phase 2 implements joint-provider merging;
 Phase 3 covers persistence hardening, and Phase 4 covers scheduled
-refresh/countdown.
+refresh/countdown. The signed Phase 4 package is **0.2.24**.
 Manual refresh, existing saved stops and recent routes remain available.
 
 ## 1. Install the firmware once
@@ -121,13 +122,15 @@ idf.py -p "$PORT" app-flash monitor
 ```
 
 `app-flash` preserves app storage. Keep the serial monitor open during testing.
-No flash has been performed as part of the implementation.
+The Phase 4 favorite-card touch fix is in this Crystal UI firmware, so
+`app-flash` is required before checking that every part of a favorite card
+opens its saved stop. No flash has been performed as part of the implementation.
 
 ## 2. Install the live package through the Control Panel
 
 Build `/tmp/phase17-bus-live.capp` from the current source below. The previous
 signed package may be an older version; confirm the package is **Bus Lite
-0.2.23**, key ID 240, with network permissions for `data.etabus.gov.hk` and
+0.2.24**, key ID 240, with network permissions for `data.etabus.gov.hk` and
 `rt.data.gov.hk`. The Mac fixture server is unnecessary.
 
 1. On P4, open Settings → Developer Tools → Control Panel and pair as usual.
@@ -137,7 +140,7 @@ signed package may be an older version; confirm the package is **Bus Lite
    The current installer requires uninstall before replacement. This deletes
    its favorites and recent routes. Wait for app-storage cleanup to complete.
 4. Upload `/tmp/phase17-bus-live.capp`, then apply/restart when prompted.
-5. Confirm the installed name is **Bus Lite**, version **0.2.23**.
+5. Confirm the installed name is **Bus Lite**, version **0.2.24**.
 
 Do not choose an older `/tmp/phase17-bus.capp` or
 `/tmp/phase17-bus-stagec.capp`. An explicitly generated fixture package has the
@@ -243,7 +246,34 @@ favorite reopening with both provider arrivals; and the eight-favorite limit.
 Host tests separately cover malformed stored entries and simulated write
 failures. The board checklist did not inject a storage write failure.
 
-## 6. Capture P4 resource evidence
+## 6. Test Phase 4 refresh and countdown
+
+1. Open a stop with at least one arrival. Leave the ETA page visible for 25
+   seconds. The displayed minutes should recalculate about once per second,
+   and the app should issue one fresh request at the 20-second boundary. A
+   manual tap on the header refresh button should still start an immediate
+   request.
+2. Wait for an arrival to cross the 30-second threshold. It should show
+   **Arriving**, then update from the next response rather than using a saved
+   countdown value.
+3. Navigate away while a request is active, then return to the stop. Confirm a
+   late response cannot replace the new page selection. Pause and resume the
+   app and confirm the visible ETA selection refreshes after resume.
+4. Open Favorites with a saved stop. Confirm its card shows up to three live
+   ETA values, then leave it visible for about 30 seconds and verify a fresh
+   request. Move between tabs and return; the refresh pass must remain
+   sequential and must not create duplicate requests or rows.
+5. Test a joint KMB/CTB favorite and a provider failure. The available
+   provider's valid arrivals should remain visible with the existing partial or
+   retry indication. Reconnect Wi-Fi and use the manual refresh button to
+   recover.
+
+The host harness covers the 20-second boundary, one-second countdown, favorite
+ETA rendering, stale callback rejection, pause/resume and callback-count
+stability. Board acceptance also requires clean `BUS_RESOURCE` teardown and no
+progressive heap or Lua-arena loss over ten install/use/leave/uninstall cycles.
+
+## 7. Capture P4 resource evidence
 
 Capture `BUS_RESOURCE` lines for launch, catalog-loaded, search, stops, ETA and teardown.
 They are emitted at checkpoints once per app launch, without recurring idle

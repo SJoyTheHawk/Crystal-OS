@@ -1,6 +1,6 @@
 # Bus App Transformation — Complete Documentation Index
 
-> Current implementation (0.2.23, 2026-11-18): local work finishes without
+> Current implementation (0.2.24, 2026-11-18): local work finishes without
 > record/file/row timer pacing, including preload, route publication, response
 > decoding and stop metadata lookup. HTTP stays sequential and asynchronous;
 > typing retains its 200 ms debounce. Lua uses 4 MiB and the Developer Tools
@@ -14,13 +14,15 @@
 
 This directory contains the complete plan for transforming the **S3 native bus app** into a **working P4 Lua implementation** that replicates—not reinvents—the proven functionality.
 
-**Status**: Phases 1–3 are implemented in Bus Lite 0.2.23; host checks pass and
+**Status**: Phases 1–4 are implemented in Bus Lite 0.2.24; host checks pass and
 the P4 build remains valid. Phase 3 persistence acceptance passed on
-2026-11-18. See
+2026-11-18, and Phase 4 board refresh/countdown acceptance remains. See
 `BUS_APP_QUICK_START.md` for app-flash and Control Panel installation, and
 `BUS_APP_PHASE_1_RESULTS.md` for Phase 1 evidence, and
 `BUS_APP_PHASE_2_RESULTS.md` for joint-route implementation evidence, and
-`BUS_APP_PHASE_3_RESULTS.md` for the persistence closure record.
+`BUS_APP_PHASE_3_RESULTS.md` for the persistence closure record, and
+`BUS_APP_PHASE_4_RESULTS.md` for the refresh/countdown implementation and board
+acceptance checklist.
 
 **Goal**: Feature parity with S3 app using Flutter's proven data logic
 
@@ -118,7 +120,7 @@ the P4 build remains valid. Phase 3 persistence acceptance passed on
 ---
 
 ### Phase 3: Persistence
-**Status**: Implemented in Bus Lite 0.2.18 and carried in current package 0.2.23;
+**Status**: Implemented in Bus Lite 0.2.18 and carried in current package 0.2.24;
 user-reported P4 acceptance passed 2026-11-18. Phase 3 is closed.
 
 **Goal**: Save/restore favorites across app restarts  
@@ -136,17 +138,22 @@ user-reported P4 acceptance passed 2026-11-18. Phase 3 is closed.
 ---
 
 ### Phase 4: Refresh & Polish
-**Status**: Scheduled refresh and live countdown remain
+**Status**: Scheduled refresh and live countdown are implemented in Bus Lite
+0.2.24; P4 board acceptance remains.
 
 **Goal**: Auto-refresh ETA, live countdown, complete UX  
 **Deliverable**: Full S3 feature parity
 
-**Steps**:
-1. Add 20s refresh timer to ETA page
-2. Implement live minute countdown
-3. Add manual Refresh button
-4. Test pause/resume cancellation
-5. Add recents to Search tab
+**Implemented steps**:
+1. A shared 100 ms timer recalculates ETA display about once per second.
+2. Selected ETA refreshes after 20 seconds when the request queue is idle.
+3. Favorites refresh sequentially every 30 seconds while visible and show up to
+   three transient ETA values.
+4. Existing manual Refresh, pause/resume cancellation and recent routes remain
+   active.
+
+**P4 acceptance**: Follow `BUS_APP_QUICK_START.md` § 6 and record the result in
+`BUS_APP_PHASE_4_RESULTS.md`.
 
 **Guide**: `BUS_APP_LUA_CODE_PATTERNS.md` § 5.2, 6
 
@@ -205,8 +212,8 @@ The functional 0.3.0 release remains gated on host and P4 acceptance.
 **Transformation status**:
 - ✅ Direct KMB/LWB and CTB provider adapters (board validation pending)
 - ✅ Joint route ETA merging with nearest CTB stop matching
-- ✅ Favorite/recent validation and candidate writes in Bus Lite 0.2.18; current package 0.2.23; P4 persistence checklist passed 2026-11-18
-- ❌ ETA refresh timer
+- ✅ Favorite/recent validation and candidate writes in Bus Lite 0.2.18; current package 0.2.24; P4 persistence checklist passed 2026-11-18
+- ✅ ETA refresh timer and live countdown in Bus Lite 0.2.24; board acceptance pending
 - ✅ Bundled stop metadata plus sequential provider fallback and retry states
 
 ---
@@ -492,11 +499,11 @@ print("Peak:", info.lua_peak_kb, "KB")
 
 ### Immediate (P4 acceptance)
 1. Open `BUS_APP_QUICK_START.md`
-2. Install the signed 0.2.9 CAPP.
-3. Validate KMB 1A, CTB 2, and joint route 101 live on P4; record resource checkpoints.
+2. Install the signed 0.2.24 CAPP.
+3. Validate KMB 1A, CTB 2, joint route 101 and Phase 4 refresh/countdown live on P4; record resource checkpoints.
 
 ### Short-term (Phase 4)
-1. Add scheduled refresh and live countdown.
+1. Complete the Phase 4 board network-recovery and ten-cycle stability checks.
 2. **Result**: Complete bus app
 
 ### Long-term (Post-0.3.0)
