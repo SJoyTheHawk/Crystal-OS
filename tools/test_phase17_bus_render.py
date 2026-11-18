@@ -248,7 +248,32 @@ static int list_bounds(lua_State *state) {
     lv_obj_update_layout(lv_scr_act());lv_area_t area{};lv_obj_get_coords(list,&area);
     lua_pushinteger(state,area.x1);lua_pushinteger(state,area.x2-area.x1+1);return 2;
 }
-static void flush(lv_disp_drv_t *d,const lv_area_t*,lv_color_t*) {lv_disp_flush_ready(d);}
+static unsigned flush_count=0;
+static void flush(lv_disp_drv_t *d,const lv_area_t*,lv_color_t*) {++flush_count;lv_disp_flush_ready(d);}
+static void check_repeated_text_refresh() {
+    CrystalResources resources; CrystalUI ui(resources);
+    auto *root=lv_obj_create(lv_scr_act());lv_obj_set_size(root,300,200);
+    ui.set_root(root);assert(ui.adopt(root));
+    auto *label=lv_label_create(root);lv_label_set_text(label,"3 min");
+    const auto label_id=ui.adopt(label);
+    auto *button=lv_btn_create(root);auto *caption=lv_label_create(button);
+    lv_label_set_text(caption,"Refresh");const auto button_id=ui.adopt(button,caption);
+    auto *list=lv_list_create(root);lv_obj_set_size(list,250,100);lv_obj_set_y(list,60);
+    const auto list_id=ui.adopt(list);assert(ui.list_add(list_id,{"1. City Hall"}));
+    lv_refr_now(nullptr);flush_count=0;
+    for(int i=0;i<30;++i) {
+        assert(ui.set_text(label_id,"3 min"));assert(ui.set_text(button_id,"Refresh"));
+        assert(ui.list_set_text(list_id,0,"1. City Hall"));
+        lv_refr_now(nullptr);
+    }
+    assert(flush_count==0 && "unchanged text must not cause framebuffer traffic");
+    assert(ui.set_text(label_id,"2 min"));lv_refr_now(nullptr);assert(flush_count>0);
+    flush_count=0;assert(ui.set_text(button_id,"Retry"));lv_refr_now(nullptr);assert(flush_count>0);
+    flush_count=0;assert(ui.list_set_text(list_id,0,"1. Updated stop"));
+    lv_refr_now(nullptr);assert(flush_count>0);
+    ui.reset();lv_obj_del(root);
+    puts("PASS: unchanged label/button/list text produces zero flushes; changed text redraws");
+}
 static int snapshot(lua_State *state) {
     lv_obj_update_layout(lv_scr_act());
     auto *shot=lv_snapshot_take(lv_scr_act(),LV_IMG_CF_TRUE_COLOR);assert(shot);
@@ -266,6 +291,7 @@ int main(int argc,char **argv) {
     lv_init(); static lv_color_t pixels[720*20];static lv_disp_draw_buf_t buf;
     lv_disp_draw_buf_init(&buf,pixels,nullptr,720*20);lv_disp_drv_t drv;lv_disp_drv_init(&drv);
     drv.hor_res=width;drv.ver_res=width-40;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);
+    check_repeated_text_refresh();
     ScriptApp app;
     test_app=&app;app.arena_size_=atoi(argv[4])*1024;
     asset_root=std::string(argv[1]).substr(0,std::string(argv[1]).find_last_of('/'));

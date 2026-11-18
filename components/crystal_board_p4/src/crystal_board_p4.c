@@ -17,6 +17,7 @@
 #include "driver/ledc.h"
 #include "dev_audio_codec.h"
 #include "periph_i2s.h"
+#include "hal/axi_icm_ll.h"
 
 static const char *TAG = "crystal_board_p4";
 static const uint32_t kBacklightMinDuty = 480;
@@ -155,6 +156,19 @@ lv_display_t *bsp_display_start(void)
     if (ensure_brightness_device() != ESP_OK) {
         return NULL;
     }
+
+    // IDF's DPI scanout uses DW-GDMA master 1 to read PSRAM (master 0
+    // writes the DSI bridge). Keep those deadline-sensitive reads above the
+    // reset priority of CPU/cache/DMA2D traffic. Otherwise heavy UI updates
+    // can starve scanout; the DPI driver reports an underrun/blue frame.
+    // Preserve write priority and any higher read priority already installed.
+    const uint32_t scanout_read_qos = AXI_ICM.mst_arqos_reg0.reg_gdma_mst2_arqos;
+    if (scanout_read_qos < 1) {
+        axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1,
+            AXI_ICM.mst_awqos_reg0.reg_gdma_mst2_awqos, 1);
+    }
+    ESP_LOGI(TAG, "Display PSRAM read priority: %u",
+             (unsigned)AXI_ICM.mst_arqos_reg0.reg_gdma_mst2_arqos);
 
     err = esp_board_manager_init_device_by_name(ESP_BOARD_DEVICE_NAME_DISPLAY_LCD);
     if (err != ESP_OK) {

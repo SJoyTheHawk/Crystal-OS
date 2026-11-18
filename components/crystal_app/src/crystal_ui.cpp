@@ -121,7 +121,13 @@ bool CrystalUI::remove(Handle id) {
 bool CrystalUI::set_text(Handle id, const char *text) {
     auto *row = node(id); if (!row || !bounded_text(text, 4096)) return false;
     if (lv_obj_check_type(row->object, &lv_textarea_class)) lv_textarea_set_text(row->object, text);
-    else if (row->text && lv_obj_check_type(row->text, &lv_label_class)) lv_label_set_text(row->text, text);
+    else if (row->text && lv_obj_check_type(row->text, &lv_label_class)) {
+        // ETA timers commonly publish the same minute/status every second.
+        // LVGL invalidates and lays out labels even when their text is equal;
+        // on P4 each needless refresh also copies the partial frame in PSRAM.
+        // Compare the actual label (no extra cache or lifetime to maintain).
+        if (strcmp(lv_label_get_text(row->text), text)) lv_label_set_text(row->text, text);
+    }
     else return false;
     return true;
 }
@@ -318,7 +324,7 @@ bool CrystalUI::list_set_text(Handle id, unsigned index, const char *text) {
     auto *row = lv_obj_get_child(node(id)->object, static_cast<int32_t>(index));
     auto *label = row ? lv_obj_get_child(row, 0) : nullptr;
     if (!label || !lv_obj_check_type(label, &lv_label_class)) return false;
-    lv_label_set_text(label, text);
+    if (strcmp(lv_label_get_text(label), text)) lv_label_set_text(label, text);
     return true;
 }
 bool CrystalUI::list_on_click(Handle id, Callback callback, void *user) {
