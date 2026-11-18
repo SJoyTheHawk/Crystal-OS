@@ -104,6 +104,12 @@ static int run_callback(lua_State *state) {
     if(!ok)return luaL_error(state,"timer exceeded production callback budget");
     return 0;
 }
+static int encode_json(lua_State *state) {
+    cJSON *value=test_app->lua_to_json(1);if(!value)return luaL_error(state,"state serialization failed");
+    char *encoded=cJSON_PrintUnformatted(value);cJSON_Delete(value);
+    if(!encoded)return luaL_error(state,"state encoding failed");
+    lua_pushstring(state,encoded);cJSON_free(encoded);return 1;
+}
 static int read_asset(lua_State *state) {
     const char *path=luaL_checkstring(state,1);
     std::ifstream file(asset_root+"/"+path,std::ios::binary);
@@ -290,6 +296,7 @@ int main(int argc,char **argv) {
     }
     lua_setglobal(L,"ui");
     lua_pushcfunction(L,read_asset);lua_setglobal(L,"read_asset");
+    lua_pushcfunction(L,encode_json);lua_setglobal(L,"encode_json");
     lua_pushlightuserdata(L,&app);lua_pushcclosure(L,ScriptApp::json_decode,1);lua_setglobal(L,"decode_json");
     lua_pushcfunction(L,memory_stats);lua_setglobal(L,"memory_stats");
     lua_pushcfunction(L,run_callback);lua_setglobal(L,"run_callback");
@@ -441,7 +448,7 @@ target_link_libraries(check PRIVATE lvgl)
     for width in (480,720):
         folder=output/str(width);folder.mkdir(parents=True,exist_ok=True)
         drivers=['test_phase17_bus_catalog_ui.lua'] if args.catalog_only else [
-            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua']
+            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua','test_phase17_bus_endpoints.lua']
         for driver in drivers:
             subprocess.run([str(work/'build/check'),str(ROOT/'examples/bus3p/main.lua'),
                             str(ROOT/'tools'/driver),str(width),str(quota),json.dumps(counts)],cwd=folder,check=True)

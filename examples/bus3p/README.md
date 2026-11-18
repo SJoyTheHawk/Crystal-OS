@@ -1,4 +1,13 @@
-# Bus Lite live-provider package (0.2.24)
+# Bus Lite live-provider package (0.2.25)
+
+Version 0.2.25 saves the resolved ETA URLs and operator-specific stop IDs with
+favorites. Joint favorites refresh KMB and CTB directly, sequentially, and merge
+their arrivals; a failure from one provider leaves the other provider's times
+visible. Matching happens before saving a new joint favorite. If matching has
+not finished, Save stop asks you to wait or retry. Older joint favorites resolve
+and persist their missing endpoints once on their next successful Favorites
+refresh. Failed storage writes remain retryable. URL validation runs on load,
+not during each refresh. This update needs only the rebuilt app package.
 
 Version 0.2.24 adds the Phase 4 ETA scheduler. The shared 100 ms timer updates
 visible countdowns, refreshes the selected stop every 20 seconds, and refreshes

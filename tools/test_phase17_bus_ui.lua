@@ -128,6 +128,7 @@ assert(saved.favorites==nil and has_text('Could not save favorite'))
 failed_writes.favorites=nil;click('Save stop')
 assert(saved.favorites[1].stop_id=='000001' and saved.favorites[1].stop_seq==2)
 assert(saved.favorites[1].eta_text==nil)
+assert(saved.favorites[1].endpoints[1].url==kmb..'/eta/000001/1A/1')
 click(back);click(back);click(favorites_tab)
 assert(text_font_size('Tap a saved stop for live arrivals')==20,'favorites status must use the shared larger font')
 assert(has_text('To Star Ferry') and has_text('City Hall') and text_count('--\n--\n--')==1,
@@ -233,12 +234,37 @@ complete('{"data":[{"stop":"KMB-101-001","seq":1},{"stop":"KMB-101-002","seq":2}
 wait_url(kmb..'/stop/KMB-101-001');complete('{"data":{"stop":"KMB-101-001","name_en":"Joint KMB One","lat":"22.3000","long":"114.1000"}}')
 wait_url(kmb..'/stop/KMB-101-002');complete('{"data":{"stop":"KMB-101-002","name_en":"Joint KMB Two","lat":"22.3100","long":"114.1100"}}');ticks()
 click('1. Joint KMB One');url(kmb..'/eta/KMB-101-001/101/1')
+click('Save stop');assert(#saved.favorites==0 and has_text('Wait for both provider stops - tap Refresh to retry'))
 complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00","co":"KMB","rmk_en":"KMB scheduled"}]}')
 url(ctb..'/route-stop/CTB/101/outbound');complete('{"data":[{"stop":"CTB-101-001","seq":1},{"stop":"CTB-101-002","seq":2}]}')
 url(ctb..'/stop/CTB-101-001');complete('{"data":{"stop":"CTB-101-001","name_en":"Joint CTB One","lat":"22.3300","long":"114.1300"}}')
 url(ctb..'/stop/CTB-101-002');complete('{"data":{"stop":"CTB-101-002","name_en":"Joint CTB Two","lat":"22.3100","long":"114.1100"}}')
 url(ctb..'/eta/CTB/CTB-101-002/101');complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00","co":"CTB","rmk_en":"CTB scheduled"}]}')
 assert(has_text('KMB | KMB scheduled') and has_text('CTB | CTB scheduled'))
+-- Persist both resolved endpoints; favorites never repeat route-stop matching.
+click('Save stop')
+assert(#saved.favorites==1 and #saved.favorites[1].endpoints==2)
+local endpoints=saved.favorites[1].endpoints
+assert(endpoints[1].operator=='KMB' and endpoints[1].id=='KMB-101-001')
+assert(endpoints[1].url==kmb..'/eta/KMB-101-001/101/1')
+assert(endpoints[2].operator=='CTB' and endpoints[2].id=='CTB-101-002')
+assert(endpoints[2].url==ctb..'/eta/CTB/CTB-101-002/101')
+click(back);click(back);click(favorites_tab);ticks(1)
+url(endpoints[1].url);complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00"}]}')
+url(endpoints[2].url);complete('{"data":[{"eta":"2026-11-16T14:33:00+08:00"}]}')
+assert(has_text('3 min\n5 min\n--'),'favorite merges both providers by timestamp')
+local endpoint_clock=crystal.service.time.now
+crystal.service.time.now=function()return endpoint_clock()+30 end
+ticks(1);url(endpoints[1].url);complete('{}',503)
+url(endpoints[2].url);complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00"}]}')
+assert(has_text('5 min\n--\n--'),'CTB favorite arrivals survive a KMB failure')
+crystal.service.time.now=function()return endpoint_clock()+60 end
+ticks(1);url(endpoints[1].url);complete('{"data":[{"eta":"2026-11-16T14:35:00+08:00"}]}')
+url(endpoints[2].url);complete('{}',503)
+assert(has_text('4 min\n--\n--'),'KMB favorite arrivals survive a CTB failure')
+crystal.service.time.now=endpoint_clock
+click('101');url(endpoints[1].url)
+complete('{"data":[]}');url(ctb..'/route-stop/CTB/101/outbound');complete('{}',503)
 -- A failed KMB ETA must leave CTB arrivals usable after matching metadata is
 -- loaded through the provider fallback path.
 click(refresh);url(kmb..'/eta/KMB-101-001/101/1');complete('{}',503)
@@ -257,7 +283,7 @@ click(refresh);url(kmb..'/eta/KMB-101-001/101/1');complete('{}',503)
 url(ctb..'/route-stop/CTB/101/outbound');complete('{}',503)
 assert(has_text('Unable to load arrivals - tap Refresh to retry'))
 -- Direction and actual service identity survive selecting the second variant.
-click(back);click(back);click(clear);click('1');click('A');ticks();click('To Sau Mau Ping')
+click(back);click(search_tab);click(clear);click('1');click('A');ticks();click('To Sau Mau Ping')
 url(kmb..'/route-stop/1A/inbound/2')
 complete('{"data":[{"stop":"leading/00%01?","seq":"1","name_en":"Encoded stop"}]}')
 click('1. Encoded stop');url(kmb..'/eta/leading%2F00%2501%3F/1A/2')
