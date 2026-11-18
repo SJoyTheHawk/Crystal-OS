@@ -13,9 +13,9 @@ work, with a migration path into the later package/runtime phases.
 
 Read the current repository plans first:
 
-1. [`IMPLEMENTATION_PLAN.md`](../../docs/IMPLEMENTATION_PLAN.md): Phase 12 reliability,
+1. [`IMPLEMENTATION_PLAN.md`](../../docs/archive/v1/IMPLEMENTATION_PLAN.md): Phase 12 reliability,
    Phase 13 app catalog, and their existing acceptance criteria.
-2. [`APP_PLATFORM.md`](../../docs/APP_PLATFORM.md): proposed manifest, streaming CAPP
+2. [`APP_PLATFORM.md`](../../docs/archive/proposals/APP_PLATFORM.md): proposed manifest, streaming CAPP
    transport, host ABI, permissions, transactional install, registry reconciliation,
    and runtime tiers. This document is a design, not an implemented contract.
 3. [`clock3p`](../clock3p/README.md): a complementary lightweight example against

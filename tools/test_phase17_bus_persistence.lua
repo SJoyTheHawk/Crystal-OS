@@ -33,6 +33,7 @@ local function ticks(count)
 end
 local original_favorites=saved.favorites
 local original_recents=saved.recent_routes
+crystal.service.net=net_api
 for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
 local app=assert(loadfile(package_path))()
 assert(app.onCreate())

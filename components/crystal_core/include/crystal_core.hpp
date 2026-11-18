@@ -96,6 +96,13 @@ void crystal_time_init();
 // run on the LVGL task. Notifications, including replay for an already-ready
 // clock, run on a later UI dispatch; never on an SNTP/network worker.
 using crystal_time_ready_cb_t = void (*)(void *context);
+// Network readiness means a Wi-Fi/Ethernet IPv4 route, not Internet reachability.
+// Register/unregister on the LVGL task; initial state replays asynchronously.
+using crystal_net_change_cb_t = void (*)(void *context, bool connected);
+bool crystal_net_is_ready();
+uint32_t crystal_net_subscribe(crystal_net_change_cb_t callback, void *context);
+bool crystal_net_unsubscribe(uint32_t subscription);
+
 bool crystal_time_is_ready();
 uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t callback, void *context);
 bool crystal_time_unsubscribe_ready(uint32_t subscription);

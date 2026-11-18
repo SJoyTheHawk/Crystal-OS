@@ -3,6 +3,7 @@
  */
 
 #include "crystal_hal.hpp"
+#include "crystal_brightness_policy.hpp"
 #include "crystal_network.h"
 #include "crystal_ethernet.hpp"
 
@@ -36,6 +37,8 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "nvs.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
 
 #include <math.h>
 
@@ -1222,6 +1225,120 @@ void start_reset_button()
              (int)kResetButtonGpio, (unsigned)kResetHoldMs);
 }
 
+// DNS health monitoring state
+struct DnsHealthMonitor {
+    TaskHandle_t task = nullptr;
+    uint8_t failure_count = 0;
+    int64_t last_check_time = 0;
+    bool enabled = true;
+
+    static constexpr uint32_t kCheckIntervalMs = 60000;  // 60 seconds
+    static constexpr uint8_t kFailureThreshold = 3;
+    // Use Cloudflare's public DNS - globally available and rarely blocked
+    static constexpr const char* kProbeHostname = "one.one.one.one";  // Cloudflare's 1.1.1.1 domain
+    static constexpr uint32_t kProbeTimeoutMs = 5000;
+};
+
+static DnsHealthMonitor s_dns_monitor;
+
+static bool dns_probe_check()
+{
+    struct addrinfo hints = {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo *result = nullptr;
+    const int err = getaddrinfo(DnsHealthMonitor::kProbeHostname, "80", &hints, &result);
+
+    if (result != nullptr) {
+        freeaddrinfo(result);
+    }
+
+    if (err == 0) {
+        return true;
+    }
+
+    // Error 202 = EAI_ADDRFAMILY is the smoking gun
+    if (err == 202) {
+        ESP_LOGW(TAG, "DNS health check: getaddrinfo returned 202 (EAI_ADDRFAMILY)");
+    }
+
+    return false;
+}
+
+extern DeviceWifi s_wifi;
+
+static void dns_recovery_reboot()
+{
+    ESP_LOGE(TAG, "DNS resolver corruption detected (ESP-IDF bug: esp-tls socket leak)");
+    ESP_LOGE(TAG, "WiFi cycle cannot fix this - socket leak persists in lwip layer");
+    ESP_LOGE(TAG, "System restart required for recovery");
+
+    // Give time for log to flush
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    esp_restart();
+}
+
+static void dns_health_monitor_task(void *arg)
+{
+    (void)arg;
+
+    ESP_LOGI(TAG, "DNS health monitor started (check every %u seconds)",
+             DnsHealthMonitor::kCheckIntervalMs / 1000);
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(DnsHealthMonitor::kCheckIntervalMs));
+
+        if (!s_dns_monitor.enabled) {
+            continue;
+        }
+
+        // Only check when we have network connectivity
+        if (!crystal_network_has_ip()) {
+            s_dns_monitor.failure_count = 0;
+            continue;
+        }
+
+        s_dns_monitor.last_check_time = esp_timer_get_time();
+
+        if (dns_probe_check()) {
+            // DNS working normally
+            if (s_dns_monitor.failure_count > 0) {
+                ESP_LOGI(TAG, "DNS health check: recovered (was %u failures)",
+                         s_dns_monitor.failure_count);
+            }
+            s_dns_monitor.failure_count = 0;
+        } else {
+            // DNS failure detected
+            s_dns_monitor.failure_count++;
+            ESP_LOGW(TAG, "DNS health check failed (%u/%u)",
+                     s_dns_monitor.failure_count, DnsHealthMonitor::kFailureThreshold);
+
+            if (s_dns_monitor.failure_count >= DnsHealthMonitor::kFailureThreshold) {
+                // DNS is definitely broken, initiate recovery
+                // WiFi cycle doesn't work - socket leak persists in lwip layer
+                // Only reboot can clear it
+                dns_recovery_reboot();
+            }
+        }
+    }
+}
+
+static void start_dns_health_monitor()
+{
+    if (s_dns_monitor.task != nullptr) {
+        return;
+    }
+
+    if (xTaskCreate(dns_health_monitor_task, "dns_health", 4096, nullptr, 2, &s_dns_monitor.task) != pdPASS) {
+        ESP_LOGE(TAG, "DNS health monitor task creation failed");
+        return;
+    }
+
+    ESP_LOGI(TAG, "DNS health monitor initialized (workaround for ESP-IDF socket leak bug)");
+}
+
 DeviceWifi s_wifi;
 DeviceTouch s_touch;
 Axp2101Power s_power;
@@ -1295,6 +1412,14 @@ void crystal_hal_init()
     s_brightness.restore_cached(brightness);
 #endif
 
+    // Scale the boot-screen brightness too, retaining the user preference in NVS.
+    uint8_t saving = 0;
+    size_t saving_len = sizeof(saving);
+    if (s_storage.get("power.saving", &saving, &saving_len) &&
+            saving_len == sizeof(saving) && saving != 0) {
+        s_brightness.restore_cached(crystal_effective_brightness(s_brightness.get(), true));
+    }
+
     // The codec is initialized lazily by the volume adapter. Apply the saved
     // value here so audio uses the user's setting before the quick panel opens.
     uint8_t volume = 85;
@@ -1308,6 +1433,10 @@ void crystal_hal_init()
 #if !CONFIG_IDF_TARGET_ESP32P4
     start_reset_button();
 #endif
+
+    // Start DNS health monitoring (ESP-IDF bug workaround)
+    // Probes one.one.one.one (Cloudflare) - globally available
+    start_dns_health_monitor();
 }
 
 void crystal_hal_bind_touch(void *lvgl_input_device)

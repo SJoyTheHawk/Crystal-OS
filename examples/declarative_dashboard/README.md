@@ -40,7 +40,7 @@ arbitrary scripts are not evaluated. Controls includes Focus input (the system
 keyboard), Add list item, Update chart and Show dialog. The dialog dismisses
 after a button selection; reopening the app rebuilds its initial tree.
 The shared callable contract is documented in
-[the implementation record](../../docs/APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md).
+[the implementation record](../../docs/platform/APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md).
 
 The `visual/` directory contains declarative screen documents matching the
 Clock, Weather, and Calculator layouts. These are visual references; the

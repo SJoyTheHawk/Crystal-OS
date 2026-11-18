@@ -66,6 +66,7 @@ assert(ui.list_add(list,'String row'));assert(ui.list_insert(list,1,'Inserted ro
 assert(ui.list_count(list)==2);click('Inserted row');assert(selected_index==2)
 assert(ui.list_clear(list));assert(ui.delete(list))
 
+crystal.service.net=net_api
 for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
 local app=assert(loadfile(package_path))()
 assert(app.onCreate() and timer);assert(has_text('No saved stops yet'))

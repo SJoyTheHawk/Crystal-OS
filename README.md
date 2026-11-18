@@ -10,8 +10,8 @@ esp-brookesia, with swipeable app cards, Quick Settings and installable apps.
 visual/interaction acceptance (P4.2), and network expansion (P4.3) are complete
 for their documented scopes as of **November 15, 2026**. Performance, soak,
 and remaining feature qualification continue in P4.4. Phase 17 Lua runtime
-support is implemented; Bus Lite **0.2.26** contains the Phase 4 refresh and
-countdown implementation and OS clock-ready subscriptions. The user reports
+support is implemented; Bus Lite **0.2.29** contains the Phase 4 refresh and
+countdown implementation, OS clock-ready subscriptions and network-ready gating. The user reports
 the clock correction working on P4 (November 19, 2026); remaining soak and
 network-recovery checks are tracked in the Phase 4 results.
 The validated S3 baseline is preserved on branch `ESP32-S3-Touch-LCD-4B`.
@@ -62,7 +62,7 @@ simulator captures above. [Image sources and attribution](docs/images/README.md)
 | Storage layout | Two 8 MiB OTA app slots, 4 MiB SPIFFS, 10 MiB LittleFS apps partition |
 
 See the [P4 board reference](reference/ESP32-P4-WIFI6-Touch-LCD-4B-main/)
-and [bring-up record](docs/ESP32_P4_PHASE1_VALIDATION.md) for hardware resources
+and [bring-up record](docs/hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md) for hardware resources
 and the tested configuration. The current profile is for rev1.x silicon;
 rev3.x and other panel variants require separate qualification.
 
@@ -83,7 +83,7 @@ The previous **ESP32-S3-Touch-LCD-4B** baseline (480 × 480, 16 MB flash,
 - **Manage Apps:** enable bundled apps live, disable them for the next reboot,
   reorder cards, and clear saved app data.
 - **Lua packages:** install signed `.capp` apps through the Developer Tools
-  control panel. Bus Lite 0.2.26 provides bundled route search, KMB/Citybus
+  control panel. Bus Lite 0.2.29 provides bundled route search, KMB/Citybus
   stops and live ETA, refreshed favorite ETAs, joint routes, eight favorites
   and five recent routes.
 - **Shared services:** persistent app state, RTC and network time, Wi-Fi, power
@@ -147,32 +147,32 @@ Choose the appropriate flash command; a full flash also writes filesystem
 images. The P4 console uses **1,000,000 baud**. The examples use Bash/Zsh;
 press `Ctrl+]` to exit the monitor. Keep the working ESP32-C6 firmware in place.
 For partition offsets, migration/recovery details, and the established local
-workflow, use the [P4 build and validation guide](docs/ESP32_P4_PHASE1_VALIDATION.md#build-from-the-repository-root).
-The [ESP-IDF command guide](docs/ESP_IDF_COMMAND_GUIDE.md) and
-[baseline flashing notes](docs/report/NO_BUS_BASELINE.md#build-and-flash)
+workflow, use the [P4 build and validation guide](docs/hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md#build-from-the-repository-root).
+The [ESP-IDF command guide](docs/guides/ESP_IDF_COMMAND_GUIDE.md) and
+[baseline flashing notes](docs/archive/esp32-s3/NO_BUS_BASELINE.md#build-and-flash)
 cover the preserved **S3** target; its flash/provisioning layout differs.
 
 For host previews, run `python3 tools/capture_readme.py` to regenerate the P4
 gallery without a device. This headless LVGL simulator and the mock HAL support
 rendering and focused checks; an interactive SDL desktop simulator is still
-planned. See [desktop simulation](docs/SIMULATOR.md) and [host tools](tools/README.md).
+planned. See [desktop simulation](docs/guides/SIMULATOR.md) and [host tools](tools/README.md).
 
 ## Project status
 
 Phases 14–16 are complete for development acceptance: package installation,
 signature verification, the WiFi panel and USB CLI fallback, and the shared
-UI/declarative framework. See the [closure record](docs/APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
+UI/declarative framework. See the [closure record](docs/archive/phase15-16/APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md).
 
 P4 acceptance, as recorded on November 15, 2026:
 
 | Stage | Status and evidence |
 | --- | --- |
-| P4.1 — board bring-up | Signed build/flash, 720 × 720 display and touch, Wi-Fi, time, and HTTPS smoke checks pass. [Validation](docs/ESP32_P4_PHASE1_VALIDATION.md) |
-| P4.2 — visuals and interaction | Accepted boot screen, cards, Quick Settings, immediate Settings navigation, Wi-Fi UI, and enlarged keyboard. [Validation](docs/ESP32_P4_PHASE2_VALIDATION.md) |
-| P4.3 — network expansion | Accepted Ethernet, Wi-Fi fallback/reconnection, Ethernet-only Weather/SNTP/HTTPS, browser pairing/app-list access, and network indicator. [Validation](docs/ESP32_P4_PHASE3_VALIDATION.md) |
+| P4.1 — board bring-up | Signed build/flash, 720 × 720 display and touch, Wi-Fi, time, and HTTPS smoke checks pass. [Validation](docs/hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md) |
+| P4.2 — visuals and interaction | Accepted boot screen, cards, Quick Settings, immediate Settings navigation, Wi-Fi UI, and enlarged keyboard. [Validation](docs/hardware/esp32-p4/ESP32_P4_PHASE2_VALIDATION.md) |
+| P4.3 — network expansion | Accepted Ethernet, Wi-Fi fallback/reconnection, Ethernet-only Weather/SNTP/HTTPS, browser pairing/app-list access, and network indicator. [Validation](docs/hardware/esp32-p4/ESP32_P4_PHASE3_VALIDATION.md) |
 | P4.4 — qualification | Sustained performance/FPS, memory and network soaks, package/OTA flows, and remaining feature parity are still open. |
-| Phase 17 — Lua runtime | Implemented; runtime/device checks remain tracked in the [test guide](docs/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md). |
-| Bus Lite 0.2.26 | Phases 1–4 implemented; Phase 3 persistence is accepted on P4. Clock-ready correction reported working; remaining Phase 4 reliability checks are recorded separately. [Phase 4 results](docs/BUS_APP_PHASE_4_RESULTS.md). |
+| Phase 17 — Lua runtime | Implemented; runtime/device checks remain tracked in the [test guide](docs/platform/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md). |
+| Bus Lite 0.2.29 | Phases 1–4 implemented; Phase 3 persistence is accepted on P4. Clock-ready correction reported working; remaining Phase 4 reliability checks are recorded separately. [Phase 4 results](docs/bus/BUS_APP_PHASE_4_RESULTS.md). |
 
 These scoped acceptance records do not establish release readiness or a 60 fps
 guarantee. Retained memory, HTTPS, and lifecycle findings are listed in the
@@ -209,13 +209,13 @@ references, implementation records and important unresolved findings.
 
 | Topic | Start here |
 | --- | --- |
-| P4 migration | [Overview](docs/MIGRATION_PLAN_ESP32_P4.md) · [Detailed proposal](docs/CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) |
-| App platform | [Overview](docs/APP_PLATFORM_V2_OVERVIEW.md) · [Implementation plan](docs/APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md) |
-| Bus Lite | [Package](examples/bus3p/README.md) · [Transformation plan](docs/README_BUS_TRANSFORMATION.md) · [Install/test](docs/BUS_APP_QUICK_START.md) |
-| Original OS architecture | [Design](docs/v1_implementation_plan/DESIGN.md) · [Code guide](docs/v1_implementation_plan/CODE_GUIDE.md) |
-| Build and recovery | [P4 build/flash](docs/ESP32_P4_PHASE1_VALIDATION.md#build-from-the-repository-root) · [S3 ESP-IDF commands](docs/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
-| Focused checks | [Regression guide](docs/APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) |
-| Host development | [Simulator status](docs/SIMULATOR.md) |
+| P4 migration | [Overview](docs/hardware/esp32-p4/MIGRATION_PLAN_ESP32_P4.md) · [Detailed proposal](docs/hardware/esp32-p4/CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) |
+| App platform | [Lua app and CAPP reference](APPLICATION_ABI.md) · [Overview](docs/platform/APP_PLATFORM_V2_OVERVIEW.md) · [Implementation plan](docs/platform/APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md) |
+| Bus Lite | [Package](examples/bus3p/README.md) · [Transformation plan](docs/bus/README.md) · [Install/test](docs/bus/BUS_APP_QUICK_START.md) |
+| Original OS architecture | [Design](docs/archive/v1/DESIGN.md) · [Code guide](docs/archive/v1/CODE_GUIDE.md) |
+| Build and recovery | [P4 build/flash](docs/hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md#build-from-the-repository-root) · [S3 ESP-IDF commands](docs/guides/ESP_IDF_COMMAND_GUIDE.md) · [Tools](tools/README.md) |
+| Focused checks | [Regression guide](docs/platform/APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md) |
+| Host development | [Simulator status](docs/guides/SIMULATOR.md) |
 
 Historical reports and proposals live in [the archive](docs/archive/README.md).
 
@@ -229,7 +229,12 @@ logs alone do not establish an upstream socket leak. The HAL now rejects stale
 SSID events and obsolete retry notifications, and Developer Tools includes
 opt-in Wi-Fi diagnostics. Recovery under shielding still needs board validation.
 
-Follow the [Wi-Fi checks](docs/WIFI_CHECKS.md) to capture interface, DNS and
+An automatic DNS health monitoring workaround was attempted but **disabled due to
+false positive reboots** - the probe hostname was unreachable in some networks
+even when DNS worked fine for actual API endpoints. Manual device restart remains
+the recovery method if persistent DNS failures occur.
+
+Follow the [Wi-Fi checks](docs/networking/WIFI_CHECKS.md) to capture interface, DNS and
 transport evidence. A separate [19.4-minute Bus run](docs/test-evidence/wifi-checks/RESULTS.md)
 completed 204 successful HTTPS requests after IP acquisition; it was not a
 traffic-free idle test. Earlier power-management and socket-leak explanations

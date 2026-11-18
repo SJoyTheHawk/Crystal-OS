@@ -440,7 +440,7 @@ void ScriptApp::install_api()
         {"resume", service_timer_resume}, {"reset", service_timer_reset}, {"status", service_timer_status}, {nullptr, nullptr}
     };
     static const luaL_Reg notify_functions[] = {{"toast", service_toast}, {"chime", service_chime}, {nullptr, nullptr}};
-    static const luaL_Reg net_functions[] = {{"status", service_net_status}, {nullptr, nullptr}};
+    static const luaL_Reg net_functions[] = {{"status", service_net_status}, {"is_ready", service_net_is_ready}, {"on_change", service_net_on_change}, {"off_change", service_net_off_change}, {nullptr, nullptr}};
     static const luaL_Reg location_functions[] = {{"get", service_location_get}, {nullptr, nullptr}};
     static const luaL_Reg system_functions[] = {{"info", service_system_info}, {nullptr, nullptr}};
     static const luaL_Reg http_functions[] = {{"fetch", http_fetch}, {"cancel", http_cancel}, {nullptr, nullptr}};
@@ -664,6 +664,7 @@ bool ScriptApp::onResume()
     ui_.resume();
     const bool ok = execute("onResume");
     if (ok && time_pending_) time_ready(this);
+    if (ok && net_pending_) net_changed(this, crystal_net_is_ready());
     return ok && !runtime_failed_;
 }
 
@@ -693,6 +694,7 @@ bool ScriptApp::onDestroy()
     const size_t peak_before_release = arena_peak_;
     in_destroy_ = true;
     clear_time_subscription();
+    clear_net_subscription();
     (void)execute("onDestroy");
     cancel_requests();
     if (async_) {
@@ -1568,6 +1570,66 @@ int ScriptApp::service_time_off_ready(lua_State *state)
     auto *app = self(state);
     const bool subscribed = app && app->time_subscription_;
     if (app) app->clear_time_subscription();
+    lua_pushboolean(state, subscribed); return 1;
+}
+
+void ScriptApp::clear_net_subscription()
+{
+    if (net_subscription_) crystal_net_unsubscribe(net_subscription_);
+    net_subscription_ = 0;
+    net_pending_ = false;
+    if (net_callback_) {
+        if (lua_) luaL_unref(lua_, LUA_REGISTRYINDEX, net_callback_->ref);
+        for (auto it = callbacks_.begin(); it != callbacks_.end(); ++it) {
+            if (it->get() == net_callback_) { callbacks_.erase(it); break; }
+        }
+        net_callback_ = nullptr;
+    }
+}
+
+void ScriptApp::net_changed(void *context, bool connected)
+{
+    auto *app = static_cast<ScriptApp *>(context);
+    if (!app || !app->net_callback_ || !app->lua_ || app->in_destroy_ || app->runtime_failed_) return;
+    if (app->time_paused_) { app->net_pending_ = true; return; }
+    app->net_pending_ = false;
+    // Core delivers on the LVGL task, through the normal protected Lua budget.
+    // Copy the ref: the callback is allowed to replace/unsubscribe itself.
+    const int ref = app->net_callback_->ref;
+    (void)app->call_ref(ref, 0, connected ? "connected" : "disconnected");
+}
+
+int ScriptApp::service_net_is_ready(lua_State *state)
+{
+    lua_pushboolean(state, crystal_net_is_ready()); return 1;
+}
+
+int ScriptApp::service_net_on_change(lua_State *state)
+{
+    auto *app = self(state);
+    if (!app || app->in_destroy_ || app->runtime_failed_ || !lua_isfunction(state, 1)) {
+        lua_pushboolean(state, false); return 1;
+    }
+    if (app->net_callback_) {
+        lua_pushvalue(state, 1);
+        const int ref = luaL_ref(state, LUA_REGISTRYINDEX);
+        luaL_unref(state, LUA_REGISTRYINDEX, app->net_callback_->ref);
+        app->net_callback_->ref = ref;
+    } else {
+        app->net_callback_ = app->make_callback(1);
+        if (!app->net_callback_) { lua_pushboolean(state, false); return 1; }
+    }
+    if (app->net_subscription_) crystal_net_unsubscribe(app->net_subscription_);
+    app->net_subscription_ = crystal_net_subscribe(net_changed, app);
+    if (!app->net_subscription_) app->clear_net_subscription();
+    lua_pushboolean(state, app->net_subscription_ != 0); return 1;
+}
+
+int ScriptApp::service_net_off_change(lua_State *state)
+{
+    auto *app = self(state);
+    const bool subscribed = app && app->net_subscription_;
+    if (app) app->clear_net_subscription();
     lua_pushboolean(state, subscribed); return 1;
 }
 

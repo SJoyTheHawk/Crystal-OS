@@ -5,7 +5,7 @@ implement the Crystal OS port or repeat hardware tests.
 
 This page describes the earlier factory handoff. Subsequent Crystal port work
 and hardware tests are recorded separately in the
-[Crystal Phase 1 validation](../../ESP32_P4_PHASE1_VALIDATION.md). Statements
+[Crystal Phase 1 validation](../../hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md). Statements
 below about unmodified implementation inputs and unexecuted next steps refer
 to the handoff checkpoint, not the current migration status. The two copied
 source records remain unchanged.
@@ -71,8 +71,8 @@ and the warning alone is not a reason to replace it.
 
 ## Reconciliation of the migration plans
 
-Applies to [the detailed v2 plan](../../CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) and
-[the migration overview](../../MIGRATION_PLAN_ESP32_P4.md).
+Applies to [the detailed v2 plan](../../hardware/esp32-p4/CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md) and
+[the migration overview](../../hardware/esp32-p4/MIGRATION_PLAN_ESP32_P4.md).
 
 | Earlier assumption | Planning correction |
 | --- | --- |
@@ -105,3 +105,12 @@ Import only needed source/configuration adaptations with attribution. Do not
 copy the vendor tree, managed components, installed SDKs or generated builds.
 The S3 command guide's target/partition/provisioning commands are not P4 instructions.
 This documentation update performs no hardware flashing, C6 changes or eFuse operations.
+
+## Crystal documentation locations
+
+The retained source records keep their original paths and dates. Current
+Crystal documentation is organized under:
+
+- [P4 migration and validation](../../hardware/esp32-p4/README.md)
+- [Build/flash validation](../../hardware/esp32-p4/ESP32_P4_PHASE1_VALIDATION.md)
+- [Documentation index](../../README.md)

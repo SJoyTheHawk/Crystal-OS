@@ -5,9 +5,9 @@ capture date; the closure record and later follow-ups determine current status.
 
 ## Current references
 
-- [Implementation and UI contract](../../APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
-- [Closure record](../../APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
-- [Focused regression guide](../../APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
+- [Implementation and UI contract](../../platform/APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
+- [Closure record](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
+- [Focused regression guide](../../platform/APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
 - [Final host/build validation and device follow-ups](../../test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
 
 ## Retained device results

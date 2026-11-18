@@ -34,17 +34,29 @@ local function complete(body,code)
   local old=assert(pending);pending=nil
   run_callback(function()old.callback(old.id,code or 200,body or '{"data":[]}')end)
 end
+crystal.service.net=net_api
 for _,name in ipairs({'is_ready','on_ready','off_ready'}) do crystal.service.time[name]=clock_api[name] end
 clock_signal(false)
+net_signal(false)
 local app=assert(loadfile(package_path))();assert(app.onCreate())
-assert(has_text('Some saved stops were skipped'))
-tick();url(kmb..'/eta/K1/101/1');complete()
+for _=1,20 do tick() end
+assert(not pending and has_text('No connection'))
+net_signal(true)
+assert(not pending)
+tick();url(kmb..'/eta/K1/101/1')
+local stale=pending
+net_signal(false);assert(not pending and has_text('No connection'))
+run_callback(function()stale.callback(stale.id,200,'{"data":[]}')end)
+assert(not pending)
+for _=1,20 do tick() end
+assert(not pending)
+net_signal(true);tick();url(kmb..'/eta/K1/101/1');complete()
 url(ctb..'/route-stop/CTB/101/outbound')
 complete('{"data":[{"stop":"000001","seq":2,"lat":22.3,"long":114.1}]}')
 assert(saved.favorites[1].endpoints==nil and has_text('Could not save favorite endpoints'))
 url(ctb..'/eta/CTB/000001/101');complete()
 url(ready.endpoints[1].url);complete();url(ready.endpoints[2].url);complete()
-assert(not pending and writes==1)
+assert(not pending and writes==1 and has_text('Tap a saved stop for live arrivals'))
 -- A failed write does not publish the migrated record; next pass can retry.
 fail_write=false;clock=clock+30;tick();url(kmb..'/eta/K1/101/1');complete()
 url(ctb..'/route-stop/CTB/101/outbound')
@@ -81,7 +93,24 @@ url(ready.endpoints[1].url);complete();url(ready.endpoints[2].url);complete()
 clock=clock+30;tick();local late=assert(pending);assert(app.onPause() and not pending)
 run_callback(function()late.callback(late.id,200,'{"data":[]}')end);assert(not pending)
 assert(app.onResume());tick();url(kmb..'/eta/K1/101/1');complete()
-url(ctb..'/eta/CTB/000001/101');assert(app.onDestroy() and not pending)
+url(ctb..'/eta/CTB/000001/101')
+-- Offline favorite navigation never opens HTTP; reconnect refreshes the visible stop.
+net_signal(false)
+assert(has_text('--\n--\n--'))
+click('Joint Stop');assert(not pending and has_text('No connection'))
+for _=1,20 do tick() end
+assert(not pending)
+net_signal(true);tick();assert(pending)
+local disconnected=pending
+net_signal(false);assert(not pending and has_text('No connection'))
+clock_signal(true);tick();assert(has_text('No connection'))
+run_callback(function()disconnected.callback(disconnected.id,200,'{"data":[]}')end)
+assert(not pending)
+assert(app.onPause());clock_pause(true);net_signal(true);assert(not pending)
+assert(app.onResume());clock_pause(false);tick();assert(pending)
+assert(app.onDestroy() and not pending)
+net_signal(false);net_signal(true);assert(not pending)
+print('PASS: offline startup/detail, late response suppression, reconnect and paused recovery')
 -- Eight joint favorites fit the production serializer node and storage limits.
 local maximum={}
 for i=1,8 do

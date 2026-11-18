@@ -48,6 +48,14 @@ static size_t native_json_allocations=0;
 static void *json_allocate(size_t size) {void *ptr=malloc(size);if(ptr)++native_json_allocations;return ptr;}
 static void json_release(void *ptr) {if(ptr)--native_json_allocations;free(ptr);}
 static size_t heap_caps_get_free_size(int) {return 1024*1024;}
+static bool test_online=true;
+static uint32_t test_net_revision=0;
+static bool crystal_network_has_ip() {return test_online;}
+static uint32_t crystal_network_revision() {return test_net_revision;}
+using crystal_net_change_cb_t = void (*)(void *,bool);
+bool crystal_net_is_ready();
+uint32_t crystal_net_subscribe(crystal_net_change_cb_t,void*);
+bool crystal_net_unsubscribe(uint32_t);
 using crystal_time_ready_cb_t = void (*)(void *);
 bool crystal_time_is_ready();
 uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t,void*);
@@ -58,6 +66,11 @@ public:
     CrystalResources resources_;
     CrystalUI ui_{resources_};
     lua_State *lua_=nullptr;
+    uint32_t net_subscription_=0;
+    bool net_pending_=false;
+    static int service_net_is_ready(lua_State*),service_net_on_change(lua_State*),service_net_off_change(lua_State*);
+    static void net_changed(void*,bool);
+    void clear_net_subscription();
     uint32_t time_subscription_=0;
     bool time_paused_=false,time_pending_=false;
     static int service_time_is_ready(lua_State*),service_time_on_ready(lua_State*),service_time_off_ready(lua_State*);
@@ -79,7 +92,7 @@ public:
     bool execute(const char*,bool=false);
     void runtime_error(const char *msg) {runtime_failed_=true; fprintf(stderr,"contained: %s\n",msg);}
     struct CallbackRef { ScriptApp *app=nullptr; int ref=LUA_NOREF; };
-    CallbackRef *time_callback_=nullptr;
+    CallbackRef *time_callback_=nullptr,*net_callback_=nullptr;
     std::list<std::unique_ptr<CallbackRef>> callbacks_;
     std::map<std::string,std::unique_ptr<ImageAsset>> image_assets_;
     std::map<std::pair<uint32_t,std::string>,CallbackRef*> event_callbacks_;
@@ -106,6 +119,12 @@ MAIN = r'''
 static lua_State *L;
 static unsigned allocation_failures;
 static ScriptApp *test_app;
+static int net_signal(lua_State *state) {
+    test_online=lua_toboolean(state,1);++test_net_revision;
+    dispatch_net_changed();return 0;
+}
+static int net_dispatch(lua_State *) {dispatch_net_changed();return 0;}
+static int net_reset(lua_State *) {test_app->clear_net_subscription();return 0;}
 static int clock_signal(lua_State *state) {
     s_time_valid.store(lua_toboolean(state,1));
     s_time_revision.fetch_add(1);
@@ -137,9 +156,33 @@ static void check_clock_listener_lifetimes() {
     assert(crystal_time_unsubscribe_ready(state.next));
     puts("PASS: core clock subscription capacity, coalescing and reentrant teardown");
 }
+static void check_net_listener_lifetimes() {
+    test_online=false;test_net_revision=0;
+    unsigned calls=0;
+    auto count=[](void *p,bool){++*static_cast<unsigned*>(p);};
+    uint32_t ids[16]{};
+    for(auto &id:ids){id=crystal_net_subscribe(count,&calls);assert(id);}
+    assert(!crystal_net_subscribe(count,&calls));
+    dispatch_net_changed();assert(calls==16);
+    dispatch_net_changed();assert(calls==16);
+    test_online=true;++test_net_revision;dispatch_net_changed();assert(calls==32);
+    ++test_net_revision;dispatch_net_changed();assert(calls==48);
+    for(auto id:ids)assert(crystal_net_unsubscribe(id));
+    struct Reentrant {uint32_t old=0,next=0;unsigned calls=0;} state;
+    auto replace=[](void *p,bool){
+        auto &s=*static_cast<Reentrant*>(p);
+        assert(crystal_net_unsubscribe(s.old));
+        s.next=crystal_net_subscribe([](void *q,bool){++static_cast<Reentrant*>(q)->calls;},&s);
+    };
+    state.old=crystal_net_subscribe(replace,&state);dispatch_net_changed();assert(state.next && !state.calls);
+    dispatch_net_changed();assert(state.calls==1);
+    assert(!crystal_net_unsubscribe(state.old));assert(crystal_net_unsubscribe(state.next));
+    puts("PASS: core network capacity, deferred replay, route revisions and reentrant teardown");
+}
 static int clock_pause(lua_State *state) {
     test_app->time_paused_=lua_toboolean(state,1);
     if(!test_app->time_paused_ && test_app->time_pending_) ScriptApp::time_ready(test_app);
+    if(!test_app->time_paused_ && test_app->net_pending_) ScriptApp::net_changed(test_app,test_online);
     return 0;
 }
 static int run_callback(lua_State *state) {
@@ -340,6 +383,7 @@ int main(int argc,char **argv) {
     lv_disp_draw_buf_init(&buf,pixels,nullptr,720*20);lv_disp_drv_t drv;lv_disp_drv_init(&drv);
     drv.hor_res=width;drv.ver_res=width-40;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);
     check_clock_listener_lifetimes();
+    check_net_listener_lifetimes();
     check_repeated_text_refresh();
     ScriptApp app;
     test_app=&app;app.arena_size_=atoi(argv[4])*1024;
@@ -377,6 +421,16 @@ int main(int argc,char **argv) {
         lua_pushlightuserdata(L,&app);lua_pushcclosure(L,entry.second,1);lua_setfield(L,-2,entry.first);
     }
     lua_setglobal(L,"clock_api");
+    lua_newtable(L);
+    for(const auto &entry : std::initializer_list<std::pair<const char*,lua_CFunction>>{
+        {"is_ready",ScriptApp::service_net_is_ready},{"on_change",ScriptApp::service_net_on_change},
+        {"off_change",ScriptApp::service_net_off_change}}) {
+        lua_pushlightuserdata(L,&app);lua_pushcclosure(L,entry.second,1);lua_setfield(L,-2,entry.first);
+    }
+    lua_setglobal(L,"net_api");
+    lua_pushcfunction(L,net_signal);lua_setglobal(L,"net_signal");
+    lua_pushcfunction(L,net_dispatch);lua_setglobal(L,"net_dispatch");
+    lua_pushcfunction(L,net_reset);lua_setglobal(L,"net_reset");
     lua_pushcfunction(L,clock_signal);lua_setglobal(L,"clock_signal");
     lua_pushcfunction(L,clock_dispatch);lua_setglobal(L,"clock_dispatch");
     lua_pushcfunction(L,clock_callback_count);lua_setglobal(L,"clock_callback_count");
@@ -410,6 +464,8 @@ int main(int argc,char **argv) {
     printf("PASS: production Lua/UI and LVGL at %dpx; %zu callbacks (limit 64)\n",width,app.callbacks_.size());
     assert(!app.runtime_failed_ && lua_gettop(L)==0);
     app.clear_time_subscription();
+    app.clear_net_subscription();
+    for(const auto &listener:s_net_listeners) assert(!listener.id);
     for(const auto &listener:s_time_listeners) assert(!listener.id);
     app.ui_.reset(); lv_obj_del(app.root_);app.ui_.reset();lua_close(L);
     assert(app.arena_used_==0);free(app.arena_);
@@ -503,6 +559,7 @@ def main():
            'void ScriptApp::json_to_lua(', 'int ScriptApp::protected_json_value(', 'int ScriptApp::push_json_value(', 'int ScriptApp::json_decode(', 'cJSON *ScriptApp::lua_to_json(', 'ScriptApp::CallbackRef *ScriptApp::make_callback(',
            'void ScriptApp::ui_event(', 'lv_obj_t *ScriptApp::build_widget(', 'bool ScriptApp::apply_style(']
     names += ['void ScriptApp::instruction_hook(', 'int ScriptApp::service_time_is_ready(', 'int ScriptApp::service_time_on_ready(', 'int ScriptApp::service_time_off_ready(', 'void ScriptApp::time_ready(', 'void ScriptApp::clear_time_subscription(']
+    names += ['int ScriptApp::service_net_is_ready(', 'int ScriptApp::service_net_on_change(', 'int ScriptApp::service_net_off_change(', 'void ScriptApp::net_changed(', 'void ScriptApp::clear_net_subscription(']
     names += ['int ScriptApp::ui_'+name+'(' for name in ('create','screen','get_size','set_text','get_text',
               'set_hidden','set_enabled','set_style','scroll_to','delete','list_add','list_insert',
               'list_set_text','list_remove','list_clear','list_count')]
@@ -540,7 +597,7 @@ target_link_libraries(check PRIVATE lvgl)
     for width in (480,720):
         folder=output/str(width);folder.mkdir(parents=True,exist_ok=True)
         drivers=['test_phase17_bus_catalog_ui.lua'] if args.catalog_only else [
-            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua','test_phase17_bus_endpoints.lua','test_phase17_clock_ready.lua']
+            'test_phase17_bus_ui.lua','test_phase17_bus_catalog_ui.lua','test_phase17_bus_persistence.lua','test_phase17_bus_endpoints.lua','test_phase17_bus_favorites_single.lua','test_phase17_clock_ready.lua','test_phase17_network_ready.lua']
         for driver in drivers:
             subprocess.run([str(work/'build/check'),str(ROOT/'examples/bus3p/main.lua'),
                             str(ROOT/'tools'/driver),str(width),str(quota),json.dumps(counts)],cwd=folder,check=True)

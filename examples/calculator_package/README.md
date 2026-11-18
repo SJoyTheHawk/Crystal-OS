@@ -19,7 +19,7 @@ requires explicit Developer Mode. USB/Wi-Fi installation is Phase 15.
 
 The integration suite exercises this package with the real Calculator,
 Brookesia, and LVGL. Device validation is tracked in
-[the Phase 14 implementation notes](../../docs/PHASE_14_IMPLEMENTATION.md).
+[the Phase 14 implementation notes](../../docs/archive/phase14/PHASE_14_IMPLEMENTATION.md).
 
 To run the automated board check after migrating to the Phase 14 partition
 layout, use `idf.py -DCRYSTAL_PHASE14_DEVICE_TEST=ON build app-flash monitor`.

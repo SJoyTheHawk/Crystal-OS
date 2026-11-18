@@ -2954,13 +2954,13 @@ void settings_push_display_power()
 
     lv_obj_t *dim_row = settings_row(content, "Dim After", nullptr);
     lv_obj_t *dim = lv_dropdown_create(dim_row);
-    lv_dropdown_set_options(dim, "Never\n15 seconds\n30 seconds\n1 minute\n5 minutes");
-    const uint16_t dim_values[] = {0, 15, 30, 60, 300};
+    lv_dropdown_set_options(dim, "Never\n15 seconds\n30 seconds\n1 minute\n2 minutes\n5 minutes");
+    const uint16_t dim_values[] = {0, 15, 30, 60, 120, 300};
     const uint16_t current_dim = crystal_power_dim_seconds();
-    for (uint16_t i = 0; i < 5; ++i) if (dim_values[i] == current_dim) lv_dropdown_set_selected(dim, i);
+    for (uint16_t i = 0; i < 6; ++i) if (dim_values[i] == current_dim) lv_dropdown_set_selected(dim, i);
     lv_obj_set_width(dim, kSettingsDropdownWidth); lv_obj_align(dim, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_text_font(dim, kSettingsInputFont, 0);
-    lv_obj_add_event_cb(dim, [](lv_event_t *e) { static const uint16_t values[] = {0, 15, 30, 60, 300}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_dim_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_dim_seconds(); for (uint16_t i = 0; i < 5; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dim, [](lv_event_t *e) { static const uint16_t values[] = {0, 15, 30, 60, 120, 300}; lv_obj_t *dropdown = static_cast<lv_obj_t *>(lv_event_get_target(e)); crystal_power_set_dim_seconds(values[lv_dropdown_get_selected(dropdown)]); const uint16_t stored = crystal_power_dim_seconds(); for (uint16_t i = 0; i < 6; ++i) if (values[i] == stored) lv_dropdown_set_selected(dropdown, i); }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t *off_row = settings_row(content, "Screen Off After", nullptr);
     lv_obj_t *off = lv_dropdown_create(off_row);
@@ -2993,12 +2993,14 @@ void settings_push_display_power()
         }
     }, LV_EVENT_ALL, nullptr);
 
-    lv_obj_t *saving_row = settings_row(content, "Energy Saving", "Shorter timeouts and lower power");
+    lv_obj_t *saving_row = settings_row(content, "Energy Saving", "30s dim, 60% of your brightness");
     lv_obj_t *saving = settings_switch(saving_row, crystal_power_saving_enabled());
     lv_obj_add_event_cb(saving, [](lv_event_t *e) {
         const bool enabled = lv_obj_has_state(static_cast<lv_obj_t *>(lv_event_get_target(e)), LV_STATE_CHECKED);
         crystal_power_set_saving(enabled);
         settings_row_set_summary(s_root_power_row, enabled ? "Energy Saving On" : "Energy Saving Off");
+        system_page_pop();
+        settings_push_display_power();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     int percent = 0; bool charging = false; char battery[40] = "Waiting for battery reading";
     if (crystal_battery_cached(&percent, &charging)) snprintf(battery, sizeof(battery), "%d%% - %s", percent, charging ? "Charging" : "On battery");

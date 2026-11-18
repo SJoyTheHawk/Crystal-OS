@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include "crystal_hal.hpp"
+#include "crystal_brightness_policy.hpp"
 #include "crystal_network.h"
 #include "crystal_network_policy.hpp"
 #include "crystal_ethernet.hpp"
@@ -20,7 +21,6 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
-#include "esp_pm.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -63,7 +63,6 @@ constexpr uint8_t kDimBrightnessMin = 1;
 constexpr uint8_t kFullBrightness = 95;
 constexpr uint8_t kDimBrightnessMin = 5;
 #endif
-constexpr uint8_t kSavingBrightnessMax = 60;
 static const char *TAG = "crystal_core";
 enum class PowerState : uint32_t { Full = 1, Dim = 2, Off = 3, ApplySaving = 4 };
 
@@ -120,6 +119,31 @@ void dispatch_time_ready()
         callback(context);
     }
 }
+struct NetListener {
+    uint32_t id = 0, revision = 0;
+    bool delivered = false, online = false;
+    crystal_net_change_cb_t callback = nullptr;
+    void *context = nullptr;
+};
+NetListener s_net_listeners[16]{};
+uint32_t s_net_next_id = 1;
+
+void dispatch_net_changed()
+{
+    const uint32_t revision = crystal_network_revision();
+    const bool online = crystal_net_is_ready();
+    uint32_t ids[16]{};
+    for (size_t i = 0; i < 16; ++i) ids[i] = s_net_listeners[i].id;
+    for (size_t i = 0; i < 16; ++i) {
+        auto &listener = s_net_listeners[i];
+        if (!ids[i] || listener.id != ids[i] || (listener.delivered &&
+            listener.revision == revision && listener.online == online)) continue;
+        listener.revision = revision; listener.online = online; listener.delivered = true;
+        auto callback = listener.callback;
+        void *context = listener.context;
+        callback(context, online);
+    }
+}
 std::atomic_bool s_sntp_initialized{false};
 std::atomic_bool s_sntp_sync_started{false};
 esp_event_handler_instance_t s_network_handler = nullptr;
@@ -172,6 +196,7 @@ void store_cached(const char *key, T value, std::atomic<int32_t> &cache)
 
 std::atomic<int32_t> s_cache_auto_dim{-1};
 std::atomic<int32_t> s_cache_dim_seconds{-1};
+std::atomic<int32_t> s_cache_saving_dim_seconds{-1};
 std::atomic<int32_t> s_cache_off_seconds{-1};
 std::atomic<int32_t> s_cache_saving{-1};
 std::atomic<int32_t> s_cache_format24{-1};
@@ -363,6 +388,7 @@ bool init_timer_indicator()
 void drain_event_queue(lv_timer_t *)
 {
     dispatch_time_ready();
+    dispatch_net_changed();
     if (s_queue == nullptr) return;
     EventMessage message;
     while (xQueueReceive(s_queue, &message, 0) == pdTRUE) {
@@ -514,12 +540,8 @@ void check_power_state(lv_timer_t *)
         return;
     }
     const uint32_t inactive_ms = lv_disp_get_inactive_time(s_display);
-    uint32_t dim_ms = crystal_power_dim_seconds() * 1000u;
-    uint32_t off_ms = crystal_power_off_seconds() * 1000u;
-    if (energy_saving_enabled()) {
-        if (dim_ms != 0) dim_ms /= 2;
-        if (off_ms != 0) off_ms /= 2;
-    }
+    const uint32_t dim_ms = crystal_power_dim_seconds() * 1000u;
+    const uint32_t off_ms = crystal_power_off_seconds() * 1000u;
     PowerState requested = PowerState::Full;
     if (off_ms != 0 && inactive_ms >= off_ms) requested = PowerState::Off;
     else if (dim_ms != 0 && inactive_ms >= dim_ms) requested = PowerState::Dim;
@@ -555,29 +577,9 @@ void dim_brightness()
 
 void power_saving_apply(bool enabled)
 {
-    // min must equal max. A lower min turns dynamic frequency scaling on, and
-    // nothing in the tree holds an ESP_PM_CPU_FREQ_MAX lock -- not the LVGL task,
-    // not the RGB panel -- so the UI would render at min most of the time. Energy
-    // Saving caps the clock by moving both ends down together, not by widening the
-    // range. light_sleep_enable is never true in v1: the RGB panel is DMA scan-out.
-#if CONFIG_IDF_TARGET_ESP32P4
-    // P4 rev1.x uses the 360/180 MHz PLL points; S3's 240 MHz point is invalid.
-    const int freq_mhz = enabled ? 180 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
-#else
-    const int freq_mhz = enabled ? 80 : 240;
-#endif
-    esp_pm_config_t config = {};
-    config.max_freq_mhz = freq_mhz;
-    config.min_freq_mhz = freq_mhz;
-    config.light_sleep_enable = false;
-    const esp_err_t pm_err = esp_pm_configure(&config);
-    if (pm_err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to apply CPU power policy (%d MHz): %s",
-                 freq_mhz, esp_err_to_name(pm_err));
-    }
+    // Energy Saving leaves CPU clocks unchanged; changes apply immediately.
     if (hal().wifi != nullptr) hal().wifi->set_power_save(enabled);
-    const uint8_t target = enabled && saved_brightness() > kSavingBrightnessMax
-                               ? kSavingBrightnessMax : saved_brightness();
+    const uint8_t target = crystal_effective_brightness(saved_brightness(), enabled);
     ramp_brightness(target);
 }
 
@@ -668,8 +670,7 @@ void service_task(void *)
         if (xTaskNotifyWait(0, UINT32_MAX, &command, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (command == static_cast<uint32_t>(PowerState::Full)) {
                 const uint8_t saved = saved_brightness();
-                ramp_brightness(energy_saving_enabled() && saved > kSavingBrightnessMax
-                                    ? kSavingBrightnessMax : saved);
+                ramp_brightness(crystal_effective_brightness(saved, energy_saving_enabled()));
             }
             else if (command == static_cast<uint32_t>(PowerState::Dim)) dim_brightness();
             else if (command == static_cast<uint32_t>(PowerState::Off)) ramp_brightness(0);
@@ -747,15 +748,22 @@ int32_t crystal_time_last_sync() { return stored_value<int32_t>("time.last_sync"
 
 uint16_t crystal_power_dim_seconds()
 {
-    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 300};
-    const uint16_t value = cached_value<uint16_t>("power.dim_s", 30, s_cache_dim_seconds);
-    return one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : 30;
+    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 120, 300};
+    const bool saving = energy_saving_enabled();
+    const uint16_t fallback = saving ? 30 : 120;
+    // Separate profiles replace the old shared timeout and implicit halving.
+    const uint16_t value = cached_value<uint16_t>(saving ? "power.dim_save" : "power.dim_norm",
+        fallback, saving ? s_cache_saving_dim_seconds : s_cache_dim_seconds);
+    return one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : fallback;
 }
 uint16_t crystal_power_off_seconds()
 {
     static constexpr uint16_t allowed[] = {0, 60, 120, 300, 900};
-    const uint16_t value = cached_value<uint16_t>("power.off_s", 60, s_cache_off_seconds);
-    return one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : 60;
+    const uint16_t value = cached_value<uint16_t>("power.off_s", 300, s_cache_off_seconds);
+    const uint16_t off = one_of(value, allowed, sizeof(allowed) / sizeof(allowed[0])) ? value : 300;
+    const uint16_t dim = crystal_power_dim_seconds();
+    // Old 60-second settings must not bypass the new two-minute dim stage.
+    return off != 0 && dim != 0 && off <= dim ? (dim < 300 ? 300 : 900) : off;
 }
 uint8_t crystal_power_dim_level()
 {
@@ -773,10 +781,12 @@ void crystal_power_set_auto_dim(bool enabled)
 }
 void crystal_power_set_dim_seconds(uint16_t seconds)
 {
-    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 300};
+    static constexpr uint16_t allowed[] = {0, 15, 30, 60, 120, 300};
     if (one_of(seconds, allowed, sizeof(allowed) / sizeof(allowed[0])) &&
             (crystal_power_off_seconds() == 0 || seconds == 0 || crystal_power_off_seconds() > seconds)) {
-        store_cached("power.dim_s", seconds, s_cache_dim_seconds);
+        const bool saving = energy_saving_enabled();
+        store_cached(saving ? "power.dim_save" : "power.dim_norm", seconds,
+                     saving ? s_cache_saving_dim_seconds : s_cache_dim_seconds);
     }
 }
 void crystal_power_set_off_seconds(uint16_t seconds)
@@ -803,8 +813,7 @@ void crystal_brightness_set(uint8_t level)
     if (level > kFullBrightness) level = kFullBrightness;
     store_value("brightness", level);
     if (hal().brightness != nullptr) {
-        hal().brightness->set(crystal_power_saving_enabled() && level > kSavingBrightnessMax
-                                  ? kSavingBrightnessMax : level);
+        hal().brightness->set(crystal_effective_brightness(level, crystal_power_saving_enabled()));
     }
 }
 uint8_t crystal_brightness_level() { return saved_brightness(); }
@@ -851,6 +860,28 @@ uint32_t crystal_time_subscribe_ready(crystal_time_ready_cb_t callback, void *co
 bool crystal_time_unsubscribe_ready(uint32_t subscription)
 {
     for (auto &listener : s_time_listeners) {
+        if (subscription && listener.id == subscription) { listener = {}; return true; }
+    }
+    return false;
+}
+
+bool crystal_net_is_ready() { return crystal_network_has_ip(); }
+
+uint32_t crystal_net_subscribe(crystal_net_change_cb_t callback, void *context)
+{
+    if (!callback || !s_net_next_id) return 0;
+    for (auto &listener : s_net_listeners) {
+        if (!listener.id) {
+            listener = {s_net_next_id++, 0, false, false, callback, context};
+            return listener.id;
+        }
+    }
+    return 0;
+}
+
+bool crystal_net_unsubscribe(uint32_t subscription)
+{
+    for (auto &listener : s_net_listeners) {
         if (subscription && listener.id == subscription) { listener = {}; return true; }
     }
     return false;

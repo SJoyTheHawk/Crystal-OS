@@ -132,6 +132,11 @@ private:
     static int service_toast(lua_State *state);
     static int service_chime(lua_State *state);
     static int service_net_status(lua_State *state);
+    static int service_net_is_ready(lua_State *state);
+    static int service_net_on_change(lua_State *state);
+    static int service_net_off_change(lua_State *state);
+    static void net_changed(void *context, bool connected);
+    void clear_net_subscription();
     static int service_location_get(lua_State *state);
     static int service_system_info(lua_State *state);
     static int http_fetch(lua_State *state);
@@ -187,6 +192,9 @@ private:
     lv_timer_t *runtime_close_timer_ = nullptr;
     CrystalResources::Handle runtime_close_resource_ = 0;
     bool runtime_close_scheduled_ = false;
+    uint32_t net_subscription_ = 0;
+    CallbackRef *net_callback_ = nullptr;
+    bool net_pending_ = false;
     uint32_t time_subscription_ = 0;
     CallbackRef *time_callback_ = nullptr;
     bool time_paused_ = false, time_pending_ = false;

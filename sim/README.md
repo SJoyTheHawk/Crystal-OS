@@ -6,7 +6,7 @@ the README's launcher, Quick Settings, Clock, Weather, Calculator, and Ethernet
 images. It uses the current P4 stylesheet and deterministic service fixtures;
 it does not run a device, establish real network connections, or provide an
 interactive SDL window. See [capture instructions](../tools/README.md#readme-screenshots)
-and [simulator scope](../docs/SIMULATOR.md).
+and [simulator scope](../docs/guides/SIMULATOR.md).
 
 `crystal_hal_mock.cpp` provides deterministic host implementations for the
 Phase 2 interfaces. Compile it with the project's `components/crystal_hal/include`

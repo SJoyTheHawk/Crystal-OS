@@ -18,7 +18,7 @@ Requirements: macOS (the capture linker flags use Apple's linker), CMake, a
 C++17 compiler, and the checked-out managed LVGL dependency. Build artifacts
 and temporary PPM frames stay under `.cache/readme-captures/`. The tool checks
 app content and frame dimensions before writing PNG files. See
-[image provenance](../docs/images/README.md) and [simulator scope](../docs/SIMULATOR.md).
+[image provenance](../docs/images/README.md) and [simulator scope](../docs/guides/SIMULATOR.md).
 
 ## Launcher swipe regression check
 
@@ -47,7 +47,7 @@ events. It requires a C++17 compiler and does not simulate ESP32 radio timing.
 It also checks recovery after immediate driver/RPC errors without a disconnect
 event, deferred reconnect-worker dispatch, stale events after radio-off/forget,
 and immediate lease-loss notifications. See the
-[Wi-Fi recovery diagnosis](../docs/WIFI_RECOVERY_DIAGNOSIS.md) for the incident
+[Wi-Fi recovery diagnosis](../docs/networking/WIFI_RECOVERY_DIAGNOSIS.md) for the incident
 evidence, fixes, and remaining hardware checks.
 
 For device verification, boot with a saved SSID out of range and open WiFi
@@ -57,7 +57,7 @@ returns. Also check scanning while connected and toggling Wi-Fi off mid-scan.
 
 ## Backend lifecycle checks
 
-See [backend ownership and validation](../docs/BACKEND_LIFECYCLE_CLEANUP.md).
+See [backend ownership and validation](../docs/platform/BACKEND_LIFECYCLE_CLEANUP.md).
 Run tools/test_weather_requests.py for asynchronous request/location ownership,
 tools/test_weather_lifecycle.py for production native Weather and Brookesia
 lifecycle coverage, and tools/test_backend_idle.py for OTA notification/idle
@@ -143,7 +143,7 @@ The catalog client runs on the user's computer and fetches a manually maintained
 signed JSON index plus prebuilt, signed `.capp` files from HTTPS hosting. The
 host serves files; it does not build apps. The downloaded package is then
 transferred to the device by the developer transport.
-See [`docs/APP_CATALOG_FORMAT.md`](../docs/APP_CATALOG_FORMAT.md) for the schema,
+See [`docs/platform/APP_CATALOG_FORMAT.md`](../docs/platform/APP_CATALOG_FORMAT.md) for the schema,
 canonical signature bytes, and publish workflow. The production hosting URL and
 release public keys are deployment configuration and are not checked in.
 
@@ -171,7 +171,7 @@ managed dependencies. It builds the production package store, registry,
 Calculator, Brookesia, and LVGL under ASan/UBSan, then exercises repeated
 installation and lifecycle teardown, malformed packages, resource admission,
 state isolation, and leak refusal. Phase 14 is closed; board evidence and open
-follow-ups are recorded in [Phase 14 closure notes](../docs/PHASE_14_IMPLEMENTATION.md).
+follow-ups are recorded in [Phase 14 closure notes](../docs/archive/phase14/PHASE_14_IMPLEMENTATION.md).
 
 The same integration test checks the declarative dashboard's app bounds, tabs,
 Timer button spacing, and scrolling. To save rendered PPM previews of Status,
@@ -277,7 +277,7 @@ after building, with the serial monitor closed.
 
 Run python3 tools/test_wifi_diagnostics.py for the bounded capture and worker
 lifecycle checks, and python3 tools/test_developer_tools_page.py for the
-Developer Tools controls. See [Wi-Fi checks](../docs/WIFI_CHECKS.md) for the
+Developer Tools controls. See [Wi-Fi checks](../docs/networking/WIFI_CHECKS.md) for the
 opt-in on-device viewer and tools/wifi_check.py serial capture procedure.
 Raw captures and local JSON metadata stay untracked; commit reviewed summaries.
 
@@ -286,5 +286,5 @@ Raw captures and local JSON metadata stay untracked; commit reviewed summaries.
 Run python3 tools/test_phase17_bus_render.py to exercise the production clock
 subscriber and Lua bindings, Bus countdowns and UI flows. The harness includes
 tools/test_phase17_clock_ready.lua; it checks deferred replay, replacement,
-pause/resume and teardown. See [Phase 4 results](../docs/BUS_APP_PHASE_4_RESULTS.md)
+pause/resume and teardown. See [Phase 4 results](../docs/bus/BUS_APP_PHASE_4_RESULTS.md)
 for package provenance and remaining board checks.

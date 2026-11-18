@@ -73,9 +73,9 @@ def main():
         assert has("possible:find(value,1,true)")
         assert has("stop_page_step")
         assert has("assets/catalog/runtime.txt")
-        assert has("v.catalog_job") and has("v.stop_catalog_job")
+        assert has("v.cat_job") and has("v.stop_cat_job")
         assert has("math.ceil(route_total/8)")
-        assert has("v.stop_list_job={index=1,generation=v.catalog_generation}")
+        assert has("v.list_job={index=1,generation=v.cat_gen}")
         assert has("local function stop_list_step(job)")
         assert has("render_stop_row = function(index)")
         assert has("ui.list_add(v.stop_list,")
@@ -164,8 +164,8 @@ def main():
         assert one_a and len(route_records) > 8
         for checkpoint in ("launch_begin", "launch_ready", "catalog_loaded",
                            "stops_loaded", "teardown"):
-            assert f'resource_checkpoint("{checkpoint}")' in source
-        assert 'resource_checkpoint("eta_complete")' in source
+            assert f'checkpoint("{checkpoint}")' in source
+        assert 'checkpoint("eta_complete")' in source
         # Syntax-check against the same Lua sources as firmware. Behavioral
         # and rendering coverage lives in test_phase17_bus_render.py.
         lua = root / "managed_components/georgik__lua"

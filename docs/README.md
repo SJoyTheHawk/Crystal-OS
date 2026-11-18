@@ -3,86 +3,57 @@
 ## Current work
 
 Current development targets the Waveshare ESP32-P4-WIFI6-Touch-LCD-4B.
-As of November 15, 2026, board bring-up, P4.2 visual/interaction acceptance,
-and P4.3 network expansion pass for their documented scopes. P4.4 performance,
-soak, package/OTA, and remaining feature qualification are still open. Phase 17
-Lua runtime implementation has resumed and is in place; its device acceptance
-checks and Bus script migration are tracked separately. Bus Lite 0.2.23 has
-completed Phase 3 persistence acceptance; Phase 4 refresh and polish remain open.
+P4.1–P4.3 are accepted for their documented scopes; P4.4 performance, soak,
+package/OTA and remaining feature qualification stay open. Phase 17 runtime
+and Bus Lite Phases 1–4 are implemented. Phase 3 persistence is accepted on
+P4; remaining runtime and Phase 4 checks are tracked in the records below.
 
-- [P4.1 validation and build guide](ESP32_P4_PHASE1_VALIDATION.md): tested
-  rev1.3 board, 720 × 720 display, signed builds, flash layout, and startup.
-- [P4.2 visual/interaction acceptance](ESP32_P4_PHASE2_VALIDATION.md): boot,
-  cards, Quick Settings, immediate Settings navigation, Wi-Fi UI, and keyboard.
-- [P4.3 network acceptance](ESP32_P4_PHASE3_VALIDATION.md): Ethernet, Wi-Fi
-  fallback, Weather/SNTP/HTTPS, pairing, and status indicators.
+- [P4 build, flash and validation](hardware/esp32-p4/README.md)
+- [Phase 17 implementation](platform/APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md)
+  and [board test guide](platform/APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
+- [Bus Lite installation and tests](bus/BUS_APP_QUICK_START.md) and
+  [current Phase 4 results](bus/BUS_APP_PHASE_4_RESULTS.md)
+- [Wi-Fi checks](networking/WIFI_CHECKS.md): signal-loss recovery still needs
+  hardware confirmation; earlier PM and socket-leak explanations are not
+  verified fixes.
 
-The established local root configuration is P4. Fresh checkouts must explicitly
-select `esp32p4`; `sdkconfig` is ignored and the root `sdkconfig.defaults` still
-preserves S3 defaults. The completed S3 baseline remains on branch
-`ESP32-S3-Touch-LCD-4B` at commit `4c532a0`. Phases 14–16 have completed
-development acceptance; this does not imply full P4 feature qualification.
+## Browse by topic
 
-Both user-supplied migration plans are retained:
+For application development, start with the [Lua app and CAPP reference](../APPLICATION_ABI.md):
+writing Lua apps, using the app APIs, and packaging, signing and installing `.capp` files.
 
-- [Migration overview](MIGRATION_PLAN_ESP32_P4.md)
-- [Detailed migration proposal](CRYSTAL_OS_V2_P4_MIGRATION_PLAN.md)
+| Folder | Contents |
+| --- | --- |
+| [platform](platform/README.md) | v2 architecture, runtime, ABI, catalog, lifecycle and app-update plans |
+| [bus](bus/README.md) | Lua Bus implementation, installation, catalog policy and active investigations |
+| [hardware/esp32-p4](hardware/esp32-p4/README.md) | P4 migration plans, tested build commands and board validation |
+| [networking](networking/README.md) | Current Wi-Fi diagnostics and incident analysis |
+| [guides](guides/README.md) | Simulator, power policy and preserved S3 command guide |
+| [report](report/README.md) | Framework, memory, watchdog and HTTPS findings |
+| [reference](reference/esp32-p4-factory/README.md) | Preserved P4 factory baseline and source provenance |
+| [test-evidence](test-evidence/) | Current validation summaries and captured board results |
+| [images](images/README.md) | Screenshots, hardware photos and attribution |
+| [archive](archive/README.md) | Original v1 plans, completed milestones and superseded investigations |
 
-The plans retain proposed later work; their reconciliation sections link the
-verified Phase 1 profile and distinguish pending checks. Their original
-2025-01-13 dates are retained. They include older stack assumptions (IDF 5.3 as
-the S3 baseline and IDF 5.5 as a proposed target); the completed S3 build uses
-IDF 6.1. Verify board, BSP and dependencies before applying configuration
-snippets. The branch decision and work order above replace older branching
-instructions in those documents.
-
-## Original plans and current contracts
-
-- [v2 overview](APP_PLATFORM_V2_OVERVIEW.md)
-- [v2 implementation plan](APP_PLATFORM_V2_IMPLEMENTATION_PLAN.md): original
-  architecture and Phase 14–17 roadmap.
-- [v2 design guide](APP_PLATFORM_V2_DESIGN_GUIDE.md)
-- [v2 code guide](APP_PLATFORM_V2_CODE_GUIDE.md)
-- [ABI Enhancement Plan](ABI_ENHANCEMENT_PLAN.md): Lua API gaps and proposed additions based on Bus app analysis
-- [App update implementation guide](APP_UPDATE_IMPLEMENTATION_GUIDE.md): Phase 18+
-  design for version upgrades without data loss.
-- [Original v1 plans](v1_implementation_plan/): preserved OS implementation plan,
-  system design, code guide and validation checklist.
-- [Catalog format](APP_CATALOG_FORMAT.md)
-
-## Implementation and practical checks
-
-- [Phase 14 implementation](PHASE_14_IMPLEMENTATION.md)
-- [Phase 15/16 implementation and UI contract](APP_PLATFORM_V2_PHASE_15_16_IMPLEMENTATION.md)
-- [Phase 15/16 closure](APP_PLATFORM_V2_PHASE_15_16_CLOSURE_CHECKLIST.md)
-- [Phase 17 runtime implementation and validation](APP_PLATFORM_V2_PHASE_17_IMPLEMENTATION.md)
-- [Phase 17 step-by-step P4 board test guide](APP_PLATFORM_V2_PHASE_17_TEST_GUIDE.md)
-- [Phase 17.3 Bus Lua comparison and remaining acceptance plan](APP_PLATFORM_V2_PHASE_17_3_BUS_MIGRATION_PLAN.md)
-- [Focused regression guide](APP_PLATFORM_V2_PHASE_15_16_TEST_GUIDE.md)
-- [Bus transformation status](README_BUS_TRANSFORMATION.md), [Phase 3 results](BUS_APP_PHASE_3_RESULTS.md), and [installation guide](BUS_APP_QUICK_START.md)
-- [Standard-service catalog policy and reproduction](BUS_STANDARD_SERVICE_CATALOG.md)
-- [Wi-Fi recovery diagnosis and pending board checks](WIFI_RECOVERY_DIAGNOSIS.md)
-- [P4 Wi-Fi diagnostics and signal-loss checks](WIFI_CHECKS.md)
-- [Validation summary](test-evidence/phase15-16/2026-11-13-implementation-validation.txt)
-- [ESP-IDF commands](ESP_IDF_COMMAND_GUIDE.md): existing S3 instructions.
-- [Host tools](../tools/README.md) and [simulator status](SIMULATOR.md)
+[Host tools](../tools/README.md) and the [Bus package](../examples/bus3p/README.md)
+have their own usage guides alongside the source.
 
 ## Important findings
-
-Preserve these during migration; do not assume a new board resolves them:
 
 - [Bus architecture lessons](report/APP_PLATFORM_BUS_LESSONS.md) and
   [validation summary](report/BUS_APP_VALIDATION_SUMMARY.md)
 - [Brookesia version strategy](report/BROOKESIA_VERSION_STRATEGY.md): retained
-  rationale for the local framework; verify version claims before changing it.
+  rationale for the local framework; verify version claims before changes.
 - [Startup HTTPS sequencing](report/STARTUP_HTTPS_SEQUENCING_EXPERIMENT.md)
-- [Watchdog investigation](report/WATCHDOG_TIMEOUT_MITIGATION.md)
-- [S3 baseline notes](report/NO_BUS_BASELINE.md): historical branch/build context.
-- [Bus example and known limitations](../examples/bus_app/README.md)
+  and [watchdog investigation](report/WATCHDOG_TIMEOUT_MITIGATION.md)
+- [Wi-Fi and local panel incident](networking/WIFI_RECOVERY_DIAGNOSIS.md)
+  and [disabled DNS-monitor lessons](archive/wifi/README.md#disabled-dns-monitor)
+- [Native Bus example and known limitations](../examples/bus_app/README.md)
 
-## Historical material
+## Documentation conventions
 
-The [archive index](archive/README.md) covers completed reports, superseded
-proposals and raw evidence. These are references, not a new work queue.
-Exact duplicate Bus/HTTP notes have one retained copy under the
-[Bus example](../examples/bus_app/docs/).
+Keep current instructions with their topic. Put completed milestone reports
+and superseded proposals in the appropriate archive folder, preserving unique
+measurements and evidence. Archive checkboxes and commands describe their
+capture date, not a current work queue. Remove redundant notes when their
+useful findings are retained elsewhere, and update incoming links after moves.

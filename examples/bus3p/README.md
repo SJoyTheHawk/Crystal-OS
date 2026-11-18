@@ -1,4 +1,12 @@
-# Bus Lite live-provider package (0.2.26)
+# Bus Lite live-provider package (0.2.29)
+
+Version 0.2.29 subscribes to OS network readiness. Favorites and provider requests
+wait for Wi-Fi (or Ethernet) to acquire an IP address. Disconnect cancels current
+work, suppresses late callbacks and shows **No connection**; reconnect refreshes
+the visible page automatically. Bundled route search still works offline.
+Network readiness does not guarantee that DNS or the provider is reachable.
+Flash the matching firmware with **app-flash**, then install the signed package
+through Developer Tools. The new net subscription bindings are required.
 
 Version 0.2.26 subscribes to Crystal OS clock readiness. Before RTC, SNTP or
 manual time initialization completes, arrival fields display **--** with
@@ -97,10 +105,10 @@ used by the continuous stop list. Uninstall the previous package before replacin
 removed). The package is signed with the existing test key, ID 240. No Mac
 server is required.
 
-Follow [BUS_APP_QUICK_START.md](../../docs/BUS_APP_QUICK_START.md) for the full
+Follow [BUS_APP_QUICK_START.md](../../docs/bus/BUS_APP_QUICK_START.md) for the full
 step-by-step flash/install/board test. Host checks and the firmware build pass;
 board TLS, timing, resource headroom and touch acceptance remain pending.
-[BUS_APP_PHASE_1_RESULTS.md](../../docs/BUS_APP_PHASE_1_RESULTS.md) records the
+[BUS_APP_PHASE_1_RESULTS.md](../../docs/archive/bus/BUS_APP_PHASE_1_RESULTS.md) records the
 artifact hashes, official response provenance and separate host/P4 evidence.
 
 Joint-provider ETA merging is implemented in Phase 2. A JOINT catalog route
